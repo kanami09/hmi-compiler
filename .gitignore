@@ -1,1 +1,13 @@
 /target
+/samples
+/docs
+
+# 私有工程的回归清单、测试与验收工具
+/tests/samples.rs
+/tests/samples-manifest.json
+/examples/prepare_acceptance.rs
+
+# 工程容器、编译产物及导出目录中的原始快照
+*.[Hh][Mm][Ii]
+*.[Tt][Ff][Tt]
+.hmi/
