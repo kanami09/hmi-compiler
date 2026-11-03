@@ -1,0 +1,138 @@
+name: Release Windows
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '版本 tag，例如 v0.1.0 或 v0.2.0-rc.1'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: pwsh
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  prepare:
+    name: Resolve release tag
+    runs-on: windows-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      commit: ${{ steps.release.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate and resolve tag
+        id: release
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          if ($env:RELEASE_TAG -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$') {
+            throw '版本 tag 必须采用 v主版本.次版本.修订版本 格式，例如 v0.1.0 或 v0.2.0-rc.1'
+          }
+          $commit = git rev-parse --verify "refs/tags/$($env:RELEASE_TAG)^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw "找不到版本 tag：$env:RELEASE_TAG" }
+          "tag=$env:RELEASE_TAG" >> $env:GITHUB_OUTPUT
+          "commit=$commit" >> $env:GITHUB_OUTPUT
+
+  build:
+    name: Build Windows ${{ matrix.arch }}
+    needs: prepare
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            target: x86_64-pc-windows-msvc
+          - arch: x86
+            target: i686-pc-windows-msvc
+    env:
+      # 静态链接 MSVC 运行库，方便直接分发 exe。
+      RUSTFLAGS: -C target-feature=+crt-static
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      BUILD_TARGET: ${{ matrix.target }}
+      BUILD_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Test
+        run: cargo test --release --locked --target "$env:BUILD_TARGET"
+
+      - name: Build
+        run: cargo build --release --locked --target "$env:BUILD_TARGET" --bin hmi-compiler
+
+      - name: Package
+        run: |
+          $package = "hmi-compiler-${env:RELEASE_TAG}-windows-${env:BUILD_ARCH}"
+          $directory = New-Item -ItemType Directory -Path "target/package/$package" -Force
+          Copy-Item "target/$env:BUILD_TARGET/release/hmi-compiler.exe" $directory
+          Copy-Item README.md, LICENSE $directory
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          Compress-Archive -Path "$($directory.FullName)/*" -DestinationPath "dist/$package.zip"
+          $hash = (Get-FileHash "dist/$package.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $package.zip" | Set-Content "dist/$package.zip.sha256" -Encoding utf8NoBOM
+
+      - name: Upload package
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          compression-level: 0
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, build]
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v8
+        with:
+          pattern: windows-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          $assets = @(Get-ChildItem dist -File | ForEach-Object { $_.FullName })
+          if ($assets.Count -ne 4) { throw '预期得到 x64、x86 两个 ZIP 及各自的 SHA256 文件' }
+          gh release view "$env:RELEASE_TAG" --json tagName
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload "$env:RELEASE_TAG" @assets --clobber
+          } else {
+            $options = @('--verify-tag', '--generate-notes', '--title', $env:RELEASE_TAG)
+            if ($env:RELEASE_TAG -match '^v[0-9]+\.[0-9]+\.[0-9]+-') { $options += '--prerelease' }
+            gh release create "$env:RELEASE_TAG" @assets @options
+          }
+          if ($LASTEXITCODE -ne 0) { throw '发布 GitHub Release 失败' }
