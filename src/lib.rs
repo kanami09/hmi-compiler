@@ -3,6 +3,7 @@
 pub mod binary;
 pub mod container;
 pub mod diagnostic;
+pub mod diff;
 pub mod page;
 pub mod project;
 mod script;

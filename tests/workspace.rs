@@ -357,3 +357,34 @@ fn global_code_and_script_diagnostics() {
     assert!(workspace::build(&w.root, &out, false, true).is_err());
     assert!(!out.exists());
 }
+
+#[test]
+fn diff_distinguishes_properties_events_and_container_only_changes() {
+    let w = Workspace::new();
+    let mut page = w.read_page();
+    page.objects[0].properties.insert("w".into(), 140.into());
+    page.objects[0].events.remove("up");
+    w.write_page(&page);
+    let old = Container::parse(w.bytes.clone()).unwrap();
+    let new = Container::parse(workspace::prepare(&w.root).unwrap().bytes).unwrap();
+    let report = hmi_compiler::diff::compare(&old, &new).unwrap();
+    assert!(!report.active_resources_equal);
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|c| c.kind == "property" && c.field.as_deref() == Some("w"))
+    );
+    assert!(
+        report
+            .changes
+            .iter()
+            .any(|c| c.kind == "event" && c.field.as_deref() == Some("up"))
+    );
+    let mut bytes = w.bytes;
+    bytes[0x10000] ^= 1;
+    let metadata = Container::parse(bytes).unwrap();
+    let report = hmi_compiler::diff::compare(&old, &metadata).unwrap();
+    assert!(report.active_resources_equal && report.container_changed && !report.byte_identical);
+    assert!(report.changes.is_empty());
+}
