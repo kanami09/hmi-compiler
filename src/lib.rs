@@ -5,6 +5,8 @@ pub mod container;
 pub mod diagnostic;
 pub mod page;
 pub mod project;
+mod script;
+pub mod workspace;
 
 use sha2::{Digest, Sha256};
 
