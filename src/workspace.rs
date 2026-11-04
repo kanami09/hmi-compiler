@@ -85,9 +85,24 @@ fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>> {
 }
 
 pub(crate) fn deserialize<T: serde::de::DeserializeOwned>(bytes: &[u8], path: &str) -> Result<T> {
-    let text = std::str::from_utf8(bytes)
-        .map_err(|_| Error::Message(format!("{path}：文件不是 UTF-8")))?;
-    toml::from_str(text).map_err(|e| Error::Message(format!("{path}：{e}")))
+    let text = std::str::from_utf8(bytes).map_err(|e| {
+        Diagnostic::error("source_encoding", "文件不是有效的 UTF-8 文本").at(
+            crate::diagnostic::Location {
+                file: Some(path.into()),
+                line: Some(source::line_at(bytes, e.valid_up_to())),
+                ..Default::default()
+            },
+        )
+    })?;
+    toml::from_str(text).map_err(|e: toml::de::Error| {
+        Diagnostic::error("toml_syntax", e.message())
+            .at(crate::diagnostic::Location {
+                file: Some(path.into()),
+                line: e.span().map(|span| source::line_at(bytes, span.start)),
+                ..Default::default()
+            })
+            .into()
+    })
 }
 
 /// 目录与文件名不承担工程标识的作用；映射在 manifest 中显式记录。
@@ -458,7 +473,17 @@ pub(crate) fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
 }
 
 pub(crate) fn read(root: &Path, path: &str) -> Result<Vec<u8>> {
-    fs::read(resolve(root, path)?).map_err(|e| Error::Message(format!("{path}：{e}")))
+    let location = crate::diagnostic::Location {
+        file: Some(path.into()),
+        ..Default::default()
+    };
+    let resolved = resolve(root, path)
+        .map_err(|e| Diagnostic::error("project_path", e.to_string()).at(location.clone()))?;
+    fs::read(resolved).map_err(|e| {
+        Diagnostic::error("file_read", e.to_string())
+            .at(location)
+            .into()
+    })
 }
 
 pub(crate) fn parent(path: &Path) -> &Path {
@@ -612,7 +637,11 @@ fn encode_value(object: &Object, attr: &Attribute, input: &toml::Value) -> Resul
                 .as_integer()
                 .ok_or_else(|| Error::Message("需要整数".into()))?;
             i32::try_from(number)
-                .map_err(|_| Error::Message("超出有符号 32 位范围".into()))?
+                .map_err(|_| {
+                    Error::Message(format!(
+                        "数值 {number} 超出有符号 32 位范围（-2147483648..2147483647）"
+                    ))
+                })?
                 .to_le_bytes()
                 .to_vec()
         }
@@ -622,7 +651,10 @@ fn encode_value(object: &Object, attr: &Attribute, input: &toml::Value) -> Resul
                 .ok_or_else(|| Error::Message("需要整数".into()))?;
             let max = (1u64 << (width * 8)) - 1;
             if number < 0 || number as u64 > max {
-                return Err(Error::Message(format!("超出 {width} 字节无符号整数范围")));
+                return Err(Error::Message(format!(
+                    "数值 {number} 超出 {} 位无符号整数范围（0..{max}）",
+                    width * 8
+                )));
             }
             (number as u32).to_le_bytes()[..width].to_vec()
         }
@@ -657,14 +689,20 @@ pub(crate) fn update_object(
         return Err(error(
             Some("name"),
             "object_name",
-            "当前不支持修改控件名称".into(),
+            format!(
+                "控件名称由 {} 变为 {}，当前不支持重命名或重排",
+                baseline.name, edited.name
+            ),
         ));
     }
     if edited.type_name != baseline.type_name {
         return Err(error(
             Some("type"),
             "object_type",
-            "当前不支持修改控件类型".into(),
+            format!(
+                "控件类型由 {} 变为 {}，当前不支持修改类型",
+                baseline.type_name, edited.type_name
+            ),
         ));
     }
     if edited.properties.keys().ne(baseline.properties.keys()) {

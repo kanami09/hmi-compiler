@@ -102,6 +102,8 @@ enum Command {
     Export(ExportArgs),
     /// 检查工程，不写目标文件或构建缓存
     Check(CheckArgs),
+    /// 清理派生构建缓存，保留工程和最终目标
+    Clean(CheckArgs),
     /// 增量构建工程，成功后更新目标文件
     Build(BuildArgs),
     /// 全量重建工程，参数与 build 相同
@@ -114,7 +116,7 @@ impl Command {
         match self {
             Self::Inspect(a) => &a.diagnostics,
             Self::Export(a) => &a.diagnostics,
-            Self::Check(a) => &a.diagnostics,
+            Self::Check(a) | Self::Clean(a) => &a.diagnostics,
             Self::Build(a) | Self::Rebuild(a) => &a.diagnostics,
             Self::Diff(a) => &a.diagnostics,
         }
@@ -124,6 +126,7 @@ impl Command {
             Self::Inspect(_) => "inspect",
             Self::Export(_) => "export",
             Self::Check(_) => "check",
+            Self::Clean(_) => "clean",
             Self::Build(_) => "build",
             Self::Rebuild(_) => "rebuild",
             Self::Diff(_) => "diff",
@@ -133,7 +136,7 @@ impl Command {
         match self {
             Self::Inspect(a) => &a.file,
             Self::Export(a) => &a.file,
-            Self::Check(a) => &a.directory,
+            Self::Check(a) | Self::Clean(a) => &a.directory,
             Self::Build(a) | Self::Rebuild(a) => &a.directory,
             Self::Diff(a) => &a.old,
         }
@@ -194,6 +197,17 @@ fn run(command: &Command, policy: &WarningPolicy, renderer: &mut Renderer) -> Re
                 diagnostics: outcome.diagnostics,
                 ok: outcome.success,
             });
+        }
+        Command::Clean(args) => {
+            let report = build::clean(&args.directory, &mut |message| {
+                observer(&build::BuildEvent::Info(message.into()))
+            })?;
+            observer(&build::BuildEvent::Info(if report.removed {
+                format!("已清理构建缓存：{}", report.directory)
+            } else {
+                "构建缓存不存在，无需清理".into()
+            }));
+            (json!(report), Vec::new())
         }
         Command::Inspect(args) => {
             let container = Container::parse(std::fs::read(&args.file)?)?;
@@ -282,20 +296,6 @@ fn human(command: &str, outcome: &Outcome) {
                 r["pages"],
                 r["files"]
             ),
-            "check" => println!(
-                "项目检查{}；无修改往返={}；变化资源={}",
-                if outcome.ok { "通过" } else { "未通过" },
-                r["byte_identical"],
-                r["changed_resources"]
-            ),
-            "build" => {
-                if let Some(output) = r["output"].as_str() {
-                    println!(
-                        "已构建 {output}：{} 字节；无修改往返={}；变化资源={}",
-                        r["size"], r["byte_identical"], r["changed_resources"]
-                    );
-                }
-            }
             "diff" => {
                 println!(
                     "逐字节相同={}；活动资源相同={}；容器发生变化={}",

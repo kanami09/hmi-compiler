@@ -100,10 +100,15 @@ impl Context {
                 )
             };
             if name != &object.name
+                || (i > 0
+                    && description.objects[i - 1].type_name
+                        != crate::page::type_name(object.type_code))
+                || properties.keys().ne(object.properties.keys().filter(|key| {
+                    !matches!(key.as_str(), "type" | "id" | "objname" | "endx" | "endy")
+                }))
                 || properties
                     .get("vscope")
-                    .and_then(toml::Value::as_integer)
-                    .is_some_and(|n| !(0..=1).contains(&n))
+                    .is_some_and(|value| !matches!(value.as_integer(), Some(0 | 1)))
             {
                 page.valid = false;
             }
@@ -352,11 +357,16 @@ impl Checker<'_> {
                     .map(|t| t.text.as_str());
                 self.reference(page_id, object_id as usize, field, line);
             }
-        } else {
+        } else if object_id.is_none() {
             self.warn(
                 "script_dynamic",
-                "名称组使用了动态 ID 或依赖当前页面，无法在静态检查阶段确定目标控件及属性是否有效"
-                    .into(),
+                "名称组使用了动态 ID，无法在静态检查阶段确定目标控件及属性是否有效".into(),
+                line,
+            );
+        } else {
+            self.warn(
+                "script_context",
+                "名称组依赖当前页面，但全局代码的当前页面上下文无法静态确定".into(),
                 line,
             );
         }
@@ -390,7 +400,13 @@ impl Checker<'_> {
                 if tokens.get(end).is_some_and(|t| t.text == ".")
                     && tokens.get(end + 1).is_some_and(|t| t.text == "b")
                 {
-                    i = self.array(&tokens, end + 1, valid_page);
+                    i = if valid_page.is_some() {
+                        self.array(&tokens, end + 1, valid_page)
+                    } else {
+                        bracket(&tokens, end + 2)
+                            .map(|(_, end)| end)
+                            .unwrap_or(end + 2)
+                    };
                     continue;
                 }
                 i = end;
@@ -410,7 +426,11 @@ impl Checker<'_> {
                     if page_id.is_none() {
                         self.warn("script_page", format!("页面 {} 不存在", t.text), t.line);
                     }
-                    i = self.array(&tokens, i + 2, page_id);
+                    i = if page_id.is_some() {
+                        self.array(&tokens, i + 2, page_id)
+                    } else {
+                        bracket(&tokens, i + 3).map(|(_, end)| end).unwrap_or(i + 3)
+                    };
                     continue;
                 }
                 if tokens.get(i + 3).is_some_and(|t| t.text == ".")

@@ -116,6 +116,97 @@ fn page_logs_are_ordered_colored_and_failure_keeps_output() {
 }
 
 #[test]
+fn cached_pages_keep_success_style_and_rebuild_and_clean_are_peer_commands() {
+    let w = Workspace::with_pages(2);
+    let directory = w.root.to_str().unwrap();
+    let target = w.temporary.path().join("output.HMI");
+    let target = target.to_str().unwrap();
+    let (output, cold) = run(&["build", directory, "-o", target, "--json"]);
+    assert!(output.status.success());
+    assert_eq!(cold["result"]["rebuilt_pages"], 2);
+    let (output, hot) = run(&[
+        "build", directory, "-o", target, "-Wno-all", "--color", "always", "--json",
+    ]);
+    assert!(output.status.success());
+    assert_eq!(hot["result"]["reused_pages"], 2);
+    assert_eq!(hot["result"]["diagnostic_rechecks"], 0);
+    let output = Command::new(env!("CARGO_BIN_EXE_hmi-compiler"))
+        .args(["build", directory, "-o", target, "--color", "never"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty());
+    let log = String::from_utf8(output.stderr).unwrap();
+    assert!(log.contains("[ 50%] [ SUCCESS ] page0") && log.contains("[100%] [ SUCCESS ] page1"));
+    assert!(!log.contains("CACHED") && !log.contains(">>"));
+    assert!(log.lines().last().unwrap().contains("构建完成"));
+    let (output, full) = run(&[
+        "rebuild", directory, "-o", target, "-Wno-all", "--color", "always", "--json",
+    ]);
+    assert!(output.status.success());
+    assert_eq!(full["result"]["rebuilt_pages"], 2);
+    assert_eq!(full["result"]["reused_pages"], 0);
+    assert_eq!(full["result"]["sha256"], hot["result"]["sha256"]);
+    let before = fs::read(target).unwrap();
+    let (output, clean) = run(&["clean", directory, "--json"]);
+    assert!(output.status.success());
+    assert_eq!(clean["result"]["removed"], true);
+    assert_eq!(fs::read(target).unwrap(), before);
+    assert!(w.root.join(".hmi/container.bin").exists());
+    let (output, missing) = run(&["clean", directory, "--json"]);
+    assert!(output.status.success());
+    assert_eq!(missing["result"]["removed"], false);
+    let (output, _) = run(&[
+        "build",
+        directory,
+        "-o",
+        target,
+        "--deny-warnings",
+        "--json",
+    ]);
+    assert_eq!(output.status.code(), Some(2));
+}
+
+#[test]
+fn malformed_project_toml_reports_source_line_without_caret_excerpt() {
+    let w = Workspace::new();
+    fs::write(w.root.join("project.toml"), "format_version =\n").unwrap();
+    let (output, result) = run(&["check", w.root.to_str().unwrap(), "--json"]);
+    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(result["diagnostics"][0]["code"], "toml_syntax");
+    assert_eq!(result["diagnostics"][0]["location"]["file"], "project.toml");
+    assert!(
+        result["diagnostics"][0]["location"]["line"]
+            .as_u64()
+            .is_some()
+    );
+    assert!(
+        !result["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains('^')
+    );
+}
+
+#[test]
+fn missing_page_context_is_not_reported_as_a_dynamic_id() {
+    let w = Workspace::new();
+    fs::write(w.root.join("program.s"), "b[1].val=0\n").unwrap();
+    let (_, result) = run(&["check", w.root.to_str().unwrap(), "--json"]);
+    assert_eq!(result["diagnostics"].as_array().unwrap().len(), 1);
+    assert_eq!(result["diagnostics"][0]["category"], "script-context");
+    let (output, result) = run(&[
+        "check",
+        w.root.to_str().unwrap(),
+        "-Werror",
+        "-Wno-script-context",
+        "--json",
+    ]);
+    assert!(output.status.success());
+    assert!(result["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn all_commands_json_exit_codes_and_overwrite() {
     let w = Workspace::new();
     let input = w.temporary.path().join("input.HMI");

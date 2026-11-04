@@ -2,6 +2,7 @@
 
 pub mod binary;
 pub mod build;
+mod cache;
 pub mod container;
 pub mod diagnostic;
 pub mod diff;

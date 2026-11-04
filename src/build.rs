@@ -1,4 +1,5 @@
 //! 按页面顺序执行的构建引擎，终端输出由事件观察者负责。
+pub use crate::cache::CleanReport;
 use crate::{
     Error, Result,
     container::Container,
@@ -63,6 +64,7 @@ pub struct BuildReport {
     pub diagnostic_rechecks: usize,
     pub baseline_reused: bool,
     pub program_reused: bool,
+    pub global_diagnostic_rechecked: bool,
     pub context_complete: bool,
     pub context_sha256: String,
     pub errors: usize,
@@ -365,8 +367,31 @@ impl Engine<'_> {
         }
     }
 
+    fn cache_result<T>(
+        &mut self,
+        cache: &mut Option<crate::cache::Cache>,
+        result: Result<T>,
+    ) -> Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(error) if crate::cache::is_unsafe(&error) => Err(error),
+            Err(error) => {
+                self.info(format!("构建缓存不可用，回退无缓存处理：{error}"));
+                *cache = None;
+                Ok(None)
+            }
+        }
+    }
+
     fn execute(&mut self) -> Result<Option<Vec<u8>>> {
-        self.info("读取工程，验证原始快照与资源");
+        self.info(match self.options.mode {
+            BuildMode::Incremental => "开始增量构建，验证原始快照与资源",
+            BuildMode::Full => "开始全量重建，验证原始快照与资源",
+            BuildMode::Check => "开始工程检查，验证原始快照与资源",
+        });
+        if let Some(output) = self.output {
+            crate::cache::protect_output(self.root, output)?;
+        }
         let manifest: Manifest = workspace::deserialize(
             &workspace::read(self.root, ".hmi/manifest.toml")?,
             ".hmi/manifest.toml",
@@ -396,7 +421,36 @@ impl Engine<'_> {
                 .unwrap_or_else(|| Diagnostic::error("container_validation", error.to_string()))
                 .into());
         }
-        let baseline = Baseline::cold(&container)?;
+        let mut cache = None;
+        if self.options.mode != BuildMode::Check {
+            let root = self.root;
+            match crate::cache::Cache::open(
+                root,
+                &manifest.source_sha256,
+                self.options.mode == BuildMode::Full,
+                &mut |message| self.info(message),
+            ) {
+                Ok(opened) => cache = opened,
+                Err(error) if crate::cache::is_unsafe(&error) => return Err(error),
+                Err(error) => self.info(format!("构建缓存不可用，回退无缓存处理：{error}")),
+            }
+        }
+        let loaded = match &cache {
+            Some(cache) => cache.baseline(&container),
+            None => Ok(None),
+        };
+        let loaded = self.cache_result(&mut cache, loaded)?.flatten();
+        self.report.baseline_reused = loaded.is_some();
+        let baseline = if let Some(baseline) = loaded {
+            baseline
+        } else {
+            let baseline = Baseline::cold(&container)?;
+            if let Some(active) = cache.as_mut() {
+                let result = active.save_baseline(&baseline);
+                let _ = self.cache_result(&mut cache, result)?;
+            }
+            baseline
+        };
         if manifest != baseline.manifest {
             return Err(Error::Message("只读元数据或资源映射已改变".into()));
         }
@@ -463,33 +517,101 @@ impl Engine<'_> {
             "检查全局代码，按工程顺序处理 {} 个页面",
             baseline.pages.len()
         ));
-        for raw in script::check_unit(
-            &context,
-            None,
-            &[ScriptSource {
-                page: None,
-                object: None,
-                event: None,
-                file: "program.s".into(),
-                text: text.into(),
-            }],
-        ) {
+        let program_key = sha256(&program);
+        let diagnostic_context = json_hash(&(&self.report.context_sha256, &program_key))?;
+        let program_unit = crate::cache::Unit::Program;
+        let old_program = match &cache {
+            Some(cache) => cache.artifact(program_unit, &program_key),
+            None => Ok(None),
+        };
+        self.report.program_reused = self
+            .cache_result(&mut cache, old_program)?
+            .flatten()
+            .is_some_and(|bytes| bytes == program);
+        let old_diagnostics = if context.complete() {
+            match &cache {
+                Some(cache) => cache.diagnostics(program_unit, &diagnostic_context),
+                None => Ok(None),
+            }
+        } else {
+            Ok(None)
+        };
+        let old_diagnostics = self.cache_result(&mut cache, old_diagnostics)?.flatten();
+        let diagnostic_hit = old_diagnostics.is_some();
+        let program_diagnostics = old_diagnostics.unwrap_or_else(|| {
+            self.report.global_diagnostic_rechecked = true;
+            script::check_unit(
+                &context,
+                None,
+                &[ScriptSource {
+                    page: None,
+                    object: None,
+                    event: None,
+                    file: "program.s".into(),
+                    text: text.into(),
+                }],
+            )
+        });
+        if (!self.report.program_reused || !diagnostic_hit)
+            && let Some(active) = cache.as_mut()
+        {
+            let diagnostics = context
+                .complete()
+                .then_some((diagnostic_context.as_str(), program_diagnostics.as_slice()));
+            let result = active.save(
+                program_unit,
+                &program_key,
+                &program,
+                diagnostics,
+                self.report.program_reused,
+            );
+            let _ = self.cache_result(&mut cache, result)?;
+        }
+        for raw in program_diagnostics {
             self.global(raw);
         }
         let mut replacements = BTreeMap::new();
         for (i, input) in page_inputs.iter().enumerate() {
             let entry_index = baseline.entries[i];
-            let parsed;
-            let original = if let Some(page) = baseline.originals.get(&entry_index) {
-                page
+            let unit = crate::cache::Unit::Page(entry_index);
+            let hit = if input.errors.is_empty() {
+                match &cache {
+                    Some(cache) => cache.artifact(unit, &input.key),
+                    None => Ok(None),
+                }
             } else {
-                parsed = Page::parse(container.data(&container.entries[entry_index])?)?;
-                &parsed
+                Ok(None)
             };
-            let (bytes, mut raw) =
-                compile_page(self.root, &baseline, i, original, input, &mut self.inputs);
-            self.report.rebuilt_pages += 1;
-            if input.document.is_some() {
+            let hit = self.cache_result(&mut cache, hit)?.flatten();
+            let reused = hit.is_some();
+            let (bytes, mut raw) = if let Some(bytes) = hit {
+                self.report.reused_pages += 1;
+                (Some(bytes), Vec::new())
+            } else {
+                self.report.rebuilt_pages += 1;
+                let parsed;
+                let original = if let Some(page) = baseline.originals.get(&entry_index) {
+                    page
+                } else {
+                    parsed = Page::parse(container.data(&container.entries[entry_index])?)?;
+                    &parsed
+                };
+                compile_page(self.root, &baseline, i, original, input, &mut self.inputs)
+            };
+            let diagnostic_key = json_hash(&(&input.key, &diagnostic_context))?;
+            let hit = if bytes.is_some() && context.complete() {
+                match &cache {
+                    Some(cache) => cache.diagnostics(unit, &diagnostic_key),
+                    None => Ok(None),
+                }
+            } else {
+                Ok(None)
+            };
+            let hit = self.cache_result(&mut cache, hit)?.flatten();
+            let diagnostic_hit = hit.is_some();
+            if let Some(diagnostics) = hit {
+                raw.extend(diagnostics);
+            } else if bytes.is_some() {
                 raw.extend(script::check_unit(&context, Some(i), &input.sources));
                 self.report.diagnostic_rechecks += 1;
             }
@@ -512,6 +634,15 @@ impl Engine<'_> {
                         &b.code,
                     ))
             });
+            if (!reused || !diagnostic_hit)
+                && let (Some(bytes), Some(active)) = (bytes.as_ref(), cache.as_mut())
+            {
+                let diagnostics = context
+                    .complete()
+                    .then_some((diagnostic_key.as_str(), raw.as_slice()));
+                let result = active.save(unit, &input.key, bytes, diagnostics, reused);
+                let _ = self.cache_result(&mut cache, result)?;
+            }
             let effective = self.options.warnings.filter(&raw);
             let errors = effective
                 .iter()
@@ -527,7 +658,7 @@ impl Engine<'_> {
                 id: i,
                 name: baseline.pages[i].name.clone(),
                 resource: manifest.pages[i].resource.clone(),
-                reused: false,
+                reused,
                 success: errors == 0,
                 errors,
                 warnings,
@@ -587,19 +718,12 @@ pub(crate) fn publish(
     bytes: &[u8],
     inputs: &BTreeSet<String>,
 ) -> Result<()> {
-    let target = if output.exists() {
-        fs::canonicalize(output)?
-    } else {
-        std::path::absolute(output)?
-    };
-    let cache = std::path::absolute(root)?.join(".build/hmi-compiler");
-    if target.starts_with(&cache) {
-        return Err(Error::Message("构建输出不能位于工具缓存目录中".into()));
-    }
+    crate::cache::protect_output(root, output)?;
+    let target = crate::cache::absolute(output)?;
     for file in inputs {
         let source = workspace::resolve(root, file)?;
         if fs::canonicalize(&source).ok().as_ref() == Some(&target)
-            || std::path::absolute(&source)? == target
+            || crate::cache::absolute(&source)? == target
         {
             return Err(Error::Message("构建输出不能覆盖项目输入文件".into()));
         }
@@ -657,4 +781,9 @@ pub fn run(
         bytes,
         inputs: engine.inputs,
     }
+}
+
+/// 仅清理派生缓存，不删除工程源数据或最终输出。
+pub fn clean(root: &Path, info: &mut dyn FnMut(&str)) -> Result<CleanReport> {
+    crate::cache::clean(root, info)
 }

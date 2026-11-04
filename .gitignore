@@ -11,3 +11,4 @@
 *.[Hh][Mm][Ii]
 *.[Tt][Ff][Tt]
 .hmi/
+.build/

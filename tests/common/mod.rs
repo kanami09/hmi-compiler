@@ -181,8 +181,10 @@ impl Workspace {
         Self::with_pages(1)
     }
     pub fn with_pages(count: usize) -> Self {
+        Self::from_bytes(fixture_with_pages(count))
+    }
+    pub fn from_bytes(bytes: Vec<u8>) -> Self {
         let temporary = tempfile::tempdir().unwrap();
-        let bytes = fixture_with_pages(count);
         let input = temporary.path().join("input.HMI");
         std::fs::write(&input, &bytes).unwrap();
         let root = temporary.path().join("project");
