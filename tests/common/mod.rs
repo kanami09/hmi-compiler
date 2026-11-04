@@ -67,8 +67,12 @@ fn object(name: &str, kind: u8, id: u8) -> Vec<u8> {
 }
 
 pub fn page() -> Vec<u8> {
+    page_named("page0")
+}
+
+pub fn page_named(name: &str) -> Vec<u8> {
     let objects = [
-        object("page0", 121, 0),
+        object(name, 121, 0),
         object("b0", 98, 1),
         object("va0", 52, 2),
     ];
@@ -77,7 +81,7 @@ pub fn page() -> Vec<u8> {
     put_u32(&mut page, 12, objects.len()).unwrap();
     page[21] = 0x55;
     page[22] = 0x21;
-    page[24..29].copy_from_slice(b"page0");
+    page[24..24 + name.len()].copy_from_slice(name.as_bytes());
     for (i, bytes) in objects.iter().enumerate() {
         let offset = page.len() - 56;
         put_u32(&mut page, 56 + i * 12, offset).unwrap();
@@ -93,35 +97,48 @@ pub fn page() -> Vec<u8> {
 }
 
 pub fn fixture() -> Vec<u8> {
-    let mut main = vec![0; 96 + 3 * 16];
+    fixture_with_pages(1)
+}
+
+pub fn fixture_with_pages(count: usize) -> Vec<u8> {
+    let mut main = vec![0; 96 + (count + 2) * 16];
     put_u32(&mut main, 4, 96).unwrap();
     main[13] = 0x18;
     put_u32(&mut main, 24, 96).unwrap();
-    put_u32(&mut main, 28, 3).unwrap();
-    for (i, (kind, resource)) in [("i", "0.i"), ("zi", "0.zi"), ("pa", "39.pa")]
-        .iter()
-        .enumerate()
-    {
+    put_u32(&mut main, 28, count + 2).unwrap();
+    let references: Vec<(String, String)> =
+        [("i".into(), "0.i".into()), ("zi".into(), "0.zi".into())]
+            .into_iter()
+            .chain((0..count).map(|i| ("pa".into(), format!("{}.pa", 39 + i))))
+            .collect();
+    for (i, (kind, resource)) in references.iter().enumerate() {
         let start = 96 + i * 16;
         main[start..start + kind.len()].copy_from_slice(kind.as_bytes());
         main[start + 8..start + 8 + resource.len()].copy_from_slice(resource.as_bytes());
     }
     let crc = main_crc(&main).unwrap();
     main[..4].copy_from_slice(&crc.to_le_bytes());
-    let resources = [
-        ("old.bin", vec![0xAA; 11], true),
-        ("39.pa", page(), false),
-        ("main.HMI", main, false),
+    let mut resources: Vec<(String, Vec<u8>, bool)> =
+        vec![("old.bin".into(), vec![0xAA; 11], true)];
+    for i in 0..count {
+        resources.push((
+            format!("{}.pa", 39 + i),
+            page_named(&format!("page{i}")),
+            false,
+        ));
+    }
+    resources.extend([
+        ("main.HMI".into(), main, false),
         (
-            "Program.s",
+            "Program.s".into(),
             "// 全局代码\r\nint sys0=0\r\npage 0\r\n"
                 .as_bytes()
                 .to_vec(),
             false,
         ),
-        ("0.i", vec![0x55; 26], false),
-        ("0.zi", vec![0x33; 48], false),
-    ];
+        ("0.i".into(), vec![0x55; 26], false),
+        ("0.zi".into(), vec![0x33; 48], false),
+    ]);
     let mut out = vec![0x7B; DATA_START];
     out[DATA_START - 8..].copy_from_slice(b"ver21234");
     for base in [0, BACKUP_START] {
@@ -161,8 +178,11 @@ pub struct Workspace {
 
 impl Workspace {
     pub fn new() -> Self {
+        Self::with_pages(1)
+    }
+    pub fn with_pages(count: usize) -> Self {
         let temporary = tempfile::tempdir().unwrap();
-        let bytes = fixture();
+        let bytes = fixture_with_pages(count);
         let input = temporary.path().join("input.HMI");
         std::fs::write(&input, &bytes).unwrap();
         let root = temporary.path().join("project");

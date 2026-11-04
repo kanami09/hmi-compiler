@@ -1,171 +1,212 @@
-use clap::{Parser, Subcommand};
+mod output;
+use clap::{Args, Parser, Subcommand};
 use hmi_compiler::{
     Result,
+    build::{self, BuildMode, BuildOptions},
     container::Container,
-    diagnostic::{Diagnostic, Location, Severity, has_errors},
-    diff, project, workspace,
+    diagnostic::{Diagnostic, Location, has_errors},
+    diff, project,
+    warning::{CATEGORIES, WarningPolicy},
+    workspace,
 };
+use output::{ColorMode, Renderer};
 use serde_json::{Value, json};
 use std::path::PathBuf;
+
+fn warning_help() -> String {
+    let mut text = String::from(
+        "警告控制：-W类别 / -Wno-类别 / -Werror / -Wno-error / -Werror=类别 / -Wno-error=类别 / -Wall / -Wno-all / -w\n支持的类别：\n",
+    );
+    for (name, description) in CATEGORIES {
+        text.push_str(&format!("  {name:<20} {description}\n"));
+    }
+    text
+}
 
 #[derive(Parser)]
 #[command(version, about = "陶晶驰 HMI 工程解析与重构建")]
 struct Cli {
+    #[arg(
+        long,
+        global = true,
+        value_enum,
+        default_value = "auto",
+        help = "终端颜色策略"
+    )]
+    color: ColorMode,
     #[command(subcommand)]
     command: Command,
 }
 
-#[derive(Subcommand)]
-enum Command {
-    /// 查看二进制工程结构和校验结果
-    Inspect {
-        file: PathBuf,
-        #[arg(long)]
-        pages: bool,
-        #[arg(long)]
-        resources: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    /// 导出可读项目；保留完整原始数据以便独立回编
-    Export {
-        file: PathBuf,
-        #[arg(short, long)]
-        output: PathBuf,
-        #[arg(long)]
-        force: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    /// 检查可读项目及脚本辅助诊断，不输出工程文件
-    Check {
-        directory: PathBuf,
-        #[arg(long)]
-        deny_warnings: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    /// 校验项目并回编为 .HMI
-    Build {
-        directory: PathBuf,
-        #[arg(short, long)]
-        output: PathBuf,
-        #[arg(long)]
-        force: bool,
-        #[arg(long)]
-        deny_warnings: bool,
-        #[arg(long)]
-        json: bool,
-    },
-    /// 对比活动资源、属性和事件；发现差异仍返回成功
-    Diff {
-        old: PathBuf,
-        new: PathBuf,
-        #[arg(long)]
-        json: bool,
-    },
+#[derive(Args, Clone, Default)]
+struct DiagnosticArgs {
+    #[arg(short = 'W', action = clap::ArgAction::Append, value_name = "OPTION", help = "按类别控制警告，可重复，如 -Werror -Wno-script-dynamic")]
+    warnings: Vec<String>,
+    #[arg(short = 'w', help = "抑制全部警告")]
+    suppress: bool,
+    #[arg(long, help = "输出单个 JSON 对象")]
+    json: bool,
+}
+#[derive(Args)]
+#[command(after_help = warning_help())]
+struct InspectArgs {
+    file: PathBuf,
+    #[arg(long)]
+    pages: bool,
+    #[arg(long)]
+    resources: bool,
+    #[command(flatten)]
+    diagnostics: DiagnosticArgs,
+}
+#[derive(Args)]
+#[command(after_help = warning_help())]
+struct ExportArgs {
+    file: PathBuf,
+    #[arg(short, long)]
+    output: PathBuf,
+    #[arg(long)]
+    force: bool,
+    #[command(flatten)]
+    diagnostics: DiagnosticArgs,
+}
+#[derive(Args)]
+#[command(after_help = warning_help())]
+struct CheckArgs {
+    directory: PathBuf,
+    #[command(flatten)]
+    diagnostics: DiagnosticArgs,
+}
+#[derive(Args)]
+#[command(after_help = warning_help())]
+struct BuildArgs {
+    directory: PathBuf,
+    #[arg(short, long)]
+    output: PathBuf,
+    #[command(flatten)]
+    diagnostics: DiagnosticArgs,
+}
+#[derive(Args)]
+#[command(after_help = warning_help())]
+struct DiffArgs {
+    old: PathBuf,
+    new: PathBuf,
+    #[command(flatten)]
+    diagnostics: DiagnosticArgs,
 }
 
+#[derive(Subcommand)]
+enum Command {
+    /// 查看工程结构与校验结果
+    Inspect(InspectArgs),
+    /// 导出可读项目，--force 允许重新生成工具管理的文件
+    Export(ExportArgs),
+    /// 检查工程，不写目标文件或构建缓存
+    Check(CheckArgs),
+    /// 增量构建工程，成功后更新目标文件
+    Build(BuildArgs),
+    /// 全量重建工程，参数与 build 相同
+    Rebuild(BuildArgs),
+    /// 对比两个工程的活动资源与语义变化
+    Diff(DiffArgs),
+}
 impl Command {
-    fn json(&self) -> bool {
+    fn diagnostics(&self) -> &DiagnosticArgs {
         match self {
-            Self::Inspect { json, .. }
-            | Self::Export { json, .. }
-            | Self::Check { json, .. }
-            | Self::Build { json, .. }
-            | Self::Diff { json, .. } => *json,
+            Self::Inspect(a) => &a.diagnostics,
+            Self::Export(a) => &a.diagnostics,
+            Self::Check(a) => &a.diagnostics,
+            Self::Build(a) | Self::Rebuild(a) => &a.diagnostics,
+            Self::Diff(a) => &a.diagnostics,
         }
     }
     fn name(&self) -> &'static str {
         match self {
-            Self::Inspect { .. } => "inspect",
-            Self::Export { .. } => "export",
-            Self::Check { .. } => "check",
-            Self::Build { .. } => "build",
-            Self::Diff { .. } => "diff",
+            Self::Inspect(_) => "inspect",
+            Self::Export(_) => "export",
+            Self::Check(_) => "check",
+            Self::Build(_) => "build",
+            Self::Rebuild(_) => "rebuild",
+            Self::Diff(_) => "diff",
         }
     }
     fn file(&self) -> String {
         match self {
-            Self::Inspect { file, .. } | Self::Export { file, .. } => file,
-            Self::Check { directory, .. } | Self::Build { directory, .. } => directory,
-            Self::Diff { old, .. } => old,
+            Self::Inspect(a) => &a.file,
+            Self::Export(a) => &a.file,
+            Self::Check(a) => &a.directory,
+            Self::Build(a) | Self::Rebuild(a) => &a.directory,
+            Self::Diff(a) => &a.old,
         }
         .display()
         .to_string()
     }
+    fn engine(&self) -> bool {
+        matches!(self, Self::Build(_) | Self::Rebuild(_) | Self::Check(_))
+    }
 }
-
 struct Outcome {
     result: Value,
     diagnostics: Vec<Diagnostic>,
     ok: bool,
 }
 
-fn run(command: &Command) -> Result<Outcome> {
-    let (result, mut diagnostics, deny_warnings) = match command {
-        Command::Inspect {
-            file,
-            pages,
-            resources,
-            ..
-        } => {
-            let container = Container::parse(std::fs::read(file)?)?;
-            let (report, diagnostics) = project::inspect(&container, *pages, *resources);
-            (json!(report), diagnostics, false)
+fn run(command: &Command, policy: &WarningPolicy, renderer: &mut Renderer) -> Result<Outcome> {
+    let quiet = command.diagnostics().json;
+    let mut observer = |event: &build::BuildEvent| {
+        if !quiet {
+            renderer.event(event);
         }
-        Command::Export {
-            file,
-            output,
-            force,
-            ..
-        } => (
-            json!(workspace::export(file, output, *force)?),
-            Vec::new(),
-            false,
-        ),
-        Command::Check {
-            directory,
-            deny_warnings,
-            ..
-        } => {
-            let (report, diagnostics) = workspace::check(directory, false)?;
-            (json!(report), diagnostics, *deny_warnings)
-        }
-        Command::Build {
-            directory,
-            output,
-            force,
-            deny_warnings,
-            ..
-        } => {
-            if *deny_warnings {
-                let (report, diagnostics) = workspace::check(directory, false)?;
-                if !diagnostics.is_empty() {
-                    let mut diagnostics = diagnostics;
-                    diagnostics.push(Diagnostic::error(
-                        "deny_warnings",
-                        "存在警告，未写入构建输出",
-                    ));
-                    return Ok(Outcome {
-                        result: json!(report),
-                        diagnostics,
-                        ok: false,
-                    });
-                }
-            }
-            let (report, diagnostics) =
-                workspace::build(directory, output, *force, *deny_warnings)?;
-            (json!(report), diagnostics, false)
-        }
-        Command::Diff { old, new, .. } => (json!(diff::diff(old, new)?), Vec::new(), false),
     };
-    if deny_warnings && diagnostics.iter().any(|d| d.severity == Severity::Warning) {
-        diagnostics.push(Diagnostic::error(
-            "deny_warnings",
-            "--deny-warnings：检查存在警告",
-        ));
-    }
+    let (result, raw) = match command {
+        Command::Build(args) | Command::Rebuild(args) => {
+            let mode = if matches!(command, Command::Rebuild(_)) {
+                BuildMode::Full
+            } else {
+                BuildMode::Incremental
+            };
+            let outcome = build::run(
+                &args.directory,
+                Some(&args.output),
+                &BuildOptions {
+                    mode,
+                    warnings: policy.clone(),
+                },
+                &mut observer,
+            );
+            return Ok(Outcome {
+                result: json!(outcome.report),
+                diagnostics: outcome.diagnostics,
+                ok: outcome.success,
+            });
+        }
+        Command::Check(args) => {
+            let outcome = build::run(
+                &args.directory,
+                None,
+                &BuildOptions {
+                    mode: BuildMode::Check,
+                    warnings: policy.clone(),
+                },
+                &mut observer,
+            );
+            return Ok(Outcome {
+                result: json!(outcome.report),
+                diagnostics: outcome.diagnostics,
+                ok: outcome.success,
+            });
+        }
+        Command::Inspect(args) => {
+            let container = Container::parse(std::fs::read(&args.file)?)?;
+            let (report, diagnostics) = project::inspect(&container, args.pages, args.resources);
+            (json!(report), diagnostics)
+        }
+        Command::Export(args) => (
+            json!(workspace::export(&args.file, &args.output, args.force)?),
+            Vec::new(),
+        ),
+        Command::Diff(args) => (json!(diff::diff(&args.old, &args.new)?), Vec::new()),
+    };
+    let diagnostics = policy.filter(&raw);
     let ok = !has_errors(&diagnostics);
     Ok(Outcome {
         result,
@@ -278,25 +319,13 @@ fn human(command: &str, outcome: &Outcome) {
             _ => {}
         }
     }
-    for d in &outcome.diagnostics {
-        let label = if d.severity == Severity::Error {
-            "错误"
-        } else {
-            "警告"
-        };
-        let location = &d.location;
-        let mut at = location.file.clone().unwrap_or_default();
-        if let Some(line) = location.line {
-            at.push_str(&format!(":{line}"));
-        }
-        for text in [&location.page, &location.object, &location.property]
-            .into_iter()
-            .flatten()
-        {
-            at.push_str(&format!(" [{text}]"));
-        }
-        println!("{label} [{}] {at}：{}", d.code, d.message);
-    }
+}
+
+fn emit_json(outcome: &Outcome) {
+    println!(
+        "{}",
+        json!({"schema_version":1,"ok":outcome.ok,"result":outcome.result,"diagnostics":outcome.diagnostics})
+    );
 }
 
 fn main() {
@@ -305,36 +334,55 @@ fn main() {
         Err(error) => {
             let status = error.exit_code();
             if status != 0 && std::env::args_os().any(|a| a == "--json") {
-                println!(
-                    "{}",
-                    json!({"schema_version":1,"ok":false,"result":null,"diagnostics":[Diagnostic::error("arguments",error.to_string())]})
-                );
+                emit_json(&Outcome {
+                    result: Value::Null,
+                    ok: false,
+                    diagnostics: vec![Diagnostic::error("arguments", error.to_string())],
+                });
             } else {
                 let _ = error.print();
             }
             std::process::exit(status);
         }
     };
-    let outcome = match run(&cli.command) {
+    let args = cli.command.diagnostics();
+    let mut renderer = Renderer::new(cli.color);
+    let policy = match WarningPolicy::parse(&args.warnings, args.suppress) {
+        Ok(policy) => policy,
+        Err(error) => {
+            let outcome = Outcome {
+                result: Value::Null,
+                ok: false,
+                diagnostics: vec![Diagnostic::error("arguments", error.to_string())],
+            };
+            if args.json {
+                emit_json(&outcome);
+            } else {
+                renderer.diagnostic(&outcome.diagnostics[0], None);
+            }
+            std::process::exit(2);
+        }
+    };
+    let outcome = match run(&cli.command, &policy, &mut renderer) {
         Ok(outcome) => outcome,
         Err(error) => Outcome {
             result: Value::Null,
+            ok: false,
             diagnostics: vec![error.as_diagnostic().cloned().unwrap_or_else(|| {
                 Diagnostic::error("execution", error.to_string()).at(Location {
                     file: Some(cli.command.file()),
                     ..Location::default()
                 })
             })],
-            ok: false,
         },
     };
-    if cli.command.json() {
-        println!(
-            "{}",
-            json!({"schema_version":1,"ok":outcome.ok,"result":outcome.result,"diagnostics":outcome.diagnostics})
-        );
-    } else {
+    if args.json {
+        emit_json(&outcome);
+    } else if !cli.command.engine() {
         human(cli.command.name(), &outcome);
+        for diagnostic in &outcome.diagnostics {
+            renderer.diagnostic(diagnostic, None);
+        }
     }
     if !outcome.ok {
         std::process::exit(1);

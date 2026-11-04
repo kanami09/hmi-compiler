@@ -1,6 +1,7 @@
 //! 陶晶驰 ver21234 工程的保真解析、工作目录导出和回编。
 
 pub mod binary;
+pub mod build;
 pub mod container;
 pub mod diagnostic;
 pub mod diff;

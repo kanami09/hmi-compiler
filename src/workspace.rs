@@ -11,7 +11,6 @@ use crate::{Error, Result, hex, sha256};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 
 const META: &str = ".hmi/manifest.toml";
@@ -72,11 +71,11 @@ pub struct Manifest {
     pub managed_files: Vec<String>,
 }
 
-struct Bundle {
-    files: BTreeMap<String, Vec<u8>>,
-    manifest: Manifest,
-    project: ProjectFile,
-    pages: Vec<PageFile>,
+pub(crate) struct Bundle {
+    pub(crate) files: BTreeMap<String, Vec<u8>>,
+    pub(crate) manifest: Manifest,
+    pub(crate) project: ProjectFile,
+    pub(crate) pages: Vec<PageFile>,
 }
 
 fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>> {
@@ -85,7 +84,7 @@ fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>> {
         .map_err(|e| Error::Message(format!("TOML 序列化失败：{e}")))
 }
 
-fn deserialize<T: serde::de::DeserializeOwned>(bytes: &[u8], path: &str) -> Result<T> {
+pub(crate) fn deserialize<T: serde::de::DeserializeOwned>(bytes: &[u8], path: &str) -> Result<T> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| Error::Message(format!("{path}：文件不是 UTF-8")))?;
     toml::from_str(text).map_err(|e| Error::Message(format!("{path}：{e}")))
@@ -292,7 +291,7 @@ fn embedded_pngs(bytes: &[u8]) -> Vec<Vec<u8>> {
     images
 }
 
-fn make_bundle(container: &Container, project: &Project) -> Result<Bundle> {
+pub(crate) fn make_bundle(container: &Container, project: &Project) -> Result<Bundle> {
     let mut files = BTreeMap::new();
     files.insert(SOURCE.into(), container.bytes.clone());
     let program = container.data(
@@ -427,7 +426,7 @@ pub fn relative(path: &str) -> Result<&Path> {
     Ok(value)
 }
 
-fn is_link(metadata: &fs::Metadata) -> bool {
+pub(crate) fn is_link(metadata: &fs::Metadata) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
@@ -439,7 +438,7 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     }
 }
 
-fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
+pub(crate) fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
     let relative = relative(path)?;
     let mut cursor = root.to_owned();
     for component in relative.components() {
@@ -458,11 +457,11 @@ fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
     Ok(cursor)
 }
 
-fn read(root: &Path, path: &str) -> Result<Vec<u8>> {
+pub(crate) fn read(root: &Path, path: &str) -> Result<Vec<u8>> {
     fs::read(resolve(root, path)?).map_err(|e| Error::Message(format!("{path}：{e}")))
 }
 
-fn parent(path: &Path) -> &Path {
+pub(crate) fn parent(path: &Path) -> &Path {
     path.parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."))
@@ -845,240 +844,49 @@ pub(crate) fn update_object(
     object.rebuild(&values, &codes)
 }
 
+/// 完整校验并在内存中生成工程，不写缓存或输出。
 pub fn prepare(root: &Path) -> Result<Prepared> {
-    let manifest: Manifest = deserialize(&read(root, META)?, META)?;
-    if manifest.format_version != 1 {
-        return Err(Error::Message("不支持的原始元数据版本".into()));
-    }
-    let source = read(root, SOURCE)?;
-    if sha256(&source) != manifest.source_sha256 {
-        return Err(Error::Message(
-            ".hmi/container.bin 摘要不匹配，原始快照已改变".into(),
-        ));
-    }
-    let container = Container::parse(source)?;
-    container.strict()?;
-    let project = Project::parse(&container)?;
-    project.strict()?;
-    let expected = make_bundle(&container, &project)?;
-    if manifest != expected.manifest {
-        return Err(Error::Message("只读元数据或资源映射已改变".into()));
-    }
-    let description: ProjectFile = deserialize(&read(root, "project.toml")?, "project.toml")?;
-    if description != expected.project {
-        return Err(Error::Message(
-            "工程格式、编码或页面顺序发生变化；首版禁止结构编辑".into(),
-        ));
-    }
-    for asset in &manifest.assets {
-        if sha256(&read(root, &asset.path)?) != asset.sha256 {
-            return Err(Error::Message(format!("只读素材已修改：{}", asset.path)));
-        }
-    }
-    let mut inputs: BTreeSet<_> = manifest.managed_files.iter().cloned().collect();
-    let mut replacements = BTreeMap::new();
-    let mut script_sources = Vec::new();
-    for (i, ((entry_index, page), mapping)) in project.pages.iter().zip(&manifest.pages).enumerate()
-    {
-        let path = format!("{}/page.toml", mapping.path);
-        let document = source::PageDocument::parse(&read(root, &path)?, &path)?;
-        let edited = &document.page;
-        let baseline = &expected.pages[i];
-        if edited.name != baseline.name || edited.objects.len() != baseline.objects.len() {
-            return Err(Error::Message(format!(
-                "{path}：首版禁止改变页面名或对象数量"
-            )));
-        }
-        let baseline_own = ObjectFile {
-            name: baseline.name.clone(),
-            type_name: "page".into(),
-            properties: baseline.properties.clone(),
-            events: baseline.events.clone(),
-        };
-        let edited_own = ObjectFile {
-            name: edited.name.clone(),
-            type_name: "page".into(),
-            properties: edited.properties.clone(),
-            events: edited.events.clone(),
-        };
-        let all_baseline: Vec<_> = std::iter::once(&baseline_own)
-            .chain(baseline.objects.iter())
-            .collect();
-        let all_edited: Vec<_> = std::iter::once(&edited_own)
-            .chain(edited.objects.iter())
-            .collect();
-        let mut objects = Vec::new();
-        for (object_index, ((object, baseline), edited)) in page
-            .objects
-            .iter()
-            .zip(all_baseline)
-            .zip(all_edited)
-            .enumerate()
-        {
-            objects.push(update_object(
-                ObjectUpdate {
-                    root,
-                    document: &document,
-                    index: object_index,
-                    references: &project.references,
-                    input_files: &mut inputs,
-                    scripts: None,
-                },
-                object,
-                baseline,
-                edited,
-            )?);
-            for (event, path) in &edited.events {
-                let file = format!("{}/{path}", mapping.path);
-                let text = String::from_utf8(read(root, &file)?)
-                    .map_err(|_| Error::Message(format!("{file} 不是 UTF-8")))?;
-                script_sources.push(crate::script::ScriptSource {
-                    page: Some(i),
-                    object: Some(object_index),
-                    event: Some(event.clone()),
-                    file,
-                    text,
-                });
-            }
-        }
-        let bytes = page.rebuild(&objects)?;
-        if bytes != page.raw {
-            replacements.insert(*entry_index, bytes);
-        }
-    }
-    let program = read(root, "program.s")?;
-    let program_text =
-        std::str::from_utf8(&program).map_err(|_| Error::Message("program.s 不是 UTF-8".into()))?;
-    if program_text.contains('\0') {
-        return Err(Error::Message("program.s 不能包含 NUL".into()));
-    }
-    let index = project.program_index.unwrap();
-    if program != container.data(&container.entries[index])? {
-        replacements.insert(index, program.clone());
-    }
-    script_sources.push(crate::script::ScriptSource {
-        page: None,
-        object: None,
-        event: None,
-        file: "program.s".into(),
-        text: program_text.into(),
-    });
-    let bytes = container.rebuild(&replacements)?;
-    // 回编输出必须能够重新通过全部结构与 CRC 检查。
-    let rebuilt = Container::parse(bytes.clone())?;
-    rebuilt.strict()?;
-    let rebuilt_project = Project::parse(&rebuilt)?;
-    rebuilt_project.strict()?;
-    let diagnostics = crate::script::check(&rebuilt_project, &script_sources);
-    for entry in &container.entries {
-        let expected = replacements
-            .get(&entry.index)
-            .map(Vec::as_slice)
-            .unwrap_or(container.data(entry)?);
-        if rebuilt.data(&rebuilt.entries[entry.index])? != expected {
-            return Err(Error::Message(format!(
-                "回编验证发现非预期资源变化：{}",
-                entry.name
-            )));
-        }
+    let outcome = crate::build::run(
+        root,
+        None,
+        &crate::build::BuildOptions {
+            mode: crate::build::BuildMode::Check,
+            ..Default::default()
+        },
+        &mut |_| {},
+    );
+    if !outcome.success {
+        return Err(outcome
+            .diagnostics
+            .into_iter()
+            .find(|d| d.severity == Severity::Error)
+            .unwrap_or_else(|| Diagnostic::error("build_failed", "工程构建失败"))
+            .into());
     }
     Ok(Prepared {
-        bytes,
-        diagnostics,
-        changed_resources: replacements
-            .keys()
-            .map(|i| container.entries[*i].name.clone())
-            .collect(),
-        input_files: inputs,
+        bytes: outcome.bytes.expect("成功构建具有输出字节"),
+        diagnostics: outcome.diagnostics,
+        changed_resources: outcome.report.changed_resources,
+        input_files: outcome.inputs,
     })
 }
 
-#[derive(Debug, Serialize)]
-pub struct CheckReport {
-    pub changed_resources: Vec<String>,
-    pub byte_identical: bool,
-    pub output_size: usize,
-}
-
-pub fn check(root: &Path, deny_warnings: bool) -> Result<(CheckReport, Vec<Diagnostic>)> {
-    let prepared = prepare(root)?;
-    if deny_warnings && !prepared.diagnostics.is_empty() {
-        return Err(Error::Message(format!(
-            "--deny-warnings：发现 {} 条警告",
-            prepared.diagnostics.len()
-        )));
-    }
-    let report = CheckReport {
-        byte_identical: prepared.changed_resources.is_empty(),
-        changed_resources: prepared.changed_resources,
-        output_size: prepared.bytes.len(),
-    };
-    Ok((report, prepared.diagnostics))
-}
-
-#[derive(Debug, Serialize)]
-pub struct BuildReport {
-    pub output: String,
-    pub sha256: String,
-    pub size: usize,
-    pub changed_resources: Vec<String>,
-    pub byte_identical: bool,
+pub fn check(root: &Path, options: &crate::build::BuildOptions) -> crate::build::BuildOutcome {
+    crate::build::run(
+        root,
+        None,
+        &crate::build::BuildOptions {
+            mode: crate::build::BuildMode::Check,
+            warnings: options.warnings.clone(),
+        },
+        &mut |_| {},
+    )
 }
 
 pub fn build(
     root: &Path,
     output: &Path,
-    force: bool,
-    deny_warnings: bool,
-) -> Result<(BuildReport, Vec<Diagnostic>)> {
-    let prepared = prepare(root)?;
-    if deny_warnings
-        && prepared
-            .diagnostics
-            .iter()
-            .any(|d| d.severity == Severity::Warning)
-    {
-        return Err(Error::Message(format!(
-            "--deny-warnings：发现 {} 条警告",
-            prepared.diagnostics.len()
-        )));
-    }
-    if output.exists() {
-        if !force {
-            return Err(Error::Message(
-                "输出文件已存在；使用 --force 允许覆盖".into(),
-            ));
-        }
-        let canonical_output = fs::canonicalize(output)?;
-        for path in &prepared.input_files {
-            if let Ok(input) = fs::canonicalize(resolve(root, path)?)
-                && input == canonical_output
-            {
-                return Err(Error::Message("构建输出不能覆盖项目输入文件".into()));
-            }
-        }
-    }
-    fs::create_dir_all(parent(output))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent(output))?;
-    temporary.write_all(&prepared.bytes)?;
-    temporary.as_file_mut().sync_all()?;
-    if force {
-        temporary
-            .persist(output)
-            .map_err(|e| Error::Message(format!("发布输出失败：{}", e.error)))?;
-    } else {
-        temporary
-            .persist_noclobber(output)
-            .map_err(|e| Error::Message(format!("发布输出失败：{}", e.error)))?;
-    }
-    Ok((
-        BuildReport {
-            output: output.display().to_string(),
-            sha256: sha256(&prepared.bytes),
-            size: prepared.bytes.len(),
-            byte_identical: prepared.changed_resources.is_empty(),
-            changed_resources: prepared.changed_resources,
-        },
-        prepared.diagnostics,
-    ))
+    options: &crate::build::BuildOptions,
+) -> crate::build::BuildOutcome {
+    crate::build::run(root, Some(output), options, &mut |_| {})
 }

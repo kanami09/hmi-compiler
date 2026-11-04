@@ -270,7 +270,7 @@ fn failed_build_does_not_overwrite_and_force_export_preserves_user_files() {
     let mut page = w.read_page();
     page.objects[0].properties.insert("w".into(), 0.into());
     w.write_page(&page);
-    assert!(workspace::build(&w.root, &output, true, false).is_err());
+    assert!(!workspace::build(&w.root, &output, &Default::default()).success);
     assert_eq!(fs::read(&output).unwrap(), b"keep");
     fs::write(w.root.join("notes.md"), "用户笔记").unwrap();
     let input = w.temporary.path().join("input.HMI");
@@ -281,10 +281,17 @@ fn failed_build_does_not_overwrite_and_force_export_preserves_user_files() {
         fs::read_to_string(w.root.join("notes.md")).unwrap(),
         "用户笔记"
     );
-    workspace::build(&w.root, &output, true, false).unwrap();
+    assert!(workspace::build(&w.root, &output, &Default::default()).success);
     assert_eq!(fs::read(&output).unwrap(), w.bytes);
-    assert!(workspace::build(&w.root, &w.root.join(".hmi/container.bin"), true, false).is_err());
-    assert!(workspace::build(&w.root, &output, false, false).is_err());
+    assert!(
+        !workspace::build(
+            &w.root,
+            &w.root.join(".hmi/container.bin"),
+            &Default::default()
+        )
+        .success
+    );
+    assert!(workspace::build(&w.root, &output, &Default::default()).success);
 }
 
 #[test]
@@ -381,7 +388,18 @@ fn global_code_and_script_diagnostics() {
             .any(|d| d.location.line == Some(1) || d.location.line == Some(2))
     );
     let out = w.temporary.path().join("denied.HMI");
-    assert!(workspace::build(&w.root, &out, false, true).is_err());
+    assert!(
+        !workspace::build(
+            &w.root,
+            &out,
+            &hmi_compiler::build::BuildOptions {
+                warnings: hmi_compiler::warning::WarningPolicy::parse(&["error".into()], false)
+                    .unwrap(),
+                ..Default::default()
+            }
+        )
+        .success
+    );
     assert!(!out.exists());
 }
 

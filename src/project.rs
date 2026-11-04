@@ -3,10 +3,10 @@ use crate::container::{Container, DirectoryStatus, Entry};
 use crate::diagnostic::{Diagnostic, Location, has_errors};
 use crate::page::Page;
 use crate::{Error, Result};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Reference {
     pub kind: String,
     pub resource: String,

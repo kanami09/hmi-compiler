@@ -13,6 +13,118 @@ pub struct ScriptSource {
     pub text: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SymbolObject {
+    pub name: String,
+    pub type_code: u8,
+    pub id: u8,
+    pub properties: std::collections::BTreeMap<String, toml::Value>,
+}
+impl SymbolObject {
+    fn integer(&self, key: &str) -> Option<u32> {
+        self.properties
+            .get(key)?
+            .as_integer()
+            .and_then(|n| u32::try_from(n).ok())
+    }
+    fn attribute(&self, key: &str) -> Option<&toml::Value> {
+        self.properties.get(key)
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct SymbolPage {
+    pub name: String,
+    pub objects: Vec<SymbolObject>,
+    pub valid: bool,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Context {
+    pub pages: Vec<SymbolPage>,
+    pub references: Vec<crate::project::Reference>,
+}
+impl Context {
+    pub fn from_project(project: &Project) -> Self {
+        Self {
+            references: project.references.clone(),
+            pages: project
+                .pages
+                .iter()
+                .map(|(_, page)| SymbolPage {
+                    name: page.name.clone(),
+                    valid: true,
+                    objects: page
+                        .objects
+                        .iter()
+                        .map(|object| SymbolObject {
+                            name: object.name.clone(),
+                            type_code: object.type_code,
+                            id: object.id,
+                            properties: object
+                                .attributes
+                                .iter()
+                                .map(|a| {
+                                    (
+                                        a.name.clone(),
+                                        object
+                                            .integer(&a.name)
+                                            .map(|v| toml::Value::Integer(v.into()))
+                                            .unwrap_or_else(|| {
+                                                toml::Value::String(crate::hex(&a.value))
+                                            }),
+                                    )
+                                })
+                                .collect(),
+                        })
+                        .collect(),
+                })
+                .collect(),
+        }
+    }
+    pub fn overlay(&mut self, index: usize, description: Option<&crate::workspace::PageFile>) {
+        let page = &mut self.pages[index];
+        let Some(description) = description else {
+            page.valid = false;
+            return;
+        };
+        if description.name != page.name || description.objects.len() + 1 != page.objects.len() {
+            page.valid = false;
+            return;
+        }
+        for (i, object) in page.objects.iter_mut().enumerate() {
+            let (name, properties) = if i == 0 {
+                (&description.name, &description.properties)
+            } else {
+                (
+                    &description.objects[i - 1].name,
+                    &description.objects[i - 1].properties,
+                )
+            };
+            if name != &object.name
+                || properties
+                    .get("vscope")
+                    .and_then(toml::Value::as_integer)
+                    .is_some_and(|n| !(0..=1).contains(&n))
+            {
+                page.valid = false;
+            }
+            for (key, value) in properties {
+                if object.properties.contains_key(key) {
+                    object.properties.insert(key.clone(), value.clone());
+                }
+            }
+        }
+    }
+    pub fn complete(&self) -> bool {
+        self.pages.iter().all(|page| page.valid)
+    }
+    pub fn fingerprint(&self) -> crate::Result<String> {
+        let value = serde_json::json!({"references":self.references,"pages":self.pages.iter().map(|p| serde_json::json!({"name":p.name,"valid":p.valid,"objects":p.objects.iter().map(|o| serde_json::json!({"name":o.name,"type":o.type_code,"id":o.id,"properties":o.properties.keys().collect::<Vec<_>>(),"vscope":o.properties.get("vscope")})).collect::<Vec<_>>()})).collect::<Vec<_>>()});
+        Ok(crate::sha256(
+            &serde_json::to_vec(&value).map_err(|e| crate::Error::Message(e.to_string()))?,
+        ))
+    }
+}
+
 #[derive(Debug)]
 struct Token {
     text: String,
@@ -122,7 +234,7 @@ fn number(tokens: &[Token]) -> Option<i64> {
 }
 
 struct Checker<'a> {
-    project: &'a Project,
+    project: &'a Context,
     page: Option<usize>,
     object: Option<usize>,
     event: Option<&'a str>,
@@ -136,10 +248,7 @@ impl Checker<'_> {
         if !self.seen.insert((code.into(), line)) {
             return;
         }
-        let page = self
-            .page
-            .and_then(|i| self.project.pages.get(i))
-            .map(|(_, p)| p);
+        let page = self.page.and_then(|i| self.project.pages.get(i));
         let object = page.and_then(|p| self.object.and_then(|i| p.objects.get(i)));
         self.diagnostics
             .push(Diagnostic::warning(code, message).at(Location {
@@ -154,10 +263,18 @@ impl Checker<'_> {
     }
 
     fn reference(&mut self, page_id: usize, object_id: usize, field: Option<&str>, line: usize) {
-        let Some((_, page)) = self.project.pages.get(page_id) else {
+        let Some(page) = self.project.pages.get(page_id) else {
             self.warn("script_page", format!("页面 ID {page_id} 不存在"), line);
             return;
         };
+        if !page.valid {
+            self.warn(
+                "script_context",
+                format!("目标页面 {} 存在错误，本次无法完成跨页引用检查", page.name),
+                line,
+            );
+            return;
+        }
         let Some(object) = page.objects.get(object_id) else {
             self.warn(
                 "script_object",
@@ -189,7 +306,7 @@ impl Checker<'_> {
 
     fn named(&mut self, page_name: Option<&str>, object_name: &str, field: &str, line: usize) {
         let page_id = if let Some(name) = page_name {
-            match self.project.pages.iter().position(|(_, p)| p.name == name) {
+            match self.project.pages.iter().position(|p| p.name == name) {
                 Some(i) => i,
                 None => {
                     self.warn("script_page", format!("页面 {name} 不存在"), line);
@@ -206,7 +323,7 @@ impl Checker<'_> {
             );
             return;
         };
-        let page = &self.project.pages[page_id].1;
+        let page = &self.project.pages[page_id];
         if let Some(i) = page.objects.iter().position(|o| o.name == object_name) {
             self.reference(page_id, i, Some(field), line);
         } else {
@@ -289,11 +406,7 @@ impl Checker<'_> {
             {
                 let second = &tokens[i + 2].text;
                 if second == "b" && tokens.get(i + 3).is_some_and(|t| t.text == "[") {
-                    let page_id = self
-                        .project
-                        .pages
-                        .iter()
-                        .position(|(_, p)| p.name == t.text);
+                    let page_id = self.project.pages.iter().position(|p| p.name == t.text);
                     if page_id.is_none() {
                         self.warn("script_page", format!("页面 {} 不存在", t.text), t.line);
                     }
@@ -323,12 +436,7 @@ impl Checker<'_> {
                     .text
                     .parse::<usize>()
                     .map(|n| n < self.project.pages.len())
-                    .unwrap_or_else(|_| {
-                        self.project
-                            .pages
-                            .iter()
-                            .any(|(_, p)| p.name == target.text)
-                    });
+                    .unwrap_or_else(|_| self.project.pages.iter().any(|p| p.name == target.text));
                 let expression = tokens
                     .get(i + 2)
                     .is_some_and(|next| next.line == target.line && next.text != ";");
@@ -345,11 +453,15 @@ impl Checker<'_> {
     }
 }
 
-pub fn check(project: &Project, sources: &[ScriptSource]) -> Vec<Diagnostic> {
+pub(crate) fn check_unit(
+    project: &Context,
+    page_index: Option<usize>,
+    sources: &[ScriptSource],
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let fonts = project.references.iter().filter(|r| r.kind == "zi").count();
     let images = project.references.iter().filter(|r| r.kind == "i").count();
-    for (_, page) in &project.pages {
+    if let Some(page) = page_index.and_then(|index| project.pages.get(index)) {
         for (object_index, object) in page.objects.iter().enumerate() {
             let mut keys = vec![("font", fonts, 255)];
             let picture_key = match (object.type_code, object.integer("sta")) {
