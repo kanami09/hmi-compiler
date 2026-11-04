@@ -136,7 +136,8 @@ pub fn page_to_toml(page: &PageFile) -> Result<String> {
         properties: &page.properties,
         events: &page.events,
     };
-    let mut output = String::from_utf8(serialize(&header)?).map_err(|e| Error(e.to_string()))?;
+    let mut output =
+        String::from_utf8(serialize(&header)?).map_err(|e| Error::Message(e.to_string()))?;
     for object in &page.objects {
         output.push_str("\n[[objects]]\n");
         output.push_str(&format!(

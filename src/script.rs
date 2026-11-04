@@ -1,9 +1,17 @@
 //! 脚本辅助诊断。
 use crate::diagnostic::{Diagnostic, Location};
 use crate::project::Project;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-pub type ScriptSource = (Option<usize>, Option<usize>, String, String);
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ScriptSource {
+    pub page: Option<usize>,
+    pub object: Option<usize>,
+    pub event: Option<String>,
+    pub file: String,
+    pub text: String,
+}
 
 #[derive(Debug)]
 struct Token {
@@ -117,6 +125,7 @@ struct Checker<'a> {
     project: &'a Project,
     page: Option<usize>,
     object: Option<usize>,
+    event: Option<&'a str>,
     file: &'a str,
     diagnostics: &'a mut Vec<Diagnostic>,
     seen: BTreeSet<(String, usize)>,
@@ -137,6 +146,8 @@ impl Checker<'_> {
                 file: Some(self.file.into()),
                 page: page.map(|p| p.name.clone()),
                 object: object.map(|o| o.name.clone()),
+                event: self.event.map(str::to_owned),
+                object_index: self.object,
                 line: Some(line),
                 ..Location::default()
             }));
@@ -227,7 +238,8 @@ impl Checker<'_> {
         } else {
             self.warn(
                 "script_dynamic",
-                "名称组含动态 ID 或依赖当前页面，无法静态确认目标".into(),
+                "名称组使用了动态 ID 或依赖当前页面，无法在静态检查阶段确定目标控件及属性是否有效"
+                    .into(),
                 line,
             );
         }
@@ -254,7 +266,7 @@ impl Checker<'_> {
                 if page_id.is_none() {
                     self.warn(
                         "script_dynamic",
-                        "页面名称组含动态 ID，无法静态确认目标".into(),
+                        "页面名称组使用了动态 ID，无法在静态检查阶段确定目标页面是否有效".into(),
                         t.line,
                     );
                 }
@@ -338,7 +350,7 @@ pub fn check(project: &Project, sources: &[ScriptSource]) -> Vec<Diagnostic> {
     let fonts = project.references.iter().filter(|r| r.kind == "zi").count();
     let images = project.references.iter().filter(|r| r.kind == "i").count();
     for (_, page) in &project.pages {
-        for object in &page.objects {
+        for (object_index, object) in page.objects.iter().enumerate() {
             let mut keys = vec![("font", fonts, 255)];
             let picture_key = match (object.type_code, object.integer("sta")) {
                 (112, _) | (121, Some(1)) => Some("pic"),
@@ -365,6 +377,7 @@ pub fn check(project: &Project, sources: &[ScriptSource]) -> Vec<Diagnostic> {
                         .at(Location {
                             page: Some(page.name.clone()),
                             object: Some(object.name.clone()),
+                            object_index: Some(object_index),
                             property: Some(key.into()),
                             ..Location::default()
                         }),
@@ -373,16 +386,17 @@ pub fn check(project: &Project, sources: &[ScriptSource]) -> Vec<Diagnostic> {
             }
         }
     }
-    for (page, object, file, text) in sources {
+    for source in sources {
         Checker {
             project,
-            page: *page,
-            object: *object,
-            file,
+            page: source.page,
+            object: source.object,
+            event: source.event.as_deref(),
+            file: &source.file,
             diagnostics: &mut diagnostics,
             seen: BTreeSet::new(),
         }
-        .scan(text);
+        .scan(&source.text);
     }
     diagnostics
 }

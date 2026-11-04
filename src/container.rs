@@ -40,7 +40,7 @@ fn directory(bytes: &[u8], base: usize) -> Result<(Vec<Entry>, DirectoryStatus)>
     let count = usize32(bytes, base)?;
     let table_end = checked_table(bytes, base + 4, count, 28)?;
     if table_end + 4 > base + BACKUP_START {
-        return Err(Error("目录超出其保留空间".into()));
+        return Err(Error::Message("目录超出其保留空间".into()));
     }
     let stored_crc = u32_at(bytes, table_end)?;
     let computed_crc = directory_crc(&bytes[base..table_end])?;
@@ -79,7 +79,7 @@ fn directory(bytes: &[u8], base: usize) -> Result<(Vec<Entry>, DirectoryStatus)>
 impl Container {
     pub fn parse(bytes: Vec<u8>) -> Result<Self> {
         if slice(&bytes, DATA_START - 8, 8)? != b"ver21234" {
-            return Err(Error("不支持的容器版本：需要 ver21234".into()));
+            return Err(Error::Message("不支持的容器版本：需要 ver21234".into()));
         }
         let primary = directory(&bytes, 0);
         let backup = directory(&bytes, BACKUP_START);
@@ -122,7 +122,7 @@ impl Container {
             (_, Ok((entries, status))) if status.crc_valid => entries.clone(),
             (Ok((entries, _)), _) | (_, Ok((entries, _))) => entries.clone(),
             _ => {
-                return Err(Error(format!(
+                return Err(Error::Message(format!(
                     "主备目录均无法解析：{}；{}",
                     primary.unwrap_err(),
                     backup.unwrap_err()
@@ -179,10 +179,12 @@ impl Container {
 
     pub fn strict(&self) -> Result<()> {
         if has_errors(&self.diagnostics) {
-            return Err(Error("容器校验失败，请使用 inspect 查看诊断".into()));
+            return Err(Error::Message(
+                "容器校验失败，请使用 inspect 查看诊断".into(),
+            ));
         }
         if !self.contiguous {
-            return Err(Error("首版不支持非连续资源布局".into()));
+            return Err(Error::Message("首版不支持非连续资源布局".into()));
         }
         Ok(())
     }
@@ -208,7 +210,7 @@ impl Container {
             .keys()
             .any(|i| self.entries.get(*i).is_none_or(|e| e.deleted))
         {
-            return Err(Error("只能替换已有活动资源".into()));
+            return Err(Error::Message("只能替换已有活动资源".into()));
         }
         let mut result = self.bytes[..DATA_START].to_vec();
         let mut physical: Vec<_> = self.entries.iter().collect();

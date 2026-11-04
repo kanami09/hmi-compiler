@@ -319,12 +319,12 @@ fn main() {
         Ok(outcome) => outcome,
         Err(error) => Outcome {
             result: Value::Null,
-            diagnostics: vec![
+            diagnostics: vec![error.as_diagnostic().cloned().unwrap_or_else(|| {
                 Diagnostic::error("execution", error.to_string()).at(Location {
                     file: Some(cli.command.file()),
                     ..Location::default()
-                }),
-            ],
+                })
+            })],
             ok: false,
         },
     };

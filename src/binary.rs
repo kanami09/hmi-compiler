@@ -4,9 +4,9 @@ use crate::{Error, Result};
 pub fn slice(bytes: &[u8], offset: usize, length: usize) -> Result<&[u8]> {
     let end = offset
         .checked_add(length)
-        .ok_or_else(|| Error(format!("偏移溢出：0x{offset:X} + {length}")))?;
+        .ok_or_else(|| Error::Message(format!("偏移溢出：0x{offset:X} + {length}")))?;
     bytes.get(offset..end).ok_or_else(|| {
-        Error(format!(
+        Error::Message(format!(
             "文件越界：0x{offset:X}..0x{end:X}，可用 {} 字节",
             bytes.len()
         ))
@@ -26,26 +26,27 @@ pub fn usize32(bytes: &[u8], offset: usize) -> Result<usize> {
 pub fn checked_table(bytes: &[u8], offset: usize, count: usize, width: usize) -> Result<usize> {
     let length = count
         .checked_mul(width)
-        .ok_or_else(|| Error("表格长度溢出".into()))?;
+        .ok_or_else(|| Error::Message("表格长度溢出".into()))?;
     slice(bytes, offset, length)?;
     Ok(offset + length)
 }
 
 pub fn put_u32(bytes: &mut [u8], offset: usize, value: usize) -> Result<()> {
-    let value = u32::try_from(value).map_err(|_| Error("输出超过 u32 格式限制".into()))?;
+    let value = u32::try_from(value).map_err(|_| Error::Message("输出超过 u32 格式限制".into()))?;
     let end = offset
         .checked_add(4)
-        .ok_or_else(|| Error("写入偏移溢出".into()))?;
+        .ok_or_else(|| Error::Message("写入偏移溢出".into()))?;
     bytes
         .get_mut(offset..end)
-        .ok_or_else(|| Error("写入越界".into()))?
+        .ok_or_else(|| Error::Message("写入越界".into()))?
         .copy_from_slice(&value.to_le_bytes());
     Ok(())
 }
 
 pub fn name(bytes: &[u8]) -> Result<String> {
     let end = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-    String::from_utf8(bytes[..end].to_vec()).map_err(|_| Error("名称不是有效 UTF-8".into()))
+    String::from_utf8(bytes[..end].to_vec())
+        .map_err(|_| Error::Message("名称不是有效 UTF-8".into()))
 }
 
 const fn crc_table() -> [u32; 256] {
@@ -91,7 +92,7 @@ pub fn crc_bytes(parts: &[&[u8]]) -> u32 {
 
 pub fn directory_crc(bytes: &[u8]) -> Result<u32> {
     if !bytes.len().is_multiple_of(4) {
-        return Err(Error("目录 CRC 输入必须为 4 字节倍数".into()));
+        return Err(Error::Message("目录 CRC 输入必须为 4 字节倍数".into()));
     }
     let mut crc = u32::MAX;
     for chunk in bytes.as_chunks::<4>().0 {

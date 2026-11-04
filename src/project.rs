@@ -25,7 +25,7 @@ impl Project {
     pub fn parse(container: &Container) -> Result<Self> {
         let main = container
             .active("main.HMI")
-            .ok_or_else(|| Error("缺少活动资源 main.HMI".into()))?;
+            .ok_or_else(|| Error::Message("缺少活动资源 main.HMI".into()))?;
         let bytes = container.data(main)?;
         slice(bytes, 0, 32)?;
         let mut diagnostics = Vec::new();
@@ -41,7 +41,7 @@ impl Project {
         }
         let start = usize32(bytes, 24)?;
         if start < 32 {
-            return Err(Error("工程引用表与头部重叠".into()));
+            return Err(Error::Message("工程引用表与头部重叠".into()));
         }
         let count = usize32(bytes, 28)?;
         checked_table(bytes, start, count, 16)?;
@@ -175,10 +175,12 @@ impl Project {
 
     pub fn strict(&self) -> Result<()> {
         if has_errors(&self.diagnostics) {
-            return Err(Error("工程或页面校验失败，请使用 inspect 查看诊断".into()));
+            return Err(Error::Message(
+                "工程或页面校验失败，请使用 inspect 查看诊断".into(),
+            ));
         }
         if self.encoding != 0x18 {
-            return Err(Error("首版仅支持编码 0x18（UTF-8）的工程".into()));
+            return Err(Error::Message("首版仅支持编码 0x18（UTF-8）的工程".into()));
         }
         Ok(())
     }

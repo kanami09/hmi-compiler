@@ -11,6 +11,33 @@ use std::collections::BTreeMap;
 use std::fs;
 
 #[test]
+fn property_errors_keep_structured_source_lines() {
+    let w = Workspace::new();
+    let mut page = w.read_page();
+    page.objects[0]
+        .properties
+        .insert("txt".into(), "文本长度超过当前容量".into());
+    for newline in ["\n", "\r\n"] {
+        let text = workspace::page_to_toml(&page)
+            .unwrap()
+            .replace('\n', newline);
+        fs::write(w.page_path(), &text).unwrap();
+        let expected = text
+            .lines()
+            .position(|line| line.trim_start().starts_with("txt ="))
+            .unwrap()
+            + 1;
+        let error = workspace::prepare(&w.root).err().unwrap();
+        let diagnostic = error.as_diagnostic().expect("需要结构化错误");
+        assert_eq!(diagnostic.code, "text_capacity");
+        assert_eq!(diagnostic.location.line, Some(expected));
+        assert_eq!(diagnostic.location.object.as_deref(), Some("b0"));
+        assert_eq!(diagnostic.location.property.as_deref(), Some("txt"));
+        assert!(diagnostic.message.contains("UTF-8"));
+    }
+}
+
+#[test]
 fn exported_controls_use_toml11_inline_tables_and_roundtrip() {
     let w = Workspace::new();
     let text = fs::read_to_string(w.page_path()).unwrap();

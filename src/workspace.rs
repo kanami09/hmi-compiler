@@ -1,5 +1,6 @@
 //! 版本 1 的 TOML 项目、保真快照与事务式文件输出。
 mod format;
+pub mod source;
 pub use format::page_to_toml;
 
 use crate::container::Container;
@@ -81,12 +82,13 @@ struct Bundle {
 fn serialize<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     toml::to_string_pretty(value)
         .map(String::into_bytes)
-        .map_err(|e| Error(format!("TOML 序列化失败：{e}")))
+        .map_err(|e| Error::Message(format!("TOML 序列化失败：{e}")))
 }
 
 fn deserialize<T: serde::de::DeserializeOwned>(bytes: &[u8], path: &str) -> Result<T> {
-    let text = std::str::from_utf8(bytes).map_err(|_| Error(format!("{path}：文件不是 UTF-8")))?;
-    toml::from_str(text).map_err(|e| Error(format!("{path}：{e}")))
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| Error::Message(format!("{path}：文件不是 UTF-8")))?;
+    toml::from_str(text).map_err(|e| Error::Message(format!("{path}：{e}")))
 }
 
 /// 目录与文件名不承担工程标识的作用；映射在 manifest 中显式记录。
@@ -175,7 +177,9 @@ fn value(object: &Object, attr: &Attribute) -> Result<toml::Value> {
     let value = match scalar(object, &attr.name) {
         Some(Scalar::Text) => toml::Value::String(
             std::str::from_utf8(&attr.value)
-                .map_err(|_| Error(format!("{}.{} 不是有效 UTF-8", object.name, attr.name)))?
+                .map_err(|_| {
+                    Error::Message(format!("{}.{} 不是有效 UTF-8", object.name, attr.name))
+                })?
                 .into(),
         ),
         Some(Scalar::Signed32) if attr.value.len() == 4 => toml::Value::Integer(
@@ -201,9 +205,11 @@ pub fn properties(object: &Object) -> Result<BTreeMap<String, toml::Value>> {
 fn script_file(lines: &[Vec<u8>]) -> Result<Vec<u8>> {
     let mut result = Vec::new();
     for line in lines {
-        std::str::from_utf8(line).map_err(|_| Error("事件代码不是有效 UTF-8".into()))?;
+        std::str::from_utf8(line).map_err(|_| Error::Message("事件代码不是有效 UTF-8".into()))?;
         if line.contains(&b'\n') || line.contains(&b'\r') {
-            return Err(Error("单条事件记录内嵌换行，首版不能无歧义导出".into()));
+            return Err(Error::Message(
+                "单条事件记录内嵌换行，首版不能无歧义导出".into(),
+            ));
         }
         result.extend_from_slice(line);
         result.push(b'\n');
@@ -213,13 +219,14 @@ fn script_file(lines: &[Vec<u8>]) -> Result<Vec<u8>> {
 
 /// 空文件是零行；末尾的一个分隔符结束当前行，不额外产生一行。
 pub fn script_lines(bytes: &[u8]) -> Result<Vec<Vec<u8>>> {
-    let text = std::str::from_utf8(bytes).map_err(|_| Error("脚本不是有效 UTF-8".into()))?;
+    let text =
+        std::str::from_utf8(bytes).map_err(|_| Error::Message("脚本不是有效 UTF-8".into()))?;
     if text.contains('\0') {
-        return Err(Error("脚本不能包含 NUL".into()));
+        return Err(Error::Message("脚本不能包含 NUL".into()));
     }
     let normalized = text.replace("\r\n", "\n");
     if normalized.contains('\r') {
-        return Err(Error("脚本包含独立 CR，请使用 LF 或 CRLF".into()));
+        return Err(Error::Message("脚本包含独立 CR，请使用 LF 或 CRLF".into()));
     }
     if normalized.is_empty() {
         return Ok(Vec::new());
@@ -291,9 +298,9 @@ fn make_bundle(container: &Container, project: &Project) -> Result<Bundle> {
     let program = container.data(
         &container.entries[project
             .program_index
-            .ok_or_else(|| Error("缺少 Program.s".into()))?],
+            .ok_or_else(|| Error::Message("缺少 Program.s".into()))?],
     )?;
-    std::str::from_utf8(program).map_err(|_| Error("Program.s 不是有效 UTF-8".into()))?;
+    std::str::from_utf8(program).map_err(|_| Error::Message("Program.s 不是有效 UTF-8".into()))?;
     files.insert("program.s".into(), program.to_vec());
     let mut pages = Vec::new();
     let mut mappings = Vec::new();
@@ -380,7 +387,9 @@ fn make_bundle(container: &Container, project: &Project) -> Result<Bundle> {
     let mut portable_paths = BTreeSet::new();
     for path in &managed_files {
         if !portable_paths.insert(path.to_ascii_lowercase()) {
-            return Err(Error(format!("导出文件名在 Windows 下发生冲突：{path}")));
+            return Err(Error::Message(format!(
+                "导出文件名在 Windows 下发生冲突：{path}"
+            )));
         }
     }
     let manifest = Manifest {
@@ -406,14 +415,14 @@ pub fn relative(path: &str) -> Result<&Path> {
             .split('/')
             .any(|s| s.is_empty() || s == "." || s == "..")
     {
-        return Err(Error(format!("不安全的项目相对路径：{path}")));
+        return Err(Error::Message(format!("不安全的项目相对路径：{path}")));
     }
     let value = Path::new(path);
     if value
         .components()
         .any(|c| !matches!(c, Component::Normal(_)))
     {
-        return Err(Error(format!("路径不能越出项目目录：{path}")));
+        return Err(Error::Message(format!("路径不能越出项目目录：{path}")));
     }
     Ok(value)
 }
@@ -437,7 +446,9 @@ fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
         cursor.push(component);
         match fs::symlink_metadata(&cursor) {
             Ok(metadata) if is_link(&metadata) => {
-                return Err(Error(format!("项目内不允许符号链接或目录联接：{path}")));
+                return Err(Error::Message(format!(
+                    "项目内不允许符号链接或目录联接：{path}"
+                )));
             }
             Ok(_) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -448,7 +459,7 @@ fn resolve(root: &Path, path: &str) -> Result<PathBuf> {
 }
 
 fn read(root: &Path, path: &str) -> Result<Vec<u8>> {
-    fs::read(resolve(root, path)?).map_err(|e| Error(format!("{path}：{e}")))
+    fs::read(resolve(root, path)?).map_err(|e| Error::Message(format!("{path}：{e}")))
 }
 
 fn parent(path: &Path) -> &Path {
@@ -463,7 +474,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
         let entry = entry?;
         let metadata = fs::symlink_metadata(entry.path())?;
         if is_link(&metadata) {
-            return Err(Error(format!(
+            return Err(Error::Message(format!(
                 "导出目标中存在符号链接：{}",
                 entry.path().display()
             )));
@@ -474,7 +485,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
         } else if metadata.is_file() {
             fs::copy(entry.path(), target)?;
         } else {
-            return Err(Error("导出目标含不支持的文件类型".into()));
+            return Err(Error::Message("导出目标含不支持的文件类型".into()));
         }
     }
     Ok(())
@@ -492,7 +503,7 @@ pub fn export(input: &Path, output: &Path, force: bool) -> Result<ExportReport> 
     // 将 existing/. 归一化，避免把事务目录创建在被复制的目标目录内部。
     let normalized = if output.exists() {
         if is_link(&fs::symlink_metadata(output)?) {
-            return Err(Error("导出目标不能是符号链接或目录联接".into()));
+            return Err(Error::Message("导出目标不能是符号链接或目录联接".into()));
         }
         fs::canonicalize(output)?
     } else {
@@ -505,29 +516,29 @@ pub fn export(input: &Path, output: &Path, force: bool) -> Result<ExportReport> 
     project.strict()?;
     let bundle = make_bundle(&container, &project)?;
     if output.exists() && !force {
-        return Err(Error(
+        return Err(Error::Message(
             "输出目录已存在；使用 --force 覆盖工具管理的文件".into(),
         ));
     }
     let existing = if output.exists() {
         let metadata = fs::symlink_metadata(output)?;
         if !metadata.is_dir() || is_link(&metadata) {
-            return Err(Error("输出目标必须是普通目录".into()));
+            return Err(Error::Message("输出目标必须是普通目录".into()));
         }
         let old: Manifest = deserialize(&read(output, META)?, META)?;
         if old.format_version != 1 {
-            return Err(Error("不能覆盖未知版本的工作目录".into()));
+            return Err(Error::Message("不能覆盖未知版本的工作目录".into()));
         }
         let source = read(output, SOURCE)?;
         if sha256(&source) != old.source_sha256 {
-            return Err(Error("不能覆盖元数据已损坏的项目".into()));
+            return Err(Error::Message("不能覆盖元数据已损坏的项目".into()));
         }
         let old_container = Container::parse(source)?;
         old_container.strict()?;
         let old_project = Project::parse(&old_container)?;
         old_project.strict()?;
         if make_bundle(&old_container, &old_project)?.manifest != old {
-            return Err(Error("不能覆盖文件清单或映射已改变的项目".into()));
+            return Err(Error::Message("不能覆盖文件清单或映射已改变的项目".into()));
         }
         Some(old)
     } else {
@@ -545,7 +556,7 @@ pub fn export(input: &Path, output: &Path, force: bool) -> Result<ExportReport> 
             if target.is_file() {
                 fs::remove_file(target)?;
             } else if target.exists() {
-                return Err(Error(format!("原工具文件变成了目录：{path}")));
+                return Err(Error::Message(format!("原工具文件变成了目录：{path}")));
             }
         }
     } else {
@@ -565,7 +576,7 @@ pub fn export(input: &Path, output: &Path, force: bool) -> Result<ExportReport> 
             && let Err(restore) = fs::rename(&backup, output)
         {
             let retained = temporary.keep();
-            return Err(Error(format!(
+            return Err(Error::Message(format!(
                 "输出发布失败：{error}；恢复失败：{restore}；旧目录保留在 {}",
                 retained.join("previous").display()
             )));
@@ -589,49 +600,91 @@ pub struct Prepared {
 
 fn encode_value(object: &Object, attr: &Attribute, input: &toml::Value) -> Result<Vec<u8>> {
     if !editable(&attr.name) {
-        return Err(Error("首版中此属性只读".into()));
+        return Err(Error::Message("首版中此属性只读".into()));
     }
     let result = match scalar(object, &attr.name) {
         Some(Scalar::Text) => input
             .as_str()
-            .ok_or_else(|| Error("需要字符串".into()))?
+            .ok_or_else(|| Error::Message("需要字符串".into()))?
             .as_bytes()
             .to_vec(),
         Some(Scalar::Signed32) if attr.value.len() == 4 => {
-            let number = input.as_integer().ok_or_else(|| Error("需要整数".into()))?;
+            let number = input
+                .as_integer()
+                .ok_or_else(|| Error::Message("需要整数".into()))?;
             i32::try_from(number)
-                .map_err(|_| Error("超出有符号 32 位范围".into()))?
+                .map_err(|_| Error::Message("超出有符号 32 位范围".into()))?
                 .to_le_bytes()
                 .to_vec()
         }
         Some(Scalar::Unsigned(width)) if attr.value.len() == width => {
-            let number = input.as_integer().ok_or_else(|| Error("需要整数".into()))?;
+            let number = input
+                .as_integer()
+                .ok_or_else(|| Error::Message("需要整数".into()))?;
             let max = (1u64 << (width * 8)) - 1;
             if number < 0 || number as u64 > max {
-                return Err(Error(format!("超出 {width} 字节无符号整数范围")));
+                return Err(Error::Message(format!("超出 {width} 字节无符号整数范围")));
             }
             (number as u32).to_le_bytes()[..width].to_vec()
         }
-        _ => return Err(Error("此类型或属性宽度尚未验证，不允许修改".into())),
+        _ => {
+            return Err(Error::Message(
+                "此类型或属性宽度尚未验证，不允许修改".into(),
+            ));
+        }
     };
     Ok(result)
 }
 
-fn update_object(
-    root: &Path,
-    directory: &str,
+pub(crate) struct ObjectUpdate<'a> {
+    pub root: &'a Path,
+    pub document: &'a source::PageDocument,
+    pub index: usize,
+    pub references: &'a [crate::project::Reference],
+    pub input_files: &'a mut BTreeSet<String>,
+    pub scripts: Option<&'a BTreeMap<String, Vec<u8>>>,
+}
+
+pub(crate) fn update_object(
+    ctx: ObjectUpdate<'_>,
     object: &Object,
     baseline: &ObjectFile,
     edited: &ObjectFile,
-    project: &Project,
-    input_files: &mut BTreeSet<String>,
 ) -> Result<Vec<u8>> {
-    let location = format!("{directory}/page.toml：控件 {}", object.name);
-    if edited.name != baseline.name || edited.type_name != baseline.type_name {
-        return Err(Error(format!("{location}：首版禁止改变名称或类型")));
+    let error = |field: Option<&str>, code, message: String| {
+        ctx.document.error(ctx.index, field, code, message)
+    };
+    if edited.name != baseline.name {
+        return Err(error(
+            Some("name"),
+            "object_name",
+            "当前不支持修改控件名称".into(),
+        ));
+    }
+    if edited.type_name != baseline.type_name {
+        return Err(error(
+            Some("type"),
+            "object_type",
+            "当前不支持修改控件类型".into(),
+        ));
     }
     if edited.properties.keys().ne(baseline.properties.keys()) {
-        return Err(Error(format!("{location}：禁止添加或删除属性")));
+        let key = edited
+            .properties
+            .keys()
+            .find(|key| !baseline.properties.contains_key(*key))
+            .or_else(|| {
+                baseline
+                    .properties
+                    .keys()
+                    .find(|key| !edited.properties.contains_key(*key))
+            })
+            .unwrap();
+        return Err(error(
+            Some(key),
+            "property_set",
+            format!("属性集合发生变化，当前不支持添加或删除属性 {key}"),
+        ));
     }
     let mut values = BTreeMap::new();
     for (key, input) in &edited.properties {
@@ -640,11 +693,15 @@ fn update_object(
         }
         let attr = object
             .attribute(key)
-            .ok_or_else(|| Error(format!("{location}：未知属性 {key}")))?;
+            .ok_or_else(|| error(Some(key), "unknown_property", format!("控件没有属性 {key}")))?;
         let bytes = encode_value(object, attr, input)
-            .map_err(|e| Error(format!("{location}.{key}：{e}")))?;
+            .map_err(|e| error(Some(key), "property_value", e.to_string()))?;
         if matches!(key.as_str(), "vscope" | "en") && bytes[0] > 1 {
-            return Err(Error(format!("{location}.{key}：只允许 0 或 1")));
+            return Err(error(
+                Some(key),
+                "property_range",
+                format!("属性值为 {}，允许值为 0 或 1", bytes[0]),
+            ));
         }
         if key == "font"
             || matches!(
@@ -653,27 +710,28 @@ fn update_object(
             )
         {
             let kind = if key == "font" { "zi" } else { "i" };
-            let count = project.references.iter().filter(|r| r.kind == kind).count();
+            let count = ctx.references.iter().filter(|r| r.kind == kind).count();
             let number = input.as_integer().unwrap() as usize;
             if number >= count && !(kind == "i" && number == 65535) {
-                return Err(Error(format!(
-                    "{location}.{key}：资源 ID {number} 不存在，{kind} 资源共 {count} 个"
-                )));
+                return Err(error(
+                    Some(key),
+                    "resource_id",
+                    format!("资源 ID {number} 不存在，对应资源数量为 {count}，ID 必须小于 {count}"),
+                ));
             }
         }
         values.insert(key.clone(), bytes);
     }
     let integer = |key: &str| -> Option<u32> {
-        if let Some(bytes) = values.get(key) {
-            Some(
+        values
+            .get(key)
+            .map(|bytes| {
                 bytes
                     .iter()
                     .enumerate()
-                    .fold(0, |n, (i, b)| n | (u32::from(*b) << (i * 8))),
-            )
-        } else {
-            object.integer(key)
-        }
+                    .fold(0, |n, (i, b)| n | (u32::from(*b) << (i * 8)))
+            })
+            .or_else(|| object.integer(key))
     };
     if let (Some(text), Some(capacity)) = (
         values
@@ -682,54 +740,103 @@ fn update_object(
         integer("txt_maxl"),
     ) && text.len() > capacity as usize
     {
-        return Err(Error(format!(
-            "{location}.txt：文本 {} 字节，超过 txt_maxl={capacity}",
-            text.len()
-        )));
+        let field = if values.contains_key("txt") {
+            "txt"
+        } else {
+            "txt_maxl"
+        };
+        return Err(error(
+            Some(field),
+            "text_capacity",
+            format!(
+                "UTF-8 文本占用 {} 字节，超过 txt_maxl 允许的 {capacity} 字节（超出 {} 字节）",
+                text.len(),
+                text.len() - capacity as usize
+            ),
+        ));
     }
-    let geometry_changed = ["x", "y", "w", "h"]
+    if ["x", "y", "w", "h"]
         .iter()
-        .any(|key| values.contains_key(*key));
-    if geometry_changed {
+        .any(|key| values.contains_key(*key))
+    {
         let mut endpoints = Vec::new();
         for (position, size, endpoint) in [("x", "w", "endx"), ("y", "h", "endy")] {
-            let start =
-                integer(position).ok_or_else(|| Error(format!("{location}：缺少 {position}")))?;
-            let length = integer(size).ok_or_else(|| Error(format!("{location}：缺少 {size}")))?;
-            let end = start
-                .checked_add(length)
-                .and_then(|n| n.checked_sub(1))
-                .filter(|n| length > 0 && *n <= 65535)
-                .ok_or_else(|| {
-                    Error(format!("{location}：尺寸必须大于 0，且端点不能超过 65535"))
-                })?;
+            let start = integer(position).ok_or_else(|| {
+                error(
+                    Some(position),
+                    "geometry",
+                    format!("缺少位置属性 {position}"),
+                )
+            })?;
+            let length = integer(size)
+                .ok_or_else(|| error(Some(size), "geometry", format!("缺少尺寸属性 {size}")))?;
+            if length == 0 {
+                return Err(error(Some(size), "geometry", "尺寸必须大于 0".into()));
+            }
+            let field = if values.contains_key(position) {
+                position
+            } else {
+                size
+            };
+            let end = start.checked_add(length).and_then(|n| n.checked_sub(1)).filter(|n| *n <= 65535)
+                .ok_or_else(|| error(Some(field), "geometry", format!("计算 {endpoint} = {position} + {size} - 1 时超出 u16 范围（最大 65535）")))?;
             if object
                 .attribute(endpoint)
                 .is_none_or(|a| a.value.len() != 2)
             {
-                return Err(Error(format!("{location}：未验证的几何字段")));
+                return Err(error(
+                    Some(field),
+                    "geometry",
+                    format!("端点属性 {endpoint} 的二进制布局尚未验证"),
+                ));
             }
             endpoints.push((endpoint.to_owned(), (end as u16).to_le_bytes().to_vec()));
         }
         values.extend(endpoints);
     }
+    let directory = ctx
+        .document
+        .file
+        .rsplit_once('/')
+        .map(|(directory, _)| directory)
+        .unwrap_or("");
     let mut codes = BTreeMap::new();
     for kind in edited.events.keys() {
         if !object.events.iter().any(|e| &e.kind == kind) {
-            return Err(Error(format!("{location}：对象没有 {kind} 事件槽")));
+            return Err(error(
+                Some(&format!("events.{kind}")),
+                "event_slot",
+                format!("该控件不存在 {kind} 事件槽"),
+            ));
         }
     }
     for event in &object.events {
+        let field = format!("events.{}", event.kind);
         let lines = if let Some(path) = edited.events.get(&event.kind) {
-            let path = format!(
-                "{directory}/{}",
-                relative(path)?.to_string_lossy().replace('\\', "/")
-            );
+            relative(path).map_err(|e| error(Some(&field), "event_path", e.to_string()))?;
+            let path = format!("{directory}/{path}");
             if !path.ends_with(".s") {
-                return Err(Error(format!("事件文件必须使用 .s 后缀：{path}")));
+                return Err(error(
+                    Some(&field),
+                    "event_path",
+                    "事件文件必须使用 .s 后缀".into(),
+                ));
             }
-            input_files.insert(path.clone());
-            script_lines(&read(root, &path)?).map_err(|e| Error(format!("{path}：{e}")))?
+            ctx.input_files.insert(path.clone());
+            let bytes = if let Some(scripts) = ctx.scripts {
+                scripts.get(&path).cloned().ok_or_else(|| {
+                    error(
+                        Some(&field),
+                        "event_file",
+                        format!("事件文件未读取：{path}"),
+                    )
+                })?
+            } else {
+                read(ctx.root, &path)
+                    .map_err(|e| error(Some(&field), "event_file", e.to_string()))?
+            };
+            script_lines(&bytes)
+                .map_err(|e| error(Some(&field), "script_encoding", e.to_string()))?
         } else {
             Vec::new()
         };
@@ -741,11 +848,11 @@ fn update_object(
 pub fn prepare(root: &Path) -> Result<Prepared> {
     let manifest: Manifest = deserialize(&read(root, META)?, META)?;
     if manifest.format_version != 1 {
-        return Err(Error("不支持的原始元数据版本".into()));
+        return Err(Error::Message("不支持的原始元数据版本".into()));
     }
     let source = read(root, SOURCE)?;
     if sha256(&source) != manifest.source_sha256 {
-        return Err(Error(
+        return Err(Error::Message(
             ".hmi/container.bin 摘要不匹配，原始快照已改变".into(),
         ));
     }
@@ -755,17 +862,17 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
     project.strict()?;
     let expected = make_bundle(&container, &project)?;
     if manifest != expected.manifest {
-        return Err(Error("只读元数据或资源映射已改变".into()));
+        return Err(Error::Message("只读元数据或资源映射已改变".into()));
     }
     let description: ProjectFile = deserialize(&read(root, "project.toml")?, "project.toml")?;
     if description != expected.project {
-        return Err(Error(
+        return Err(Error::Message(
             "工程格式、编码或页面顺序发生变化；首版禁止结构编辑".into(),
         ));
     }
     for asset in &manifest.assets {
         if sha256(&read(root, &asset.path)?) != asset.sha256 {
-            return Err(Error(format!("只读素材已修改：{}", asset.path)));
+            return Err(Error::Message(format!("只读素材已修改：{}", asset.path)));
         }
     }
     let mut inputs: BTreeSet<_> = manifest.managed_files.iter().cloned().collect();
@@ -774,10 +881,13 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
     for (i, ((entry_index, page), mapping)) in project.pages.iter().zip(&manifest.pages).enumerate()
     {
         let path = format!("{}/page.toml", mapping.path);
-        let edited: PageFile = deserialize(&read(root, &path)?, &path)?;
+        let document = source::PageDocument::parse(&read(root, &path)?, &path)?;
+        let edited = &document.page;
         let baseline = &expected.pages[i];
         if edited.name != baseline.name || edited.objects.len() != baseline.objects.len() {
-            return Err(Error(format!("{path}：首版禁止改变页面名或对象数量")));
+            return Err(Error::Message(format!(
+                "{path}：首版禁止改变页面名或对象数量"
+            )));
         }
         let baseline_own = ObjectFile {
             name: baseline.name.clone(),
@@ -788,8 +898,8 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         let edited_own = ObjectFile {
             name: edited.name.clone(),
             type_name: "page".into(),
-            properties: edited.properties,
-            events: edited.events,
+            properties: edited.properties.clone(),
+            events: edited.events.clone(),
         };
         let all_baseline: Vec<_> = std::iter::once(&baseline_own)
             .chain(baseline.objects.iter())
@@ -806,19 +916,29 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
             .enumerate()
         {
             objects.push(update_object(
-                root,
-                &mapping.path,
+                ObjectUpdate {
+                    root,
+                    document: &document,
+                    index: object_index,
+                    references: &project.references,
+                    input_files: &mut inputs,
+                    scripts: None,
+                },
                 object,
                 baseline,
                 edited,
-                &project,
-                &mut inputs,
             )?);
-            for path in edited.events.values() {
+            for (event, path) in &edited.events {
                 let file = format!("{}/{path}", mapping.path);
                 let text = String::from_utf8(read(root, &file)?)
-                    .map_err(|_| Error(format!("{file} 不是 UTF-8")))?;
-                script_sources.push((Some(i), Some(object_index), file, text));
+                    .map_err(|_| Error::Message(format!("{file} 不是 UTF-8")))?;
+                script_sources.push(crate::script::ScriptSource {
+                    page: Some(i),
+                    object: Some(object_index),
+                    event: Some(event.clone()),
+                    file,
+                    text,
+                });
             }
         }
         let bytes = page.rebuild(&objects)?;
@@ -828,15 +948,21 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
     }
     let program = read(root, "program.s")?;
     let program_text =
-        std::str::from_utf8(&program).map_err(|_| Error("program.s 不是 UTF-8".into()))?;
+        std::str::from_utf8(&program).map_err(|_| Error::Message("program.s 不是 UTF-8".into()))?;
     if program_text.contains('\0') {
-        return Err(Error("program.s 不能包含 NUL".into()));
+        return Err(Error::Message("program.s 不能包含 NUL".into()));
     }
     let index = project.program_index.unwrap();
     if program != container.data(&container.entries[index])? {
         replacements.insert(index, program.clone());
     }
-    script_sources.push((None, None, "program.s".into(), program_text.into()));
+    script_sources.push(crate::script::ScriptSource {
+        page: None,
+        object: None,
+        event: None,
+        file: "program.s".into(),
+        text: program_text.into(),
+    });
     let bytes = container.rebuild(&replacements)?;
     // 回编输出必须能够重新通过全部结构与 CRC 检查。
     let rebuilt = Container::parse(bytes.clone())?;
@@ -850,7 +976,10 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
             .map(Vec::as_slice)
             .unwrap_or(container.data(entry)?);
         if rebuilt.data(&rebuilt.entries[entry.index])? != expected {
-            return Err(Error(format!("回编验证发现非预期资源变化：{}", entry.name)));
+            return Err(Error::Message(format!(
+                "回编验证发现非预期资源变化：{}",
+                entry.name
+            )));
         }
     }
     Ok(Prepared {
@@ -874,7 +1003,7 @@ pub struct CheckReport {
 pub fn check(root: &Path, deny_warnings: bool) -> Result<(CheckReport, Vec<Diagnostic>)> {
     let prepared = prepare(root)?;
     if deny_warnings && !prepared.diagnostics.is_empty() {
-        return Err(Error(format!(
+        return Err(Error::Message(format!(
             "--deny-warnings：发现 {} 条警告",
             prepared.diagnostics.len()
         )));
@@ -909,21 +1038,23 @@ pub fn build(
             .iter()
             .any(|d| d.severity == Severity::Warning)
     {
-        return Err(Error(format!(
+        return Err(Error::Message(format!(
             "--deny-warnings：发现 {} 条警告",
             prepared.diagnostics.len()
         )));
     }
     if output.exists() {
         if !force {
-            return Err(Error("输出文件已存在；使用 --force 允许覆盖".into()));
+            return Err(Error::Message(
+                "输出文件已存在；使用 --force 允许覆盖".into(),
+            ));
         }
         let canonical_output = fs::canonicalize(output)?;
         for path in &prepared.input_files {
             if let Ok(input) = fs::canonicalize(resolve(root, path)?)
                 && input == canonical_output
             {
-                return Err(Error("构建输出不能覆盖项目输入文件".into()));
+                return Err(Error::Message("构建输出不能覆盖项目输入文件".into()));
             }
         }
     }
@@ -934,11 +1065,11 @@ pub fn build(
     if force {
         temporary
             .persist(output)
-            .map_err(|e| Error(format!("发布输出失败：{}", e.error)))?;
+            .map_err(|e| Error::Message(format!("发布输出失败：{}", e.error)))?;
     } else {
         temporary
             .persist_noclobber(output)
-            .map_err(|e| Error(format!("发布输出失败：{}", e.error)))?;
+            .map_err(|e| Error::Message(format!("发布输出失败：{}", e.error)))?;
     }
     Ok((
         BuildReport {

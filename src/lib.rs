@@ -7,19 +7,39 @@ pub mod diff;
 pub mod page;
 pub mod project;
 mod script;
+pub mod warning;
 pub mod workspace;
 
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct Error(pub String);
+pub enum Error {
+    #[error("{0}")]
+    Message(String),
+    #[error("{0}")]
+    Structured(Box<diagnostic::Diagnostic>),
+}
 
 pub type Result<T> = std::result::Result<T, Error>;
 
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
-        Self(value.to_string())
+        Self::Message(value.to_string())
+    }
+}
+
+impl From<diagnostic::Diagnostic> for Error {
+    fn from(value: diagnostic::Diagnostic) -> Self {
+        Self::Structured(Box::new(value))
+    }
+}
+
+impl Error {
+    pub fn as_diagnostic(&self) -> Option<&diagnostic::Diagnostic> {
+        match self {
+            Self::Structured(diagnostic) => Some(diagnostic),
+            _ => None,
+        }
     }
 }
 
