@@ -121,6 +121,21 @@ fn filename(name: &str) -> String {
     result
 }
 
+/// 保留现有命名；仅在转义或大小写导致重名时追加确定性后缀。
+fn unique_path(paths: &mut BTreeSet<String>, path: String) -> String {
+    if paths.insert(path.to_ascii_lowercase()) {
+        return path;
+    }
+    let (stem, extension) = path.rsplit_once('.').expect("生成的文件路径包含后缀");
+    for suffix in 1usize.. {
+        let candidate = format!("{stem}_{suffix}.{extension}");
+        if paths.insert(candidate.to_ascii_lowercase()) {
+            return candidate;
+        }
+    }
+    unreachable!("文件数量无法超过 usize 范围")
+}
+
 #[derive(Clone, Copy)]
 enum Scalar {
     Unsigned(usize),
@@ -308,6 +323,7 @@ fn embedded_pngs(bytes: &[u8]) -> Vec<Vec<u8>> {
 
 pub(crate) fn make_bundle(container: &Container, project: &Project) -> Result<Bundle> {
     let mut files = BTreeMap::new();
+    let mut generated_paths = BTreeSet::new();
     files.insert(SOURCE.into(), container.bytes.clone());
     let program = container.data(
         &container.entries[project
@@ -336,7 +352,10 @@ pub(crate) fn make_bundle(container: &Container, project: &Project) -> Result<Bu
                             filename(&event.kind)
                         )
                     };
-                    files.insert(format!("{path}/{event_path}"), script_file(&event.lines)?);
+                    let full_path =
+                        unique_path(&mut generated_paths, format!("{path}/{event_path}"));
+                    let event_path = full_path[path.len() + 1..].to_owned();
+                    files.insert(full_path, script_file(&event.lines)?);
                     events.insert(event.kind.clone(), event_path);
                 }
             }
@@ -369,9 +388,12 @@ pub(crate) fn make_bundle(container: &Container, project: &Project) -> Result<Bu
     for entry in container.entries.iter().filter(|e| !e.deleted) {
         let bytes = container.data(entry)?;
         if entry.name.ends_with(".zi") {
-            let path = format!(
-                "assets/fonts/resource_{}.zi",
-                filename(entry.name.trim_end_matches(".zi"))
+            let path = unique_path(
+                &mut generated_paths,
+                format!(
+                    "assets/fonts/resource_{}.zi",
+                    filename(entry.name.trim_end_matches(".zi"))
+                ),
             );
             assets.push(Asset {
                 path: path.clone(),
@@ -380,7 +402,10 @@ pub(crate) fn make_bundle(container: &Container, project: &Project) -> Result<Bu
             files.insert(path, bytes.to_vec());
         } else if entry.name.ends_with(".is") || entry.name.ends_with(".ib") {
             for (i, png) in embedded_pngs(bytes).into_iter().enumerate() {
-                let path = format!("assets/images/resource_{}_{i}.png", filename(&entry.name));
+                let path = unique_path(
+                    &mut generated_paths,
+                    format!("assets/images/resource_{}_{i}.png", filename(&entry.name)),
+                );
                 assets.push(Asset {
                     path: path.clone(),
                     sha256: sha256(&png),
@@ -733,11 +758,19 @@ pub(crate) fn update_object(
             .ok_or_else(|| error(Some(key), "unknown_property", format!("控件没有属性 {key}")))?;
         let bytes = encode_value(object, attr, input)
             .map_err(|e| error(Some(key), "property_value", e.to_string()))?;
-        if matches!(key.as_str(), "vscope" | "en") && bytes[0] > 1 {
+        let range = match (key.as_str(), object.type_code) {
+            ("vscope" | "en", _) | ("val", 53 | 56 | 57) => Some((0, 1)),
+            ("tim", 51) => Some((50, 65534)),
+            _ => None,
+        };
+        if let Some((min, max)) = range
+            && let Some(number) = input.as_integer()
+            && !(min..=max).contains(&number)
+        {
             return Err(error(
                 Some(key),
                 "property_range",
-                format!("属性值为 {}，允许值为 0 或 1", bytes[0]),
+                format!("属性值为 {number}，允许范围为 {min}..{max}"),
             ));
         }
         if key == "font"

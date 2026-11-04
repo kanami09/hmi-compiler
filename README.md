@@ -210,8 +210,8 @@ events = { up = "events/o001_b0.up.s" }
 | `font` | 字库的 ID |
 | `pic/pic2/picc/picc2` 等 | 图片的 ID，`65535` 表示无图片 |
 | `bco/bco2/bco1/pco/pco2/borderc` | 背景、文字或边框颜色，使用原属性的整数表示 |
-| `val` | 数值，按控件类型校验范围，变量控件支持有符号 32 位整数 |
-| `tim/en` | 定时相关设置，`en` 只能为 `0` 或 `1` |
+| `val` | 数值，双态按钮、复选框和单选框只能为 `0` 或 `1`，变量控件支持有符号 32 位整数，其余已支持类型按存储宽度校验 |
+| `tim/en` | 定时器的 `tim` 范围为 `[50, 65534]` 毫秒，`en` 只能为 `0` 或 `1` |
 
 页面自身的属性和事件位于文件顶部的 `[properties]`、`[events]` 中。
 
@@ -270,7 +270,7 @@ events = { up = "events/o001_b0.up.s" }
 | `script-property` | 控件没有被引用的属性 |
 | `script-scope` | 跨页面访问私有控件 |
 | `script-context` | 无法确定当前页面，或目标页面存在错误 |
-| `script-page-target` | 无法静态确认跳转目标 |
+| `script-page-target` | 无法静态确认跳转目标，包括使用表达式的目标 |
 | `property-resource` | 图片或字库 ID 无效 |
 | `encoding` | 工程编码尚未支持 |
 | `resource-layout` | 工程文件的资源布局尚未支持 |

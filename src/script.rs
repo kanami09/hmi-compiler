@@ -447,23 +447,30 @@ impl Checker<'_> {
                 i += 3;
                 continue;
             }
-            // page 常量名称或数字是可静态确认的跳转；表达式交给官方编译器。
+            // 只确认单个常量目标；完整表达式无法静态确认时统一提示。
             if t.text == "page"
                 && let Some(target) = tokens.get(i + 1)
                 && target.line == t.line
             {
-                let valid = target
-                    .text
-                    .parse::<usize>()
-                    .map(|n| n < self.project.pages.len())
-                    .unwrap_or_else(|_| self.project.pages.iter().any(|p| p.name == target.text));
-                let expression = tokens
-                    .get(i + 2)
-                    .is_some_and(|next| next.line == target.line && next.text != ";");
-                if !valid && !expression {
+                let end = tokens[i + 1..]
+                    .iter()
+                    .position(|token| {
+                        token.line != target.line || matches!(token.text.as_str(), ";" | "}")
+                    })
+                    .map(|offset| i + 1 + offset)
+                    .unwrap_or(tokens.len());
+                let expression = &tokens[i + 1..end];
+                let valid = number(expression)
+                    .is_some_and(|n| n >= 0 && (n as u64) < self.project.pages.len() as u64)
+                    || matches!(expression, [token] if self.project.pages.iter().any(|p| p.name == token.text));
+                if !valid {
+                    let target = expression
+                        .iter()
+                        .map(|token| token.text.as_str())
+                        .collect::<String>();
                     self.warn(
                         "script_page_target",
-                        format!("页面跳转目标 {} 无法静态确认", target.text),
+                        format!("页面跳转目标 {target} 无法静态确认"),
                         t.line,
                     );
                 }

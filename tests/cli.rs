@@ -24,6 +24,50 @@ fn run(args: &[&str]) -> (Output, Value) {
 }
 
 #[test]
+fn page_target_expressions_warn_and_cached_werror_keeps_output() {
+    let w = Workspace::new();
+    let directory = w.root.to_str().unwrap();
+    let output_path = w.temporary.path().join("output.HMI");
+    let target = output_path.to_str().unwrap();
+    fs::write(
+        w.root.join("program.s"),
+        "page 0\npage page0;\npage 0x0\npage sys0\npage sys0+1\npage 99+sys0\npage 0+sys0\n",
+    )
+    .unwrap();
+    let (output, result) = run(&["build", directory, "-o", target, "--json"]);
+    assert!(output.status.success());
+    let diagnostics = result["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 4);
+    for (index, diagnostic) in diagnostics.iter().enumerate() {
+        assert_eq!(diagnostic["category"], "script-page-target");
+        assert_eq!(diagnostic["location"]["line"], index + 4);
+    }
+    let previous = fs::read(&output_path).unwrap();
+    for command in ["check", "build"] {
+        let mut args = vec![command, directory, "--json", "-Werror=script-page-target"];
+        if command == "build" {
+            args.extend(["-o", target]);
+        }
+        let (output, result) = run(&args);
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(result["diagnostics"].as_array().unwrap().len(), 4);
+        if command == "build" {
+            assert_eq!(result["result"]["reused_pages"], 1);
+        }
+        assert_eq!(fs::read(&output_path).unwrap(), previous);
+    }
+    let (output, result) = run(&[
+        "check",
+        directory,
+        "--json",
+        "-Werror",
+        "-Wno-script-page-target",
+    ]);
+    assert!(output.status.success());
+    assert!(result["diagnostics"].as_array().unwrap().is_empty());
+}
+
+#[test]
 fn classified_warnings_cli_and_real_errors() {
     let w = Workspace::new();
     let page = w.read_page();

@@ -34,6 +34,13 @@ fn object(name: &str, kind: u8, id: u8) -> Vec<u8> {
     if kind == 52 {
         attrs.push(("val", (-7i32).to_le_bytes().to_vec()));
     }
+    if matches!(kind, 53 | 56 | 57) {
+        attrs.push(("val", vec![0]));
+    }
+    if kind == 51 {
+        attrs.push(("tim", 1000u16.to_le_bytes().to_vec()));
+        attrs.push(("en", vec![1]));
+    }
     let mut out = Vec::new();
     record(&mut out, format!("att-{}", attrs.len()).as_bytes());
     for (name, value) in attrs {
@@ -98,6 +105,22 @@ pub fn page_named(name: &str) -> Vec<u8> {
 
 pub fn fixture() -> Vec<u8> {
     fixture_with_pages(1)
+}
+
+pub fn fixture_with_control(kind: u8) -> Vec<u8> {
+    use hmi_compiler::{container::Container, page::Page};
+    use std::collections::BTreeMap;
+    let container = Container::parse(fixture()).unwrap();
+    let entry = container.active("39.pa").unwrap();
+    let page = Page::parse(container.data(entry).unwrap()).unwrap();
+    let mut objects: Vec<_> = page.objects.iter().map(|o| o.raw.clone()).collect();
+    objects[1] = object("b0", kind, 1);
+    container
+        .rebuild(&BTreeMap::from([(
+            entry.index,
+            page.rebuild(&objects).unwrap(),
+        )]))
+        .unwrap()
 }
 
 pub fn fixture_with_pages(count: usize) -> Vec<u8> {

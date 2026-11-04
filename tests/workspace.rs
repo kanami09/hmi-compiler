@@ -185,6 +185,151 @@ fn event_reference_removal_clears_slot_and_empty_file_is_zero_lines() {
 }
 
 #[test]
+fn control_value_ranges_reject_invalid_edits_and_accept_boundaries() {
+    for (kind, key, min, max) in [
+        (53, "val", 0, 1),
+        (56, "val", 0, 1),
+        (57, "val", 0, 1),
+        (51, "tim", 50, 65534),
+    ] {
+        let w = Workspace::from_bytes(common::fixture_with_control(kind));
+        let mut page = w.read_page();
+        let output = w.temporary.path().join("output.HMI");
+        fs::write(&output, b"previous").unwrap();
+        for number in [min - 1, max + 1] {
+            page.objects[0].properties.insert(key.into(), number.into());
+            w.write_page(&page);
+            let options = hmi_compiler::build::BuildOptions {
+                warnings: hmi_compiler::warning::WarningPolicy::parse(&[], true).unwrap(),
+                ..Default::default()
+            };
+            let outcome = workspace::build(&w.root, &output, &options);
+            assert!(!outcome.success, "type={kind}, {key}={number}");
+            let diagnostic = &outcome.diagnostics[0];
+            if number >= 0 {
+                assert_eq!(diagnostic.code, "property_range");
+            }
+            assert_eq!(diagnostic.location.object.as_deref(), Some("b0"));
+            assert_eq!(diagnostic.location.property.as_deref(), Some(key));
+            assert!(diagnostic.location.line.is_some());
+            assert_eq!(fs::read(&output).unwrap(), b"previous");
+        }
+        for number in [min, max] {
+            page.objects[0].properties.insert(key.into(), number.into());
+            w.write_page(&page);
+            let prepared = workspace::prepare(&w.root).unwrap();
+            let container = Container::parse(prepared.bytes).unwrap();
+            let project = Project::parse(&container).unwrap();
+            assert_eq!(
+                project.pages[0].1.objects[1].integer(key),
+                Some(number as u32)
+            );
+        }
+    }
+}
+
+#[test]
+fn unchanged_legacy_control_values_are_preserved() {
+    let container = Container::parse(common::fixture_with_control(56)).unwrap();
+    let entry = container.active("39.pa").unwrap();
+    let page = Page::parse(container.data(entry).unwrap()).unwrap();
+    let mut objects: Vec<_> = page.objects.iter().map(|o| o.raw.clone()).collect();
+    objects[1] = page.objects[1]
+        .rebuild(&BTreeMap::from([("val".into(), vec![2])]), &BTreeMap::new())
+        .unwrap();
+    let bytes = container
+        .rebuild(&BTreeMap::from([(
+            entry.index,
+            page.rebuild(&objects).unwrap(),
+        )]))
+        .unwrap();
+    let w = Workspace::from_bytes(bytes);
+    assert_eq!(workspace::prepare(&w.root).unwrap().bytes, w.bytes);
+    let mut edited = w.read_page();
+    edited.objects[0].properties.insert("bco".into(), 0.into());
+    w.write_page(&edited);
+    assert!(workspace::prepare(&w.root).is_ok());
+    edited.objects[0].properties.insert("val".into(), 1.into());
+    w.write_page(&edited);
+    assert!(workspace::prepare(&w.root).is_ok());
+}
+
+#[test]
+fn colliding_asset_names_export_distinct_files_and_roundtrip() {
+    for names in [["a.b.zi", "a_2eb.zi"], ["A.zi", "a.zi"]] {
+        let mut bytes = common::fixture();
+        let container = Container::parse(bytes.clone()).unwrap();
+        let font = container.active("0.zi").unwrap();
+        let main = container.active("main.HMI").unwrap();
+        let reference = main.offset + 96 + 16 + 8;
+        bytes[reference..reference + 8].fill(0);
+        bytes[reference..reference + names[1].len()].copy_from_slice(names[1].as_bytes());
+        let crc = main_crc(&bytes[main.offset..main.offset + main.length]).unwrap();
+        bytes[main.offset..main.offset + 4].copy_from_slice(&crc.to_le_bytes());
+        for base in [0, BACKUP_START] {
+            for (index, name) in [(0, names[0]), (font.index, names[1])] {
+                let position = base + 4 + index * 28;
+                bytes[position..position + 16].fill(0);
+                bytes[position..position + name.len()].copy_from_slice(name.as_bytes());
+                bytes[position + 24] = 0;
+            }
+        }
+        common::fix_directory(&mut bytes);
+        let w = Workspace::from_bytes(bytes);
+        let manifest: workspace::Manifest =
+            toml::from_str(&fs::read_to_string(w.root.join(".hmi/manifest.toml")).unwrap())
+                .unwrap();
+        assert_eq!(manifest.assets.len(), 2);
+        assert_ne!(
+            manifest.assets[0].path.to_ascii_lowercase(),
+            manifest.assets[1].path.to_ascii_lowercase()
+        );
+        for asset in &manifest.assets {
+            assert_eq!(
+                hmi_compiler::sha256(&fs::read(w.root.join(&asset.path)).unwrap()),
+                asset.sha256
+            );
+        }
+        assert_eq!(workspace::prepare(&w.root).unwrap().bytes, w.bytes);
+    }
+}
+
+#[test]
+fn colliding_event_names_export_distinct_scripts_and_roundtrip() {
+    let container = Container::parse(common::fixture()).unwrap();
+    let entry = container.active("39.pa").unwrap();
+    let page = Page::parse(container.data(entry).unwrap()).unwrap();
+    let button = &page.objects[1];
+    let mut records = button.records.clone();
+    let event = button.events.iter().find(|e| e.kind == "up").unwrap();
+    records[event.record] = b"codes.-2".to_vec();
+    let end = records.len() - 1;
+    records.splice(end..end, [b"codes_2e-1".to_vec(), b"sys0=1".to_vec()]);
+    let mut raw = Vec::new();
+    for record in records {
+        raw.extend_from_slice(&(record.len() as u32).to_le_bytes());
+        raw.extend(record);
+    }
+    let mut objects: Vec<_> = page.objects.iter().map(|o| o.raw.clone()).collect();
+    objects[1] = raw;
+    let bytes = container
+        .rebuild(&BTreeMap::from([(
+            entry.index,
+            page.rebuild(&objects).unwrap(),
+        )]))
+        .unwrap();
+    let w = Workspace::from_bytes(bytes);
+    let exported = w.read_page();
+    let events = &exported.objects[0].events;
+    assert_ne!(events["."], events["_2e"]);
+    assert_eq!(
+        fs::read_to_string(w.root.join("pages/p000_page0").join(&events["_2e"])).unwrap(),
+        "sys0=1\n"
+    );
+    assert_eq!(workspace::prepare(&w.root).unwrap().bytes, w.bytes);
+}
+
+#[test]
 fn validation_rejects_unsafe_or_unsupported_changes() {
     let w = Workspace::new();
     let baseline = w.read_page();
