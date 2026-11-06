@@ -307,6 +307,27 @@ JSON 中，`ok` 表示执行是否成功，`result` 包含命令结果，`diagno
 | `1` | 文件、检查或构建失败 |
 | `2` | 命令参数错误 |
 
+## Agent Skill
+
+仓库提供可独立安装的 [hmi-project-editor](skills/hmi-project-editor/SKILL.md)，用于让 AI agent 能够调用 `hmi-compiler` 检查、导出、修改和重构建已有 HMI 工程。
+
+手动安装时，将整个 `skills/hmi-project-editor` 文件夹复制到所用 agent 的技能目录，保留其中的脚本和参考文件。
+对于支持从 GitHub 安装技能的 agent，可使用其技能安装器安装。例如，在提供 `$skill-installer` 的 Codex 中：
+
+```text
+使用 $skill-installer 安装：https://github.com/kanami09/hmi-compiler/tree/main/skills/hmi-project-editor
+```
+
+安装后，支持 Agent Skills 的 agent 可按自身规则发现该技能；其他具备文件读写和命令执行能力的 agent，也可以按指示读取 `SKILL.md` 后操作。
+使用示例：
+
+```text
+使用 hmi-project-editor，把 panel.HMI 中 page0 页面 b0 按钮的文字改为“确定”，生成 panel-edited.HMI，并报告检查结果和工程差异。
+```
+
+安装 skill 不会自动安装 `hmi-compiler`。Skill 优先使用本地已有的 `hmi-compiler v0.1.0`，可通过指定路径、`HMI_COMPILER_BIN`、`PATH` 或缓存定位工具。缺少工具时，agent 将按照[工具准备](skills/hmi-project-editor/references/tooling.md)的指示下载，运行下载脚本需要你的电脑具备 Python 3.9+运行环境。
+若需要在其他平台中使用此 skill，参阅[从源代码构建](#从源代码构建)。
+
 ## 从源代码构建
 
 在开始构建前，必须安装 Rust 及其工具链，Rust 版本为 `1.89` 或者更新。不会安装 Rust？参见 [Rust 安装入门](https://rust-lang.org/learn/get-started/) 。
