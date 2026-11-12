@@ -6,6 +6,12 @@
 /tests/samples.rs
 /tests/samples-manifest.json
 /examples/prepare_acceptance.rs
+/examples/reverse_minimal_hmi.rs
+/examples/reverse_support/
+
+# Python 运行缓存
+__pycache__/
+*.pyc
 
 # 工程容器、编译产物及导出目录中的原始快照
 *.[Hh][Mm][Ii]
