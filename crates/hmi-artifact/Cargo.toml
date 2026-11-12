@@ -1,0 +1,12 @@
+[package]
+name = "hmi-artifact"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+hmi-core = { path = "../hmi-core" }
+hmi-analysis = { path = "../hmi-analysis" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

@@ -2,7 +2,56 @@
 
 use crate::{Error, Result, diagnostic::Location, error};
 use serde::{Serialize, de::DeserializeOwned};
-use std::{fs, io::Write, path::Path};
+use std::{
+    fs,
+    io::Write,
+    path::{Component, Path, PathBuf},
+};
+
+/// 比较尚未创建的输出位置时，先消除相对路径中的 . 和 ..。
+pub fn absolute(path: &Path) -> Result<PathBuf> {
+    let mut result = PathBuf::new();
+    for component in std::path::absolute(path)?.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                result.pop();
+            }
+            _ => result.push(component.as_os_str()),
+        }
+    }
+    Ok(result)
+}
+
+pub fn protect_output(path: &Path, inputs: &[&Path]) -> Result<()> {
+    let output = absolute(path)?;
+    let canonical = fs::canonicalize(path).ok();
+    for input in inputs {
+        if output == absolute(input)?
+            || (canonical.is_some() && fs::canonicalize(input).ok() == canonical)
+        {
+            return Err(at_file(
+                error("output_input", "输出文件不能覆盖输入文件"),
+                path,
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 保留中间空行，末尾换行不额外生成空记录。
+pub fn script_lines(text: &str) -> Result<Vec<Vec<u8>>> {
+    if text.contains('\0') || text.starts_with('\u{feff}') {
+        return Err(error(
+            "script_encoding",
+            "脚本须为不含 NUL 的 UTF-8 文件，且不带 BOM",
+        ));
+    }
+    Ok(text
+        .split_terminator('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).as_bytes().to_vec())
+        .collect())
+}
 
 pub fn at_file(error: Error, path: &Path) -> Error {
     let mut diagnostic = error
@@ -57,21 +106,13 @@ pub fn toml(value: &impl Serialize) -> Result<Vec<u8>> {
 
 /// 输出通过校验后再替换原文件，禁止输出覆盖任一已声明输入。
 pub fn write_atomic(path: &Path, bytes: &[u8], inputs: &[&Path]) -> Result<()> {
-    if let Ok(output) = fs::canonicalize(path) {
-        for input in inputs {
-            if fs::canonicalize(input).ok().as_ref() == Some(&output) {
-                return Err(at_file(
-                    error("output_input", "输出文件不能覆盖输入文件"),
-                    path,
-                ));
-            }
-        }
-    }
+    protect_output(path, inputs)?;
     let parent = path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
     fs::create_dir_all(parent).map_err(|e| at_file(e.into(), parent))?;
+    protect_output(path, inputs)?;
     let mut temporary =
         tempfile::NamedTempFile::new_in(parent).map_err(|e| at_file(e.into(), path))?;
     temporary

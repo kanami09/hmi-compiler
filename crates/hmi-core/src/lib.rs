@@ -1,5 +1,6 @@
 //! 各工具共用的错误、诊断和内容摘要，不依赖具体构建阶段。
 
+pub mod cli;
 pub mod diagnostic;
 pub mod file;
 pub mod model;

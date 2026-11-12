@@ -6,5 +6,6 @@ pub mod binary;
 pub mod container;
 pub mod page;
 pub mod project;
+pub mod write;
 
 pub use hmi_core::{Error, Result, diagnostic};

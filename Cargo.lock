@@ -215,6 +215,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmi-artifact"
+version = "0.1.0"
+dependencies = [
+ "hmi-analysis",
+ "hmi-core",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "hmi-compiler"
 version = "0.1.0"
 dependencies = [
@@ -234,6 +244,7 @@ dependencies = [
 name = "hmi-core"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "serde",
  "serde_json",
  "sha2",
