@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/hmi-core", "crates/hmi-format", "crates/hmi-analysis", "crates/hmi-artifact"]
+members = [".", "crates/hmi-core", "crates/hmi-format", "crates/hmi-analysis", "crates/hmi-artifact", "crates/hmi-compiler", "crates/hmi-linker"]
 resolver = "3"
 
 [workspace.package]

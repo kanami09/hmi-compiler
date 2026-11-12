@@ -1,0 +1,21 @@
+[package]
+name = "hmi-page-compiler"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "hmi-compile"
+path = "src/main.rs"
+
+[dependencies]
+hmi-core = { path = "../hmi-core" }
+hmi-format = { path = "../hmi-format" }
+hmi-analysis = { path = "../hmi-analysis" }
+hmi-artifact = { path = "../hmi-artifact" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

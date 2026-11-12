@@ -262,6 +262,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmi-linker"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "hmi-analysis",
+ "hmi-artifact",
+ "hmi-core",
+ "hmi-format",
+ "hmi-page-compiler",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "hmi-page-compiler"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "hmi-analysis",
+ "hmi-artifact",
+ "hmi-core",
+ "hmi-format",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

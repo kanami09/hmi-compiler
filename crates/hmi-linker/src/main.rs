@@ -1,0 +1,58 @@
+use clap::Parser;
+use hmi_core::{
+    Result,
+    cli::{self, CommandResult},
+    file,
+};
+use std::{path::PathBuf, process::ExitCode};
+
+#[derive(Parser)]
+#[command(name = "hmi-link", version, about = "链接页面目标并重建 HMI")]
+struct Args {
+    source: PathBuf,
+    #[arg(short, long, required_unless_present = "check")]
+    output: Option<PathBuf>,
+    #[arg(long, conflicts_with_all=["output","map"])]
+    check: bool,
+    #[arg(long)]
+    map: Option<PathBuf>,
+    #[arg(long)]
+    json: bool,
+    #[arg(long = "deny-warnings")]
+    deny_warnings: bool,
+    #[arg(short='W', value_parser=["error"], help="将警告作为错误：-Werror")]
+    warnings: Option<String>,
+}
+fn run(args: &Args) -> Result<CommandResult> {
+    let linked =
+        hmi_linker::from_manifest(&args.source, args.deny_warnings || args.warnings.is_some())?;
+    let inputs: Vec<_> = linked.inputs.iter().map(|p| p.as_path()).collect();
+    if let Some(output) = &args.output {
+        if let Some(map) = &args.map {
+            if std::path::absolute(map)? == std::path::absolute(output)? {
+                return Err(hmi_core::error(
+                    "output_path",
+                    "HMI 与链接映射不能使用同一输出路径",
+                ));
+            }
+            file::write_atomic(map, &file::json(&linked.map)?, &inputs)?;
+        }
+        file::write_atomic(output, &linked.bytes, &inputs)?;
+    }
+    Ok(CommandResult {
+        result: serde_json::json!({"output":args.output,"output_written":args.output.is_some(),"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes),"map":linked.map}),
+        message: if args.check {
+            "链接检查通过。".into()
+        } else {
+            format!("重建完成：{}", args.output.as_ref().unwrap().display())
+        },
+        diagnostics: linked.diagnostics,
+    })
+}
+fn main() -> ExitCode {
+    let args: Args = match cli::parse() {
+        Ok(args) => args,
+        Err(code) => return code,
+    };
+    cli::finish(run(&args), args.json)
+}

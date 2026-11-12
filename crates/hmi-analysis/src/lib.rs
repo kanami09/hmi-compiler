@@ -144,6 +144,43 @@ pub struct ScriptFacts {
 }
 
 impl ScriptFacts {
+    /// 数字常量目标可以明确判定有效性；表达式和变量仍交给动态引用诊断。
+    pub fn static_page_errors(&self, page_count: usize) -> Vec<Diagnostic> {
+        let mut diagnostics = Vec::new();
+        for (i, token) in self.tokens.iter().enumerate() {
+            if token.text != "page"
+                || self
+                    .tokens
+                    .get(i + 1)
+                    .is_none_or(|next| next.line != token.line)
+            {
+                continue;
+            }
+            let end = self.tokens[i + 1..]
+                .iter()
+                .position(|next| next.line != token.line || matches!(next.text.as_str(), ";" | "}"))
+                .map(|offset| i + 1 + offset)
+                .unwrap_or(self.tokens.len());
+            if let Some(id) = number(&self.tokens[i + 1..end])
+                && (id < 0 || id as u64 >= page_count as u64)
+            {
+                diagnostics.push(
+                    Diagnostic::error(
+                        "script_page",
+                        format!("页面 ID {id} 不存在，当前工程共有 {page_count} 个页面"),
+                    )
+                    .at(Location {
+                        file: Some(self.source.file.clone()),
+                        line: Some(token.line),
+                        event: self.source.event.clone(),
+                        ..Default::default()
+                    }),
+                );
+            }
+        }
+        diagnostics
+    }
+
     /// 拒绝损坏的事实记录，避免空标记进入引用检查。
     pub fn validate(&self) -> hmi_core::Result<()> {
         if self
