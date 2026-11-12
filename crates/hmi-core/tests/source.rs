@@ -52,6 +52,18 @@ fn target_rejects_unknown_profiles_and_tampered_geometry() {
     let mut target = Target::resolve(&config).unwrap();
     target.canvas.width = 1;
     assert!(target.validate().is_err());
+    for orientation in [1, 45, 360, u16::MAX] {
+        let mut invalid = config.clone();
+        invalid.orientation = orientation;
+        assert_eq!(
+            Target::resolve(&invalid)
+                .unwrap_err()
+                .as_diagnostic()
+                .unwrap()
+                .code,
+            "target_orientation"
+        );
+    }
     let mut unknown = config;
     unknown.profile = "TJC0000UNKNOWN".into();
     assert!(Target::resolve(&unknown).is_err());

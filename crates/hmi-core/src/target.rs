@@ -53,25 +53,35 @@ pub const PROFILES: &[&str] = &[
 ];
 
 impl Target {
-    /// 只展开已经取得原生空白工程证据的配置与方向组合。
+    /// 从型号的 0° 基础尺寸展开四个方向的新建配置。
+    ///
+    /// 这里处理新建页面。已有工程可能在切换方向后保留旧的序列化几何，
+    /// 导入器不能用本规则直接覆盖原始页面记录。
     pub fn resolve(config: &TargetConfig) -> Result<Self> {
         if config.format != "ver21234" || config.encoding != "utf-8" {
             return Err(error("target_format", "当前仅支持 ver21234、UTF-8 工程"));
         }
-        let (width, height) = match (config.profile.as_str(), config.orientation) {
-            ("TJC4832K035_011" | "TJC4832T035_011", 0) => (320, 480),
-            ("TJC4832K035_011", 270) => (480, 320),
-            ("TJC3224T028_011", 0) => (240, 320),
-            ("TJC4827X543_011", 0) => (480, 272),
+        if !matches!(config.orientation, 0 | 90 | 180 | 270) {
+            return Err(error(
+                "target_orientation",
+                "工程方向必须为 0、90、180 或 270",
+            ));
+        }
+        let (base_width, base_height) = match config.profile.as_str() {
+            "TJC4832K035_011" | "TJC4832T035_011" => (320, 480),
+            "TJC3224T028_011" => (240, 320),
+            "TJC4827X543_011" => (480, 272),
             _ => {
                 return Err(error(
                     "target_profile",
-                    format!(
-                        "当前阶段不支持型号 {} 的 {}° 新建配置",
-                        config.profile, config.orientation
-                    ),
+                    format!("当前阶段尚未提供型号 {} 的新建配置", config.profile),
                 ));
             }
+        };
+        let (width, height) = if matches!(config.orientation, 90 | 270) {
+            (base_height, base_width)
+        } else {
+            (base_width, base_height)
         };
         let signature = format!(
             "blank-ver21234-1:{}:{}:{width}:{height}:{}",

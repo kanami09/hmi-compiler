@@ -26,16 +26,84 @@ fn write_page(root: &Path, relative: &str, name: &str, event: Option<&str>) {
 }
 
 #[test]
-fn blank_k270_matches_native_zero_metadata_vector() {
-    let tmp = tempfile::tempdir().unwrap();
-    hmi_cli::init(tmp.path(), &config("TJC4832K035_011", 270)).unwrap();
-    let prepared = hmi_cli::prepare(tmp.path()).unwrap();
-    let linked = prepared.link(true).unwrap();
-    assert_eq!(
-        hmi_core::sha256(&linked.bytes),
-        "978ff2117ea8159157fb9e137c9d5618501b1037b05722961cd744cf2bf7cf9a"
-    );
-    assert!(linked.diagnostics.is_empty());
+fn blank_known_directions_match_native_vectors() {
+    for (orientation, expected) in [
+        (
+            0,
+            "4b6b217071905eb11b787fddd27bbe602c87c0363a0a0b291863e6cc64ee1f65",
+        ),
+        (
+            90,
+            "4fea9cac81d75a63d61cae10fd4a80d52c7b91c9b24b5357972e8f2a390ea300",
+        ),
+        (
+            270,
+            "978ff2117ea8159157fb9e137c9d5618501b1037b05722961cd744cf2bf7cf9a",
+        ),
+    ] {
+        let tmp = tempfile::tempdir().unwrap();
+        hmi_cli::init(tmp.path(), &config("TJC4832K035_011", orientation)).unwrap();
+        let linked = hmi_cli::prepare(tmp.path()).unwrap().link(true).unwrap();
+        assert_eq!(hmi_core::sha256(&linked.bytes), expected);
+        assert!(linked.diagnostics.is_empty());
+    }
+}
+
+#[test]
+fn four_directions_write_geometry_and_direction_without_changing_model_fields() {
+    // 尺寸来自配置规则，型号字段来自原生对照；检查最终文件而不只检查 Target。
+    let cases = [
+        (
+            "TJC4832K035_011",
+            [(320, 480), (480, 320), (320, 480), (480, 320)],
+            1,
+            0x04096270u32,
+        ),
+        (
+            "TJC4832T035_011",
+            [(320, 480), (480, 320), (320, 480), (480, 320)],
+            0,
+            0xADE186D6,
+        ),
+        (
+            "TJC3224T028_011",
+            [(240, 320), (320, 240), (240, 320), (320, 240)],
+            0,
+            0x0B997EF5,
+        ),
+        (
+            "TJC4827X543_011",
+            [(480, 272), (272, 480), (480, 272), (272, 480)],
+            3,
+            0x51841CCD,
+        ),
+    ];
+    for (profile, sizes, tag, model_code) in cases {
+        for ((orientation, code), (width, height)) in
+            [(0, 0), (90, 1), (180, 2), (270, 3)].into_iter().zip(sizes)
+        {
+            let tmp = tempfile::tempdir().unwrap();
+            hmi_cli::init(tmp.path(), &config(profile, orientation)).unwrap();
+            let linked = hmi_cli::prepare(tmp.path()).unwrap().link(true).unwrap();
+            let container = Container::parse(linked.bytes).unwrap();
+            let project = Project::parse(&container).unwrap();
+            let main = container
+                .data(container.active("main.HMI").unwrap())
+                .unwrap();
+            assert_eq!(main[12], code);
+            assert_eq!(main[11], tag);
+            assert_eq!(main[65], 3);
+            assert_eq!(
+                u32::from_le_bytes(main[16..20].try_into().unwrap()),
+                model_code
+            );
+            let page = &project.pages[0].1.objects[0];
+            assert_eq!(page.integer("w"), Some(width));
+            assert_eq!(page.integer("h"), Some(height));
+            assert_eq!(page.integer("endx"), Some(width - 1));
+            assert_eq!(page.integer("endy"), Some(height - 1));
+        }
+    }
 }
 
 #[test]
