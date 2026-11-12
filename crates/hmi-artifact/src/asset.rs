@@ -1,0 +1,214 @@
+//! `.hma` 自包含图片目标：兼容约束、成员描述和编码载荷，不引用源文件。
+use hmi_core::{
+    Result,
+    asset::{Alpha, Resize},
+    error, file,
+    model::check_schema,
+    sha256,
+    target::Target,
+};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
+const MAGIC: &[u8; 8] = b"HMIASS01";
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ImageInfo {
+    pub width: u16,
+    pub height: u16,
+    pub storage_width: u16,
+    pub storage_height: u16,
+    pub orientation: u16,
+    pub codec: String,
+    pub alpha: Alpha,
+    pub background: Option<String>,
+    pub resize: Option<Resize>,
+    pub source_format: String,
+    pub editor_source_format: String,
+    pub source_sha256: String,
+    pub backend: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum MemberRole {
+    Runtime,
+    Source,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Member {
+    pub role: MemberRole,
+    pub extension: String,
+    pub reference_kind: Option<[u8; 8]>,
+    pub offset: u32,
+    pub length: u32,
+    pub sha256: String,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssetMetadata {
+    pub schema: String,
+    pub kind: String,
+    pub format: String,
+    pub producer: String,
+    pub image: ImageInfo,
+    pub members: Vec<Member>,
+}
+#[derive(Clone, Debug)]
+pub struct AssetObject {
+    pub metadata: AssetMetadata,
+    pub payload: Vec<u8>,
+}
+
+impl AssetObject {
+    pub fn image(info: ImageInfo, runtime: Vec<u8>, source: Vec<u8>) -> Result<Self> {
+        let mut members = Vec::new();
+        let mut payload = Vec::new();
+        for (role, extension, reference_kind, bytes) in [
+            (
+                MemberRole::Runtime,
+                "i",
+                Some([b'i', 0, 0, 0, 0, 0, 0, 0]),
+                runtime,
+            ),
+            (MemberRole::Source, "is", None, source),
+        ] {
+            members.push(Member {
+                role,
+                extension: extension.into(),
+                reference_kind,
+                offset: u32::try_from(payload.len())
+                    .map_err(|_| error("asset_length", "资产载荷偏移超过 u32 范围"))?,
+                length: u32::try_from(bytes.len())
+                    .map_err(|_| error("asset_length", "资产成员超过 u32 范围"))?,
+                sha256: sha256(&bytes),
+            });
+            payload.extend(bytes);
+        }
+        let asset = Self {
+            metadata: AssetMetadata {
+                schema: "hmi.asset-object/1".into(),
+                kind: "image".into(),
+                format: "ver21234".into(),
+                producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
+                image: info,
+                members,
+            },
+            payload,
+        };
+        asset.validate()?;
+        Ok(asset)
+    }
+    pub fn member(&self, index: usize) -> Result<&[u8]> {
+        let m = self
+            .metadata
+            .members
+            .get(index)
+            .ok_or_else(|| error("asset_member", "资产成员不存在"))?;
+        let end = (m.offset as usize)
+            .checked_add(m.length as usize)
+            .ok_or_else(|| error("asset_length", "资产成员范围溢出"))?;
+        self.payload
+            .get(m.offset as usize..end)
+            .ok_or_else(|| error("asset_length", "资产成员超出载荷范围"))
+    }
+    pub fn validate(&self) -> Result<()> {
+        check_schema(&self.metadata.schema, "hmi.asset-object/1")?;
+        let info = &self.metadata.image;
+        if self.metadata.kind != "image"
+            || self.metadata.format != "ver21234"
+            || info.codec != "rgb565"
+            || info.width == 0
+            || info.height == 0
+            || info.editor_source_format != "bmp"
+            || !matches!(info.orientation, 0 | 90 | 180 | 270)
+        {
+            return Err(error(
+                "asset_format",
+                "当前资产类型、格式、尺寸或编码方式不受支持",
+            ));
+        }
+        let expected = if matches!(info.orientation, 90 | 270) {
+            (info.height, info.width)
+        } else {
+            (info.width, info.height)
+        };
+        if (info.storage_width, info.storage_height) != expected
+            || info.source_sha256.len() != 64
+            || !info.source_sha256.bytes().all(|b| b.is_ascii_hexdigit())
+        {
+            return Err(error("asset_metadata", "图片存储尺寸或源摘要无效"));
+        }
+        if self.metadata.members.len() != 2 {
+            return Err(error(
+                "asset_member",
+                "RGB565 图片须包含运行数据和 BMP 编辑源两个成员",
+            ));
+        }
+        let mut cursor = 0;
+        for (i, m) in self.metadata.members.iter().enumerate() {
+            let expected = if i == 0 {
+                (MemberRole::Runtime, "i", Some([b'i', 0, 0, 0, 0, 0, 0, 0]))
+            } else {
+                (MemberRole::Source, "is", None)
+            };
+            if (&m.role, m.extension.as_str(), m.reference_kind)
+                != (&expected.0, expected.1, expected.2)
+                || m.offset as usize != cursor
+                || m.length == 0
+            {
+                return Err(error("asset_member", "资产成员角色、名称或布局无效"));
+            }
+            let bytes = self.member(i)?;
+            if sha256(bytes) != m.sha256 {
+                return Err(error("asset_hash", "资产成员摘要不匹配，请重新编码"));
+            }
+            cursor += bytes.len();
+        }
+        if cursor != self.payload.len() {
+            return Err(error("asset_length", "资产成员未完整覆盖载荷"));
+        }
+        hmi_format::picture::validate(
+            self.member(0)?,
+            self.member(1)?,
+            info.width,
+            info.height,
+            info.orientation,
+        )?;
+        Ok(())
+    }
+    /// 图片目标只依赖图像编码和方向，不依赖页面控件注册表的修订号。
+    pub fn validate_for(&self, target: &Target) -> Result<()> {
+        self.validate()?;
+        target.validate()?;
+        if self.metadata.format != target.format
+            || self.metadata.image.orientation != target.orientation
+            || !target
+                .capabilities
+                .image_codecs
+                .contains(&self.metadata.image.codec)
+        {
+            return Err(error(
+                "asset_target",
+                "图片目标的编码或方向与工程不匹配，请重新编码",
+            ));
+        }
+        Ok(())
+    }
+    pub fn encode(&self) -> Result<Vec<u8>> {
+        self.validate()?;
+        super::envelope::encode(MAGIC, &self.metadata, &self.payload, "asset")
+    }
+    pub fn decode(bytes: &[u8]) -> Result<Self> {
+        let (metadata, payload) = super::envelope::decode(MAGIC, bytes, "asset")?;
+        let asset = Self { metadata, payload };
+        asset.validate()?;
+        Ok(asset)
+    }
+    pub fn read(path: &Path) -> Result<Self> {
+        Self::decode(&file::read(path)?).map_err(|e| file::at_file(e, path))
+    }
+    pub fn write(&self, path: &Path, inputs: &[&Path]) -> Result<()> {
+        file::write_atomic(path, &self.encode()?, inputs)
+    }
+}

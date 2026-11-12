@@ -3,12 +3,13 @@
 //! 页面目标保存对象记录和重定位表；最终 ID、页面索引及 CRC 由链接器生成。
 
 use hmi_analysis::ScriptFacts;
-use hmi_core::{Result, error, file, model::check_schema, sha256, target::Target};
+use hmi_core::{Result, error, file, model::check_schema, target::Target};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+pub mod asset;
+mod envelope;
 
 const MAGIC: &[u8; 8] = b"HMIOBJ02";
-const HEADER_SIZE: usize = 80;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -238,48 +239,12 @@ impl CompiledObject {
 
     pub fn encode(&self) -> Result<Vec<u8>> {
         self.validate()?;
-        let metadata = serde_json::to_vec(&self.metadata)
-            .map_err(|e| error("object_metadata", e.to_string()))?;
-        let meta_len = u32::try_from(metadata.len())
-            .map_err(|_| error("object_length", "目标文件描述超过 u32 范围"))?;
-        let payload_len = u32::try_from(self.payload.len())
-            .map_err(|_| error("object_length", "目标文件载荷超过 u32 范围"))?;
-        let mut output = vec![0; HEADER_SIZE];
-        output[..8].copy_from_slice(MAGIC);
-        output[8..12].copy_from_slice(&meta_len.to_le_bytes());
-        output[12..16].copy_from_slice(&payload_len.to_le_bytes());
-        output.extend(metadata);
-        output.extend(&self.payload);
-        let digest = sha256(&output[HEADER_SIZE..]);
-        output[16..80].copy_from_slice(digest.as_bytes());
-        Ok(output)
+        envelope::encode(MAGIC, &self.metadata, &self.payload, "object")
     }
 
-    /// 先检查实际边界和摘要，再解析描述；不根据外部长度预分配载荷。
     pub fn decode(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < HEADER_SIZE || &bytes[..8] != MAGIC {
-            return Err(error(
-                "object_format",
-                "不是受支持的 .hmo 目标文件或版本，请使用当前编译器重新编译",
-            ));
-        }
-        let meta_len = u32::from_le_bytes(bytes[8..12].try_into().unwrap()) as usize;
-        let payload_len = u32::from_le_bytes(bytes[12..16].try_into().unwrap()) as usize;
-        let meta_end = HEADER_SIZE
-            .checked_add(meta_len)
-            .ok_or_else(|| error("object_length", "目标文件描述长度溢出"))?;
-        if meta_end.checked_add(payload_len) != Some(bytes.len()) {
-            return Err(error("object_length", "目标文件长度与头部记录不一致"));
-        }
-        if sha256(&bytes[HEADER_SIZE..]).as_bytes() != &bytes[16..80] {
-            return Err(error("object_hash", "目标文件摘要不匹配，请重新编译"));
-        }
-        let metadata = serde_json::from_slice(&bytes[HEADER_SIZE..meta_end])
-            .map_err(|e| error("object_metadata", format!("目标文件描述无效：{e}")))?;
-        let object = Self {
-            metadata,
-            payload: bytes[meta_end..].to_vec(),
-        };
+        let (metadata, payload) = envelope::decode(MAGIC, bytes, "object")?;
+        let object = Self { metadata, payload };
         object.validate()?;
         Ok(object)
     }

@@ -5,6 +5,7 @@
 pub mod binary;
 pub mod container;
 pub mod page;
+pub mod picture;
 pub mod project;
 pub mod write;
 

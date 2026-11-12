@@ -8,6 +8,7 @@ members = [
     "crates/hmi-compiler",
     "crates/hmi-linker",
     "crates/hmi-cli",
+    "crates/hmi-media",
 ]
 resolver = "3"
 
