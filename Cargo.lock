@@ -225,6 +225,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hmi-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "hmi-artifact",
+ "hmi-core",
+ "hmi-format",
+ "hmi-linker",
+ "hmi-page-compiler",
+ "serde_json",
+ "tempfile",
+ "toml",
+]
+
+[[package]]
 name = "hmi-compiler"
 version = "0.1.0"
 dependencies = [
