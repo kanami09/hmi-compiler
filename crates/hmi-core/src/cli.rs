@@ -63,9 +63,33 @@ pub fn finish(outcome: Result<CommandResult>, json_mode: bool) -> ExitCode {
             } else {
                 "警告"
             };
-            let file = diagnostic.location.file.as_deref().unwrap_or("");
+            let location = &diagnostic.location;
+            let mut parts = Vec::new();
+            if let Some(page) = &location.page {
+                parts.push(format!("页面 {page}"));
+            }
+            if let Some(object) = &location.object
+                && location.page.as_ref() != Some(object)
+            {
+                parts.push(format!("控件 {object}"));
+            }
+            if let Some(event) = &location.event {
+                parts.push(format!("事件 {event}"));
+            }
+            if let Some(file) = &location.file {
+                parts.push(if let Some(line) = location.line {
+                    format!("{file}:{line}")
+                } else {
+                    file.clone()
+                });
+            }
+            let prefix = if parts.is_empty() {
+                String::new()
+            } else {
+                format!("{}：", parts.join("，"))
+            };
             eprintln!(
-                "{kind} [{file}] {}: {}",
+                "{kind} [{}] {prefix}{}",
                 diagnostic.code, diagnostic.message
             );
         }

@@ -148,7 +148,6 @@ fn at_object(error: hmi_core::Error, page: &str, name: &str, index: usize) -> hm
     diagnostic.location.page = Some(page.into());
     diagnostic.location.object = Some(name.into());
     diagnostic.location.object_index = Some(index);
-    diagnostic.message = format!("页面 {page} 中控件 {name}：{}", diagnostic.message);
     diagnostic.into()
 }
 

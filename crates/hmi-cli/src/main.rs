@@ -8,11 +8,7 @@ use hmi_core::{
 use std::{path::PathBuf, process::ExitCode};
 
 #[derive(Parser)]
-#[command(
-    name = "hmi",
-    version,
-    about = "HMI 工程管理与构建；当前阶段支持空白工程"
-)]
+#[command(name = "hmi", version, about = "HMI 工程管理与构建")]
 struct Args {
     #[arg(long, global = true)]
     json: bool,

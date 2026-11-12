@@ -67,6 +67,33 @@ fn code(error: &hmi_core::Error) -> &str {
 }
 
 #[test]
+fn plain_diagnostic_identifies_page_control_property_and_constraint() {
+    let tmp = fixture();
+    page(
+        tmp.path(),
+        vec![control("tm0", "timer", &[("tim", n(49))])],
+        None,
+    );
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_hmi"))
+        .arg("check")
+        .arg(tmp.path())
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let diagnostic = String::from_utf8(output.stderr).unwrap();
+    for expected in [
+        "错误 [property_range]",
+        "页面 page0",
+        "控件 tm0",
+        "属性 tim",
+        "50～65534",
+    ] {
+        assert!(diagnostic.contains(expected), "{diagnostic}");
+    }
+    assert!(!diagnostic.contains("[]"));
+}
+
+#[test]
 fn known_control_recipes_match_twelve_native_vectors() {
     let original = vec![
         hotspot("m0", 0, 0),

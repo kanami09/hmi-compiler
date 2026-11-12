@@ -1,4 +1,4 @@
-//! 第一阶段的构建驱动：空白工程初始化、执行计划和完整构建。
+//! 工程初始化、执行计划和完整构建。
 //!
 //! 编译和链接直接调用共享库；计划中的独立命令使用相同的输入与格式。
 
@@ -98,7 +98,7 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
     if !project.assets.items.is_empty() {
         return Err(error(
             "project_assets",
-            "当前阶段尚未接入媒体资产，请使用不含资产的空白工程",
+            "当前阶段尚未接入媒体资产，无法处理含资产的工程",
         ));
     }
     let target = Target::resolve(&project.target)?;
