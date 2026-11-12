@@ -13,6 +13,8 @@ use crate::{
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+pub const PAGE_EVENTS: &[&str] = &["load", "loadend", "down", "up", "unload"];
+
 #[derive(Clone, Copy, Debug, Serialize)]
 pub enum Storage {
     U8,
@@ -377,6 +379,24 @@ impl Definition {
 
     /// 链接前复查原始属性布局及约束，ID 仍必须为零占位值。
     pub fn validate_record(&self, name: &str, attributes: &[(String, Vec<u8>)]) -> Result<()> {
+        let properties = self.properties_from_record(attributes)?;
+        if self.attributes(name, &properties)? != attributes {
+            return Err(error(
+                "object_layout",
+                format!(
+                    "控件 {name} 的目标记录与 {} 创建布局不一致，请重新编译",
+                    self.name
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    /// 按注册宽度和符号解码，供目标检查使用；变量 val 不能按 u32 显示。
+    pub fn properties_from_record(
+        &self,
+        attributes: &[(String, Vec<u8>)],
+    ) -> Result<BTreeMap<String, toml::Value>> {
         let mut properties = BTreeMap::new();
         for property in self.properties {
             let bytes = attributes
@@ -391,15 +411,6 @@ impl Definition {
                 })?;
             properties.insert(property.name.into(), property.decode(&bytes.1)?);
         }
-        if self.attributes(name, &properties)? != attributes {
-            return Err(error(
-                "object_layout",
-                format!(
-                    "控件 {name} 的目标记录与 {} 创建布局不一致，请重新编译",
-                    self.name
-                ),
-            ));
-        }
-        Ok(())
+        Ok(properties)
     }
 }

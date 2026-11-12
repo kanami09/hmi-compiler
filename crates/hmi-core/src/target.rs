@@ -1,4 +1,4 @@
-//! 四组已验证的空白工程配置，不根据型号名猜测系列能力。
+//! 已接入型号的基础配置和当前控件能力，不根据型号名猜测系列能力。
 
 use crate::{Result, error, model::check_schema, sha256};
 use serde::{Deserialize, Serialize};
@@ -28,6 +28,8 @@ pub struct Canvas {
 pub struct Capabilities {
     pub ordinary_controls: bool,
     pub media_assets: bool,
+    #[serde(default)]
+    pub control_types: Vec<String>,
 }
 
 /// 已展开的共同目标输入。消费者重新核对内置规则，拒绝被修改的几何或版本。
@@ -84,10 +86,11 @@ impl Target {
             (base_width, base_height)
         };
         let signature = format!(
-            "blank-ver21234-1:{}:{}:{width}:{height}:{}",
+            "page-ver21234-2:{}:{}:{width}:{height}:{}:{}",
             config.profile,
             config.orientation,
-            sha256(DEFAULT_PROGRAM.as_bytes())
+            sha256(DEFAULT_PROGRAM.as_bytes()),
+            crate::controls::fingerprint()
         );
         Ok(Self {
             schema: "hmi.target/1".into(),
@@ -97,10 +100,14 @@ impl Target {
             orientation: config.orientation,
             canvas: Canvas { width, height },
             capabilities: Capabilities {
-                ordinary_controls: false,
+                ordinary_controls: true,
                 media_assets: false,
+                control_types: crate::controls::DEFINITIONS
+                    .iter()
+                    .map(|d| d.name.into())
+                    .collect(),
             },
-            data_revision: 1,
+            data_revision: 2,
             profile_data_sha256: sha256(signature.as_bytes()),
         })
     }
@@ -116,7 +123,7 @@ impl Target {
         if self != &expected {
             return Err(error(
                 "target_data",
-                "目标配置与当前版本的型号数据不一致，请重新导出 target.json",
+                "目标配置与当前版本的数据不一致，请重新导出 target.json 并重新编译相关目标文件",
             ));
         }
         Ok(())

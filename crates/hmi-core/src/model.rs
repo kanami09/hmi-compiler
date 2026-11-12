@@ -136,7 +136,7 @@ pub fn check_schema(actual: &str, expected: &str) -> Result<()> {
     Ok(())
 }
 
-/// 第一阶段采用已经验证的 ASCII 名称规则，避免接受无法写入页面头的名称。
+/// 新建工程采用已接入的 ASCII 名称规则，避免接受无法写入页面头的名称。
 pub fn check_name(name: &str) -> Result<()> {
     if name.is_empty()
         || name.len() > 16

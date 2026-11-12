@@ -314,6 +314,7 @@ struct Checker<'a> {
     file: &'a str,
     diagnostics: &'a mut Vec<Diagnostic>,
     seen: BTreeSet<(String, usize)>,
+    check_modes: bool,
 }
 
 impl Checker<'_> {
@@ -362,6 +363,20 @@ impl Checker<'_> {
             self.warn(
                 "script_property",
                 format!("{}.{} 没有属性 {field}", page.name, object.name),
+                line,
+            );
+        }
+        if self.check_modes
+            && object.type_code == 52
+            && let (Some(mode), Some(field)) = (object.integer("sta"), field)
+            && ((mode == 0 && matches!(field, "txt" | "txt_maxl")) || (mode == 1 && field == "val"))
+        {
+            self.warn(
+                "script_property_mode",
+                format!(
+                    "{}.{} 的属性 {field} 在当前变量模式下不可用",
+                    page.name, object.name
+                ),
                 line,
             );
         }
@@ -565,6 +580,24 @@ pub fn check_facts(
     page_index: Option<usize>,
     sources: &[ScriptFacts],
 ) -> Vec<Diagnostic> {
+    check_facts_inner(project, page_index, sources, false)
+}
+
+/// 新工具链按当前控件模式检查属性；旧入口的诊断行为在迁移期间保持不变。
+pub fn check_linked_facts(
+    project: &Context,
+    page_index: Option<usize>,
+    sources: &[ScriptFacts],
+) -> Vec<Diagnostic> {
+    check_facts_inner(project, page_index, sources, true)
+}
+
+fn check_facts_inner(
+    project: &Context,
+    page_index: Option<usize>,
+    sources: &[ScriptFacts],
+    check_modes: bool,
+) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let fonts = project.references.iter().filter(|r| r.kind == "zi").count();
     let images = project.references.iter().filter(|r| r.kind == "i").count();
@@ -619,6 +652,7 @@ pub fn check_facts(
             file: &source.file,
             diagnostics: &mut diagnostics,
             seen: BTreeSet::new(),
+            check_modes,
         }
         .scan(&facts.tokens);
     }

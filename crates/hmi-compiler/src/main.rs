@@ -18,7 +18,7 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// 编译页面；当前阶段支持空白页及页面事件。
+    /// 编译页面；当前支持热区、变量、定时器及其事件。
     Page {
         source: PathBuf,
         #[arg(long)]
@@ -41,8 +41,27 @@ fn run(args: &Args) -> Result<CommandResult> {
     match &args.command {
         Command::Inspect { file } => {
             let object = CompiledObject::read(file)?;
+            let mut records = Vec::new();
+            if let Some(layout) = &object.metadata.layout {
+                for (index, record) in layout.objects.iter().enumerate() {
+                    let parsed = hmi_format::page::Object::parse(object.record(index)?)?;
+                    let properties = if index == 0 {
+                        serde_json::json!({"w":parsed.integer("w"),"h":parsed.integer("h"),"sta":parsed.integer("sta"),"bco":parsed.integer("bco")})
+                    } else {
+                        let definition = hmi_core::controls::by_code(parsed.type_code)?;
+                        let attributes = parsed
+                            .attributes
+                            .iter()
+                            .map(|a| (a.name.clone(), a.value.clone()))
+                            .collect::<Vec<_>>();
+                        definition.validate_record(&parsed.name, &attributes)?;
+                        serde_json::json!(definition.properties_from_record(&attributes)?)
+                    };
+                    records.push(serde_json::json!({"record":index,"name":record.name,"type":hmi_format::page::type_name(record.type_code),"properties":properties,"id_pending":index>0}));
+                }
+            }
             Ok(cli::success(
-                serde_json::json!({"metadata":object.metadata,"payload_size":object.payload.len(),"payload_sha256":hmi_core::sha256(&object.payload)}),
+                serde_json::json!({"metadata":object.metadata,"objects":records,"payload_size":object.payload.len(),"payload_sha256":hmi_core::sha256(&object.payload)}),
                 "目标文件校验通过。",
             ))
         }

@@ -1,19 +1,19 @@
-//! 页面与全局代码编译。第一阶段支持空白页属性及页面自身事件。
+//! 页面与全局代码编译。模板检查后生成对象记录，最终 ID 和页面由链接器生成。
 
 use hmi_analysis::{ScriptSource, analyze};
 use hmi_artifact::{CompiledObject, ObjectKind};
 use hmi_core::{
-    Result, error, file,
+    Result, controls, error, file,
     model::{PageSource, check_name, check_schema},
     target::Target,
 };
 use hmi_format::write;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
-pub const PAGE_EVENTS: &[&str] = &["load", "loadend", "down", "up", "unload"];
+pub use hmi_core::controls::PAGE_EVENTS;
 pub use hmi_core::file::script_lines;
 
 pub struct Compilation {
@@ -96,16 +96,82 @@ pub fn compile_page(path: &Path, target: &Target) -> Result<Compilation> {
     compile_page_inner(path, target).map_err(|e| file::at_file(e, path))
 }
 
+type EventRecords = Vec<(String, Vec<Vec<u8>>)>;
+
+/// 事件归属保存为本目标内的对象序号；链接器随后绑定最终页面上下文。
+fn compile_events(
+    events: &BTreeMap<String, String>,
+    slots: &[&str],
+    directory: &Path,
+    owner: usize,
+    inputs: &mut Vec<PathBuf>,
+    facts: &mut Vec<hmi_analysis::ScriptFacts>,
+) -> Result<EventRecords> {
+    for slot in events.keys() {
+        if !slots.contains(&slot.as_str()) {
+            return Err(error("event_slot", format!("不支持事件槽 {slot}")));
+        }
+    }
+    let mut records = Vec::new();
+    for slot in slots {
+        let lines = if let Some(relative) = events.get(*slot) {
+            if Path::new(relative).is_absolute() || !relative.ends_with(".s") {
+                return Err(error(
+                    "event_path",
+                    format!("事件 {slot} 必须引用相对路径的 .s 文件"),
+                ));
+            }
+            let script = directory.join(relative);
+            let text = file::text(&script)?;
+            let lines = script_lines(&text).map_err(|e| file::at_file(e, &script))?;
+            facts.push(analyze(&ScriptSource {
+                page: None,
+                object: Some(owner),
+                event: Some((*slot).into()),
+                file: label(&script),
+                text,
+            }));
+            inputs.push(script);
+            lines
+        } else {
+            Vec::new()
+        };
+        records.push(((*slot).to_string(), lines));
+    }
+    Ok(records)
+}
+
+fn at_object(error: hmi_core::Error, page: &str, name: &str, index: usize) -> hmi_core::Error {
+    let mut diagnostic = error.as_diagnostic().cloned().unwrap_or_else(|| {
+        hmi_core::diagnostic::Diagnostic::error("compile_object", error.to_string())
+    });
+    diagnostic.location.page = Some(page.into());
+    diagnostic.location.object = Some(name.into());
+    diagnostic.location.object_index = Some(index);
+    diagnostic.message = format!("页面 {page} 中控件 {name}：{}", diagnostic.message);
+    diagnostic.into()
+}
+
 fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
     target.validate()?;
     let page: PageSource = file::read_toml(path)?;
     check_schema(&page.schema, "hmi.page/1")?;
     check_name(&page.name)?;
-    if !page.objects.is_empty() || page.original_record.is_some() {
-        return Err(error(
-            "page_feature",
-            "当前阶段仅支持新建空白页及页面事件，尚未接入普通控件和原始数据附件",
-        ));
+    if page.original_record.is_some() {
+        return Err(error("page_feature", "当前尚未接入原始数据附件"));
+    }
+    if page.objects.len() > 250 {
+        return Err(error("object_count", "页面最多包含 250 个普通控件"));
+    }
+    let mut names = BTreeSet::from([page.name.as_str()]);
+    for object in &page.objects {
+        check_name(&object.name)?;
+        if !names.insert(&object.name) {
+            return Err(error(
+                "object_name",
+                format!("页面 {} 中名称 {} 重复", page.name, object.name),
+            ));
+        }
     }
     let mut bco = u16::MAX;
     for (name, value) in &page.properties {
@@ -127,44 +193,55 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
             }
         }
     }
-    for slot in page.events.keys() {
-        if !PAGE_EVENTS.contains(&slot.as_str()) {
-            return Err(error("event_slot", format!("页面不支持事件槽 {slot}")));
-        }
-    }
     let directory = path.parent().unwrap_or(Path::new("."));
     let mut inputs = vec![path.to_path_buf()];
-    let mut events = Vec::new();
     let mut facts = Vec::new();
-    for slot in PAGE_EVENTS {
-        let lines = if let Some(relative) = page.events.get(*slot) {
-            if Path::new(relative).is_absolute() || !relative.ends_with(".s") {
+    let events = compile_events(
+        &page.events,
+        PAGE_EVENTS,
+        directory,
+        0,
+        &mut inputs,
+        &mut facts,
+    )?;
+    let mut records = vec![(
+        121,
+        page.name.clone(),
+        write::object(&page_attributes(target, &page.name, bco), &events)?,
+    )];
+    for (index, object) in page.objects.iter().enumerate() {
+        let compiled = (|| {
+            let definition = controls::by_name(&object.type_name)?;
+            if !target
+                .capabilities
+                .control_types
+                .contains(&object.type_name)
+            {
                 return Err(error(
-                    "event_path",
-                    format!("事件 {slot} 必须引用相对路径的 .s 文件"),
+                    "control_capability",
+                    format!("当前目标未开放控件类型 {}", object.type_name),
                 ));
             }
-            let script = directory.join(relative);
-            let text = file::text(&script)?;
-            let lines = script_lines(&text).map_err(|e| file::at_file(e, &script))?;
-            facts.push(analyze(&ScriptSource {
-                page: None,
-                object: None,
-                event: Some((*slot).into()),
-                file: label(&script),
-                text,
-            }));
-            inputs.push(script);
-            lines
-        } else {
-            Vec::new()
-        };
-        events.push(((*slot).to_string(), lines));
+            let attributes = definition.attributes(&object.name, &object.properties)?;
+            let events = compile_events(
+                &object.events,
+                definition.events,
+                directory,
+                index + 1,
+                &mut inputs,
+                &mut facts,
+            )?;
+            Ok((
+                definition.code,
+                object.name.clone(),
+                write::object(&attributes, &events)?,
+            ))
+        })()
+        .map_err(|e| at_object(e, &page.name, &object.name, index + 1))?;
+        records.push(compiled);
     }
-    let object = write::object(&page_attributes(target, &page.name, bco), &events)?;
-    let payload = write::page(&page.name, &[object])?;
     Ok(Compilation {
-        object: CompiledObject::new(ObjectKind::Page, Some(page.name), target, facts, payload),
+        object: CompiledObject::page(page.name, target, facts, records)?,
         inputs,
     })
 }
