@@ -11,6 +11,7 @@ pub struct ObjectFile {
     pub name: String,
     #[serde(rename = "type")]
     pub type_name: String,
+    #[serde(default)]
     pub properties: BTreeMap<String, toml::Value>,
     #[serde(default)]
     pub events: BTreeMap<String, String>,

@@ -1,0 +1,405 @@
+//! 已接入控件的属性、事件和有序存储布局。
+//!
+//! 默认值来自已审查的创建配方。只改变当前模式，不删除非活动属性；
+//! id 是链接器填写的字段，模板中始终为零。
+
+use crate::{
+    Result,
+    diagnostic::{Diagnostic, Location},
+    error,
+    model::check_name,
+    sha256,
+};
+use serde::Serialize;
+use std::collections::BTreeMap;
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub enum Storage {
+    U8,
+    U16,
+    I32,
+    Text,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub enum DefaultValue {
+    Required,
+    Integer(i64),
+    Text(&'static str),
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct Property {
+    pub name: &'static str,
+    pub storage: Storage,
+    pub min: i64,
+    pub max: i64,
+    pub default: DefaultValue,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub enum FieldValue {
+    Type,
+    Id,
+    Name,
+    Property(&'static str),
+    Constant(&'static [u8]),
+    EndX,
+    EndY,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct Field {
+    pub name: &'static str,
+    pub value: FieldValue,
+}
+
+/// 同一份定义用于源码检查和目标记录检查，避免两个阶段接受不同字段。
+#[derive(Debug, Serialize)]
+pub struct Definition {
+    pub name: &'static str,
+    pub code: u8,
+    pub properties: &'static [Property],
+    pub fields: &'static [Field],
+    pub events: &'static [&'static str],
+}
+
+const fn integer(
+    name: &'static str,
+    storage: Storage,
+    min: i64,
+    max: i64,
+    default: DefaultValue,
+) -> Property {
+    Property {
+        name,
+        storage,
+        min,
+        max,
+        default,
+    }
+}
+const fn field(name: &'static str, value: FieldValue) -> Field {
+    Field { name, value }
+}
+
+const SCOPE: Property = integer("vscope", Storage::U8, 0, 1, DefaultValue::Integer(0));
+const HOTSPOT_PROPERTIES: &[Property] = &[
+    SCOPE,
+    integer("x", Storage::U16, 0, 65535, DefaultValue::Required),
+    integer("y", Storage::U16, 0, 65535, DefaultValue::Required),
+    integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
+    integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
+    integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+];
+const VARIABLE_PROPERTIES: &[Property] = &[
+    SCOPE,
+    integer("sta", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+    Property {
+        name: "txt",
+        storage: Storage::Text,
+        min: 0,
+        max: 0,
+        default: DefaultValue::Text("newtxt"),
+    },
+    integer(
+        "txt_maxl",
+        Storage::U16,
+        0,
+        65535,
+        DefaultValue::Integer(10),
+    ),
+    integer(
+        "val",
+        Storage::I32,
+        i32::MIN as i64,
+        i32::MAX as i64,
+        DefaultValue::Integer(0),
+    ),
+];
+const TIMER_PROPERTIES: &[Property] = &[
+    SCOPE,
+    integer("tim", Storage::U16, 50, 65534, DefaultValue::Integer(400)),
+    integer("en", Storage::U8, 0, 1, DefaultValue::Integer(1)),
+];
+
+const HOTSPOT_FIELDS: &[Field] = &[
+    field("type", FieldValue::Type),
+    field("id", FieldValue::Id),
+    field("objname", FieldValue::Name),
+    field("vscope", FieldValue::Property("vscope")),
+    field("drag", FieldValue::Constant(&[0])),
+    field("sendkey", FieldValue::Property("sendkey")),
+    field("aph", FieldValue::Constant(&[127])),
+    field("movex", FieldValue::Constant(&[0, 0])),
+    field("movey", FieldValue::Constant(&[0, 0])),
+    field("x", FieldValue::Property("x")),
+    field("y", FieldValue::Property("y")),
+    field("w", FieldValue::Property("w")),
+    field("h", FieldValue::Property("h")),
+    field("endx", FieldValue::EndX),
+    field("endy", FieldValue::EndY),
+    field("effect", FieldValue::Constant(&[0])),
+    field("first", FieldValue::Constant(&[0])),
+    field("time", FieldValue::Constant(&[0x2c, 1])),
+    field("lockobj", FieldValue::Constant(&[0])),
+    field("groupid0", FieldValue::Constant(&[0; 4])),
+    field("groupid1", FieldValue::Constant(&[0; 4])),
+];
+const VARIABLE_FIELDS: &[Field] = &[
+    field("type", FieldValue::Type),
+    field("id", FieldValue::Id),
+    field("objname", FieldValue::Name),
+    field("vscope", FieldValue::Property("vscope")),
+    field("lockobj", FieldValue::Constant(&[0])),
+    field("groupid0", FieldValue::Constant(&[0; 4])),
+    field("groupid1", FieldValue::Constant(&[0; 4])),
+    field("sta", FieldValue::Property("sta")),
+    field("txt", FieldValue::Property("txt")),
+    field("txt_maxl", FieldValue::Property("txt_maxl")),
+    field("val", FieldValue::Property("val")),
+];
+const TIMER_FIELDS: &[Field] = &[
+    field("type", FieldValue::Type),
+    field("id", FieldValue::Id),
+    field("objname", FieldValue::Name),
+    field("vscope", FieldValue::Property("vscope")),
+    field("lockobj", FieldValue::Constant(&[0])),
+    field("groupid0", FieldValue::Constant(&[0; 4])),
+    field("groupid1", FieldValue::Constant(&[0; 4])),
+    field("tim", FieldValue::Property("tim")),
+    field("en", FieldValue::Property("en")),
+];
+
+pub const DEFINITIONS: &[Definition] = &[
+    Definition {
+        name: "hotspot",
+        code: 109,
+        properties: HOTSPOT_PROPERTIES,
+        fields: HOTSPOT_FIELDS,
+        events: &["down", "up"],
+    },
+    Definition {
+        name: "variable",
+        code: 52,
+        properties: VARIABLE_PROPERTIES,
+        fields: VARIABLE_FIELDS,
+        events: &[],
+    },
+    Definition {
+        name: "timer",
+        code: 51,
+        properties: TIMER_PROPERTIES,
+        fields: TIMER_FIELDS,
+        events: &["timer"],
+    },
+];
+
+pub fn by_name(name: &str) -> Result<&'static Definition> {
+    DEFINITIONS.iter().find(|d| d.name == name).ok_or_else(|| {
+        error(
+            "control_type",
+            format!("当前尚未接入控件类型 {name}，已支持 hotspot、variable、timer"),
+        )
+    })
+}
+
+pub fn by_code(code: u8) -> Result<&'static Definition> {
+    DEFINITIONS
+        .iter()
+        .find(|d| d.code == code)
+        .ok_or_else(|| error("control_type", format!("当前尚未接入控件类型码 {code}")))
+}
+
+/// 注册表变化必须使旧目标配置失效，即使文件格式版本没有变化。
+pub fn fingerprint() -> String {
+    sha256(&serde_json::to_vec(DEFINITIONS).expect("静态控件定义可以序列化"))
+}
+
+fn property_error(code: &str, property: &str, message: impl Into<String>) -> crate::Error {
+    Diagnostic::error(code, message)
+        .at(Location {
+            property: Some(property.into()),
+            ..Default::default()
+        })
+        .into()
+}
+
+impl Property {
+    fn encode(&self, value: &toml::Value) -> Result<Vec<u8>> {
+        if matches!(self.storage, Storage::Text) {
+            return value
+                .as_str()
+                .filter(|s| !s.contains('\0'))
+                .map(|s| s.as_bytes().to_vec())
+                .ok_or_else(|| {
+                    property_error(
+                        "property_type",
+                        self.name,
+                        format!("属性 {} 必须为不含 NUL 的字符串", self.name),
+                    )
+                });
+        }
+        let number = value.as_integer().ok_or_else(|| {
+            property_error(
+                "property_type",
+                self.name,
+                format!("属性 {} 必须为整数", self.name),
+            )
+        })?;
+        if !(self.min..=self.max).contains(&number) {
+            return Err(property_error(
+                "property_range",
+                self.name,
+                format!(
+                    "属性 {} 的值为 {number}，允许范围为 {}～{}",
+                    self.name, self.min, self.max
+                ),
+            ));
+        }
+        Ok(match self.storage {
+            Storage::U8 => vec![number as u8],
+            Storage::U16 => (number as u16).to_le_bytes().to_vec(),
+            Storage::I32 => (number as i32).to_le_bytes().to_vec(),
+            Storage::Text => unreachable!(),
+        })
+    }
+
+    fn decode(&self, bytes: &[u8]) -> Result<toml::Value> {
+        let invalid = || {
+            property_error(
+                "object_property",
+                self.name,
+                format!("目标记录中属性 {} 的宽度或编码无效", self.name),
+            )
+        };
+        Ok(match self.storage {
+            Storage::U8 => toml::Value::Integer(i64::from(
+                *bytes
+                    .first()
+                    .filter(|_| bytes.len() == 1)
+                    .ok_or_else(invalid)?,
+            )),
+            Storage::U16 => toml::Value::Integer(i64::from(u16::from_le_bytes(
+                bytes.try_into().map_err(|_| invalid())?,
+            ))),
+            Storage::I32 => toml::Value::Integer(i64::from(i32::from_le_bytes(
+                bytes.try_into().map_err(|_| invalid())?,
+            ))),
+            Storage::Text => {
+                toml::Value::String(std::str::from_utf8(bytes).map_err(|_| invalid())?.into())
+            }
+        })
+    }
+}
+
+impl Definition {
+    /// 保持布局顺序，先补齐已定义默认值，再编码；不会依据模式移除字段。
+    pub fn attributes(
+        &self,
+        name: &str,
+        properties: &BTreeMap<String, toml::Value>,
+    ) -> Result<Vec<(String, Vec<u8>)>> {
+        check_name(name)?;
+        for key in properties.keys() {
+            if !self.properties.iter().any(|p| p.name == key) {
+                return Err(property_error(
+                    "control_property",
+                    key,
+                    format!("控件类型 {} 不支持可编辑属性 {key}", self.name),
+                ));
+            }
+        }
+        let mut values = BTreeMap::new();
+        for property in self.properties {
+            let default;
+            let value = if let Some(value) = properties.get(property.name) {
+                value
+            } else {
+                default = match property.default {
+                    DefaultValue::Required => {
+                        return Err(property_error(
+                            "property_required",
+                            property.name,
+                            format!("控件类型 {} 必须指定属性 {}", self.name, property.name),
+                        ));
+                    }
+                    DefaultValue::Integer(n) => toml::Value::Integer(n),
+                    DefaultValue::Text(s) => toml::Value::String(s.into()),
+                };
+                &default
+            };
+            values.insert(property.name, property.encode(value)?);
+        }
+        if self.code == 52 {
+            let capacity =
+                u16::from_le_bytes(values["txt_maxl"].as_slice().try_into().unwrap()) as usize;
+            if values["txt"].len() > capacity {
+                return Err(property_error(
+                    "text_capacity",
+                    "txt",
+                    format!(
+                        "UTF-8 文本占用 {} 字节，超过 txt_maxl 的 {capacity} 字节容量",
+                        values["txt"].len()
+                    ),
+                ));
+            }
+        }
+        let endpoint = |position: &str, size: &str| -> Result<Vec<u8>> {
+            let start = u16::from_le_bytes(values[position].as_slice().try_into().unwrap());
+            let length = u16::from_le_bytes(values[size].as_slice().try_into().unwrap());
+            let end = u32::from(start) + u32::from(length) - 1;
+            let end = u16::try_from(end).map_err(|_| {
+                property_error(
+                    "geometry",
+                    size,
+                    format!("{position} + {size} - 1 超过 65535"),
+                )
+            })?;
+            Ok(end.to_le_bytes().to_vec())
+        };
+        self.fields
+            .iter()
+            .map(|field| {
+                let value = match field.value {
+                    FieldValue::Type => vec![self.code],
+                    FieldValue::Id => vec![0],
+                    FieldValue::Name => name.as_bytes().to_vec(),
+                    FieldValue::Property(key) => values[key].clone(),
+                    FieldValue::Constant(bytes) => bytes.to_vec(),
+                    FieldValue::EndX => endpoint("x", "w")?,
+                    FieldValue::EndY => endpoint("y", "h")?,
+                };
+                Ok((field.name.into(), value))
+            })
+            .collect()
+    }
+
+    /// 链接前复查原始属性布局及约束，ID 仍必须为零占位值。
+    pub fn validate_record(&self, name: &str, attributes: &[(String, Vec<u8>)]) -> Result<()> {
+        let mut properties = BTreeMap::new();
+        for property in self.properties {
+            let bytes = attributes
+                .iter()
+                .find(|(key, _)| key == property.name)
+                .ok_or_else(|| {
+                    property_error(
+                        "object_property",
+                        property.name,
+                        format!("目标记录缺少属性 {}", property.name),
+                    )
+                })?;
+            properties.insert(property.name.into(), property.decode(&bytes.1)?);
+        }
+        if self.attributes(name, &properties)? != attributes {
+            return Err(error(
+                "object_layout",
+                format!(
+                    "控件 {name} 的目标记录与 {} 创建布局不一致，请重新编译",
+                    self.name
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
