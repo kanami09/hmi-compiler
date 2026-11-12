@@ -1,6 +1,9 @@
 //! 各工具共用的错误、诊断和内容摘要，不依赖具体构建阶段。
 
 pub mod diagnostic;
+pub mod file;
+pub mod model;
+pub mod target;
 
 use sha2::{Digest, Sha256};
 
@@ -14,6 +17,11 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// 创建具有稳定代码的错误，供 CLI 输出和自动化调用共同使用。
+pub fn error(code: &str, message: impl Into<String>) -> Error {
+    diagnostic::Diagnostic::error(code, message).into()
+}
 
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {

@@ -204,12 +204,24 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
 
 [[package]]
+name = "hmi-analysis"
+version = "0.1.0"
+dependencies = [
+ "hmi-core",
+ "hmi-format",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "hmi-compiler"
 version = "0.1.0"
 dependencies = [
  "anstream",
  "anstyle",
  "clap",
+ "hmi-analysis",
  "hmi-core",
  "hmi-format",
  "serde",
@@ -220,16 +232,19 @@ dependencies = [
 
 [[package]]
 name = "hmi-core"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "serde",
+ "serde_json",
  "sha2",
+ "tempfile",
  "thiserror",
+ "toml",
 ]
 
 [[package]]
 name = "hmi-format"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "hmi-core",
  "serde",

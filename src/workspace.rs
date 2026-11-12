@@ -8,6 +8,7 @@ use crate::diagnostic::{Diagnostic, Severity};
 use crate::page::{Attribute, Object, type_name};
 use crate::project::Project;
 use crate::{Error, Result, hex, sha256};
+pub use hmi_core::model::{ObjectFile, PageFile};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -22,28 +23,6 @@ pub struct ProjectFile {
     pub format_version: u32,
     pub encoding: String,
     pub pages: Vec<String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct ObjectFile {
-    pub name: String,
-    #[serde(rename = "type")]
-    pub type_name: String,
-    pub properties: BTreeMap<String, toml::Value>,
-    #[serde(default)]
-    pub events: BTreeMap<String, String>,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct PageFile {
-    pub name: String,
-    pub properties: BTreeMap<String, toml::Value>,
-    #[serde(default)]
-    pub events: BTreeMap<String, String>,
-    #[serde(default)]
-    pub objects: Vec<ObjectFile>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

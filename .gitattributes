@@ -1,0 +1,2 @@
+# 内置启动代码使用原生 CRLF，避免不同平台检出后改变资源字节和摘要。
+data/profiles/default-program.s text eol=crlf
