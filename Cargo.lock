@@ -210,12 +210,29 @@ dependencies = [
  "anstream",
  "anstyle",
  "clap",
+ "hmi-core",
+ "hmi-format",
  "serde",
  "serde_json",
- "sha2",
  "tempfile",
- "thiserror",
  "toml",
+]
+
+[[package]]
+name = "hmi-core"
+version = "0.2.0"
+dependencies = [
+ "serde",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
+name = "hmi-format"
+version = "0.2.0"
+dependencies = [
+ "hmi-core",
+ "serde",
 ]
 
 [[package]]
