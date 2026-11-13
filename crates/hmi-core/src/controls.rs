@@ -13,6 +13,9 @@ use crate::{
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+mod indicators;
+mod numeric;
+
 pub const PAGE_EVENTS: &[&str] = &["load", "loadend", "down", "up", "unload"];
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -318,6 +321,11 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    numeric::NUMBER,
+    numeric::XFLOAT,
+    indicators::CHECKBOX,
+    indicators::RADIO,
+    indicators::PROGRESS,
     Definition {
         name: "text",
         code: 116,
@@ -373,7 +381,14 @@ pub fn by_name(name: &str) -> Result<&'static Definition> {
     DEFINITIONS.iter().find(|d| d.name == name).ok_or_else(|| {
         error(
             "control_type",
-            format!("当前尚未接入控件类型 {name}，已支持 hotspot、variable、timer、picture、crop"),
+            format!(
+                "当前尚未接入控件类型 {name}，已支持 {}",
+                DEFINITIONS
+                    .iter()
+                    .map(|d| d.name)
+                    .collect::<Vec<_>>()
+                    .join("、")
+            ),
         )
     })
 }

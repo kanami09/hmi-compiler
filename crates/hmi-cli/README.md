@@ -1,6 +1,6 @@
 # 新工具链使用说明
 
-当前可从零新建工程，添加热区、变量、定时器、单色文本和按钮，以及 K/T 配置下的图片和切图；支持 ZI 字库方向适配，编译页面、控件事件和全局代码，再链接为 HMI。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，添加热区、变量、定时器、单色文本和按钮、数字／虚拟浮点数、复选框／单选框、单色进度条，以及 K/T 配置下的图片和切图；支持 ZI 字库方向适配，编译页面、控件事件和全局代码，再链接为 HMI。构建过程不需要已有 HMI 或逆向资料。
 
 当前支持的型号和方向见根目录 `data/profiles/README.md`。X 系列图片编码、其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
@@ -95,6 +95,11 @@ events = { timer = "events/tm0.timer.s" }
 | crop（切图） | x/y/w/h 必填；picc 须引用与当前页面同尺寸的全屏图片，取图区域不得越界；vscope、sendkey 默认 0 | down、up |
 | text（文本） | x/y/w/h、font 引用表、txt 必填；当前 sta=1；style 为 0 平面或 1 边框 | down、up |
 | button（按钮） | x/y/w/h、font 引用表、txt 必填；当前 sta=1；style 为 1 边框或 4 3D_Auto，默认 4 | down、up |
+| number（数字） | x/y/w/h、font 引用表必填；val 为 i32；当前 sta=1，显示位数使用原生字段 lenth | down、up |
+| xfloat（虚拟浮点数） | x/y/w/h、font 引用表必填；val 为 i32，vvs0/vvs1 控制整数位／小数位；当前 sta=1 | down、up |
+| checkbox（复选框） | x/y/w/h 必填；val 为 0／1，可设颜色、style 和边框 | down、up |
+| radio（单选框） | x/y/w/h 必填；val 为 0／1，可设颜色；互斥逻辑由脚本实现 | down、up |
+| progress_bar（进度条） | x/y/w/h 必填；val 为 0～100；当前 sta=0；dez 为方向字段 | down、up |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -225,3 +230,49 @@ python examples/prepare_fonts_acceptance.py --font-small path/to/small.zi --font
 ```
 
 脚本不附带字库，也不读取已有 HMI。它复制输入 ZI 作为验收工程素材，生成 T035 的 0° 和 K035 的 90° 工程，交换字体顺序以核对引用，检查文本／按钮的属性和事件，并实际执行独立工具计划比较输出。结果和核对说明位于 `target/acceptance-fonts/`；已有目录不会覆盖，可另用 --output。命令行字库路径仅用于定位文件，工程内的 source 指向复制后的独立素材。
+
+## 数字、选择与进度控件
+
+```toml
+[[objects]]
+name = "n0"
+type = "number"
+properties = { x = 10, y = 10, w = 280, h = 70, font = { ref = "ui_font" }, val = -12 }
+
+[[objects]]
+name = "x0"
+type = "xfloat"
+properties = { x = 10, y = 90, w = 280, h = 70, font = { ref = "ui_font" }, val = -1234, vvs1 = 2 }
+
+[[objects]]
+name = "c0"
+type = "checkbox"
+properties = { x = 20, y = 20, w = 48, h = 48, val = 1 }
+
+[[objects]]
+name = "r0"
+type = "radio"
+properties = { x = 120, y = 20, w = 48, h = 48, val = 0 }
+
+[[objects]]
+name = "j0"
+type = "progress_bar"
+properties = { x = 20, y = 100, w = 280, h = 40, val = 40 }
+```
+
+上面各条目独立演示属性，应按实际页面安排位置。数字／虚拟浮点数需要字体引用；复选框、单选框和单色进度条不需要图片或字库。五类均支持 vscope、sendkey，默认 0；事件槽为 down、up。
+
+数字／虚拟浮点数的 val 是有符号 32 位整数，默认 0，范围为 -2147483648～2147483647。xfloat 的 `val=-1234,vvs1=2` 显示为 -12.34；将 vvs1 改为 3 后显示为 -1.234，存储的整数不变。不要将 val 写成 TOML 浮点数，也不应先转换为 IEEE 浮点数位模式。
+
+| 类型 | 格式字段 |
+|---|---|
+| number | lenth：0～15，默认 0 表示自动位数。官方说明称为 length，本工程格式保留 HMI 的实际拼写 lenth，不接受 length 别名。format：0 数字、1 货币、2 Hex，默认 0 |
+| xfloat | vvs0：0～10，默认 0 表示整数位自动；vvs1：0～8，默认 2，设为 0 表示无小数 |
+
+两类当前仅支持单色背景 sta=1；style 为 0～4，默认 0。支持与文本相同的颜色、边框、对齐及字间距属性，但没有 txt、txt_maxl 或 pw。isbr 默认 1。未启用的图片字段仍保留在原生记录中，源码暂不能设置图片背景。
+
+复选框和单选框的 val 默认 0，可设 0／1，表示未选中／选中；默认白底 bco=65535、前景 pco=1024。复选框另有 style（0～4，默认 2）、borderc（默认 0）和 borderw（默认 2）。单选框没有这些边框／风格字段，也不会自动生成互斥脚本；如果需要互斥，应在事件中显式设置其他单选框的 val。
+
+进度条使用独立的模式定义：sta=0 表示单色，图片模式 sta=1 暂未接入。val 默认 0，范围 0～100；dez=0 横向、dez=1 竖向，默认 0。默认背景 bco=50712、前景 pco=1024，颜色范围均为 0～65535。
+
+dis 是进度条的圆角百分比字段，范围 0～100、默认 25；不能据此保证所有型号画出相同形状。此前 K035 画布显示直角，且属性栏未显示 dis；X543 显示圆角。这里保留字段和值，不在 K035 上自动清零；本工具不会模拟圆角或生成替代图片。
