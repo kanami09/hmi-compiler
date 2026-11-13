@@ -342,3 +342,12 @@ psta=0 的实际外观有型号差异：此前 K035 预览为方形，X543 为�
 滚动文本的四个 vvs 保留字段由工具初始化为零，未作为可编辑属性。静态画布是否滚动不用于判断 en 是否正确，属性和实际运行需要分别核对。
 
 触摸捕捉没有可见几何；val 是当前捕捉到的控件 ID，初始化为 0，不能在源码 properties 中设置。工具按官方建议限制每页最多一个，独立链接器也会复查数量。脚本可以读取 `tc0.val`，例如 `sys0=tc0.val`；静态确定的直接赋值、复合赋值或自增／自减会报错，包括名称和常量 ID 引用。比较表达式如 `if(tc0.val==1)` 不属于赋值。该检查不代替对所有指令输出参数或方法调用的完整语义分析。
+
+生成交互控件验收工程：
+
+```powershell
+cargo build --workspace --bins --locked
+python examples/prepare_interaction_acceptance.py --font path/to/ui.zi
+```
+
+字库需覆盖示例中的 ASCII 字符，建议字高为 68。脚本生成 K035、X543 的 0° 工程，各含 sliders、buttons、scroll、capture 四页，并实际执行 7 条独立命令比较输出。结果与核对说明在 `target/acceptance-interaction/`；已有目录不会覆盖，可用 --output 指定新目录。脚本只读取独立 ZI，不附带字库、不读取已有 HMI 或内部资料。
