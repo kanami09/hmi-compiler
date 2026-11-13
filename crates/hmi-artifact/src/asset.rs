@@ -27,6 +27,16 @@ pub struct ImageInfo {
     pub editor_source_format: String,
     pub source_sha256: String,
     pub backend: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jpeg: Option<JpegInfo>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct JpegInfo {
+    pub quality: u8,
+    pub padded_width: u16,
+    pub padded_height: u16,
+    pub sampling: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -229,7 +239,7 @@ impl AssetObject {
         }
     }
     fn validate_image(&self, info: &ImageInfo) -> Result<()> {
-        if info.codec != "rgb565"
+        if !matches!(info.codec.as_str(), "rgb565" | "jpeg")
             || info.width == 0
             || info.height == 0
             || info.editor_source_format != "bmp"
@@ -240,23 +250,59 @@ impl AssetObject {
                 "当前资产类型、格式、尺寸或编码方式不受支持",
             ));
         }
-        let expected = if matches!(info.orientation, 90 | 270) {
-            (info.height, info.width)
-        } else {
-            (info.width, info.height)
+        let expected = match info.codec.as_str() {
+            "rgb565" => {
+                if info.jpeg.is_some() {
+                    return Err(error("asset_metadata", "RGB565 目标不能声明 JPEG 参数"));
+                }
+                if matches!(info.orientation, 90 | 270) {
+                    (info.height, info.width)
+                } else {
+                    (info.width, info.height)
+                }
+            }
+            "jpeg" => {
+                let settings = info
+                    .jpeg
+                    .as_ref()
+                    .ok_or_else(|| error("asset_metadata", "JPEG 目标缺少编码参数"))?;
+                if !(1..=100).contains(&settings.quality)
+                    || settings.sampling != "yuv420"
+                    || (settings.padded_width, settings.padded_height)
+                        != hmi_format::picture::jpeg::padded_dimensions(info.width, info.height)?
+                {
+                    return Err(error("asset_metadata", "JPEG 质量、补齐尺寸或采样格式无效"));
+                }
+                hmi_format::picture::jpeg::storage_dimensions(
+                    info.width,
+                    info.height,
+                    info.orientation,
+                )?
+            }
+            _ => unreachable!(),
         };
         if (info.storage_width, info.storage_height) != expected
             || !valid_digest(&info.source_sha256)
         {
             return Err(error("asset_metadata", "图片存储尺寸或源摘要无效"));
         }
-        hmi_format::picture::validate(
-            self.member(0)?,
-            self.member(1)?,
-            info.width,
-            info.height,
-            info.orientation,
-        )?;
+        if info.codec == "jpeg" {
+            hmi_format::picture::jpeg::validate(
+                self.member(0)?,
+                self.member(1)?,
+                info.width,
+                info.height,
+                info.orientation,
+            )?;
+        } else {
+            hmi_format::picture::validate(
+                self.member(0)?,
+                self.member(1)?,
+                info.width,
+                info.height,
+                info.orientation,
+            )?;
+        }
         Ok(())
     }
     /// 媒体目标只依赖格式、编码和方向，不依赖页面控件注册表的修订号。

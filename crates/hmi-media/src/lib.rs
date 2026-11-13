@@ -1,6 +1,6 @@
 //! 常规图片编码与 ZI 字库方向适配。链接器只需消费输出的媒体目标。
 
-use hmi_artifact::asset::{AssetInfo, AssetObject, FontInfo, ImageInfo};
+use hmi_artifact::asset::{AssetInfo, AssetObject, FontInfo, ImageInfo, JpegInfo};
 use hmi_core::{
     Result,
     asset::{Alpha, FontSource, ImageSource, ResizeMode},
@@ -65,14 +65,6 @@ fn dimensions(width: u32, height: u32) -> Result<(u16, u16)> {
 
 fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
     target.validate()?;
-    if !target
-        .capabilities
-        .image_codecs
-        .iter()
-        .any(|c| c == "rgb565")
-    {
-        return Err(error("image_backend", "当前目标尚未接入可用的图片编码路线"));
-    }
     let config: ImageSource = file::read_toml(path)?;
     check_schema(&config.schema, "hmi.asset/1")?;
     if config.kind != "image" || config.input != "source" || config.original.is_some() {
@@ -81,18 +73,35 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
             "当前编码器支持 image 的 source 输入，尚未接入编码文件和原始载荷复用",
         ));
     }
-    if !matches!(config.encoding.codec.as_str(), "auto" | "rgb565")
-        || config.encoding.quality.is_some()
+    let codec = if config.encoding.codec == "auto" {
+        target
+            .capabilities
+            .image_codecs
+            .first()
+            .map(String::as_str)
+            .ok_or_else(|| error("image_backend", "当前目标尚未接入图片编码"))?
+    } else {
+        &config.encoding.codec
+    };
+    if !matches!(codec, "rgb565" | "jpeg")
+        || !target.capabilities.image_codecs.iter().any(|c| c == codec)
     {
         return Err(error(
             "image_codec",
-            "当前目标使用 RGB565，不接受 JPEG 编码或 quality 参数",
+            format!("目标 {} 不支持图片编码 {codec}", target.profile),
         ));
+    }
+    let quality = config.encoding.quality.unwrap_or(80);
+    if codec == "rgb565" && config.encoding.quality.is_some() {
+        return Err(error("image_codec", "RGB565 不接受 quality 参数"));
+    }
+    if codec == "jpeg" && !(1..=100).contains(&quality) {
+        return Err(error("image_quality", "JPEG quality 必须为 1～100"));
     }
     if config.delivery.mode != "embedded" || config.delivery.path.is_some() {
         return Err(error(
             "asset_delivery",
-            "当前 RGB565 路线仅支持内嵌图片，不接受外部路径",
+            "当前图片编码仅支持内嵌资源，不接受外部路径",
         ));
     }
     if config.encoding.alpha == Alpha::Preserve && config.encoding.background.is_some() {
@@ -195,7 +204,7 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
     } else if pixels.pixels().any(|pixel| pixel[3] != 255) {
         return Err(error(
             "image_alpha",
-            "RGB565 不支持透明像素；请使用 alpha=flatten 并指定背景色",
+            "当前图片编码未接入透明像素保留；请使用 alpha=flatten 并指定背景色",
         ));
     }
     let (width, height) = dimensions(pixels.width(), pixels.height())?;
@@ -232,10 +241,30 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
             .map_err(|e| error("image_encode", e.to_string()))?;
         bmp
     };
-    let (storage_width, storage_height) = if matches!(target.orientation, 90 | 270) {
+    let jpeg = if codec == "jpeg" {
+        let (padded_width, padded_height) =
+            hmi_format::picture::jpeg::padded_dimensions(width, height)?;
+        dimensions(u32::from(padded_width), u32::from(padded_height))?;
+        Some(JpegInfo {
+            quality,
+            padded_width,
+            padded_height,
+            sampling: "yuv420".into(),
+        })
+    } else {
+        None
+    };
+    let (storage_width, storage_height) = if codec == "jpeg" {
+        hmi_format::picture::jpeg::storage_dimensions(width, height, target.orientation)?
+    } else if matches!(target.orientation, 90 | 270) {
         (height, width)
     } else {
         (width, height)
+    };
+    let backend = if codec == "jpeg" {
+        "image-rs/0.25.10+jpeg-encoder/0.6.1-yuv420/1"
+    } else {
+        "image-rs/0.25.10-rgb565/1"
     };
     let info = ImageInfo {
         width,
@@ -243,14 +272,15 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
         storage_width,
         storage_height,
         orientation: target.orientation,
-        codec: "rgb565".into(),
+        codec: codec.into(),
         alpha: config.encoding.alpha,
         background: config.encoding.background,
         resize: config.resize,
         source_format: source_format.into(),
         editor_source_format: "bmp".into(),
         source_sha256: sha256(&bytes),
-        backend: "image-rs/0.25.10-rgb565/1".into(),
+        backend: backend.into(),
+        jpeg,
     };
     Ok(PreparedImage {
         info,
@@ -287,6 +317,47 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
         });
     }
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
+    if let Some(settings) = &p.info.jpeg {
+        // 先在未旋转画布右侧／下侧补齐，再旋转存储光栅，避免裁剪位置错位。
+        let mut padded = RgbaImage::from_pixel(
+            u32::from(settings.padded_width),
+            u32::from(settings.padded_height),
+            Rgba([0, 0, 0, 255]),
+        );
+        imageops::replace(&mut padded, &p.pixels, 0, 0);
+        let rotated = match p.info.orientation {
+            0 => padded,
+            90 => imageops::rotate90(&padded),
+            180 => imageops::rotate180(&padded),
+            270 => imageops::rotate270(&padded),
+            _ => unreachable!("有效目标方向已校验"),
+        };
+        let rgb = DynamicImage::ImageRgba8(rotated).to_rgb8();
+        let mut bytes = Vec::new();
+        let mut encoder = jpeg_encoder::Encoder::new(&mut bytes, settings.quality);
+        // 所有质量都显式使用 4:2:0 和非渐进帧，质量 100 也不切换私有编码。
+        encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_2_2);
+        encoder.set_progressive(false);
+        encoder
+            .encode(
+                rgb.as_raw(),
+                p.info.storage_width,
+                p.info.storage_height,
+                jpeg_encoder::ColorType::Rgb,
+            )
+            .map_err(|e| error("image_encode", e.to_string()))?;
+        let runtime = hmi_format::picture::jpeg::runtime(
+            p.info.width,
+            p.info.height,
+            p.info.orientation,
+            &bytes,
+        )?;
+        let source = hmi_format::picture::editor_source(p.info.width, p.info.height, &p.source)?;
+        return Ok(EncodingResult {
+            object: AssetObject::image(p.info, runtime, source)?,
+            inputs: p.inputs,
+        });
+    }
     let w = u32::from(p.info.width);
     let h = u32::from(p.info.height);
     let mut encoded = Vec::new();

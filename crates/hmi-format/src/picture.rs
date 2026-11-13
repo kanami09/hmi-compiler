@@ -1,7 +1,9 @@
-//! 已验证 RGB565 图片及 BMP 编辑源的包装规则，不解码常规图片。
+//! 图片运行资源与 BMP 编辑源的包装规则，不依赖媒体编码器。
 
 use crate::binary::{put_u32, u32_at};
 use hmi_core::{Result, error};
+
+pub mod jpeg;
 
 fn header(prefix: [u8; 4], width: u16, height: u16, start: usize, size: usize) -> Result<Vec<u8>> {
     if width == 0 || height == 0 {
@@ -63,29 +65,41 @@ pub fn validate(
         270 => 13,
         _ => return Err(invalid()),
     };
-    if runtime.len() < 24
-        || source.len() < 81
-        || runtime[..4] != [direction, 0x60, 1, 0]
-        || source[..4] != [10, 0x64, 1, 1]
-        || source[24..27] != *b"bmp"
-    {
+    validate_header(runtime, [direction, 0x60, 1, 0], width, height, 24)?;
+    if (runtime.len() - 24) as u64 != u64::from(width) * u64::from(height) * 2 {
         return Err(invalid());
     }
-    for bytes in [runtime, source] {
-        if bytes[12..14] != width.to_le_bytes()
-            || bytes[14..16] != height.to_le_bytes()
-            || bytes[4..8] != [0; 4]
-            || bytes[20..24] != [0; 4]
-        {
-            return Err(invalid());
-        }
-    }
-    if u32_at(runtime, 8)? != 24
-        || u32_at(source, 8)? != 27
-        || u32_at(runtime, 16)? as usize != runtime.len() - 24
-        || u32_at(source, 16)? as usize != source.len() - 27
-        || (runtime.len() - 24) as u64 != u64::from(width) * u64::from(height) * 2
+    validate_bmp_source(source, width, height)
+}
+
+fn validate_header(
+    bytes: &[u8],
+    prefix: [u8; 4],
+    width: u16,
+    height: u16,
+    start: usize,
+) -> Result<()> {
+    if width == 0
+        || height == 0
+        || bytes.len() < start
+        || bytes.len() < 24
+        || bytes[..4] != prefix
+        || bytes[4..8] != [0; 4]
+        || bytes[20..24] != [0; 4]
+        || bytes[12..14] != width.to_le_bytes()
+        || bytes[14..16] != height.to_le_bytes()
+        || u32_at(bytes, 8)? as usize != start
+        || u32_at(bytes, 16)? as usize != bytes.len() - start
     {
+        return Err(error("image_layout", "图片资源头、尺寸或载荷长度无效"));
+    }
+    Ok(())
+}
+
+pub fn validate_bmp_source(source: &[u8], width: u16, height: u16) -> Result<()> {
+    let invalid = || error("image_layout", "BMP 编辑源的包装或像素布局无效");
+    validate_header(source, [10, 0x64, 1, 1], width, height, 27)?;
+    if source.len() < 81 || source[24..27] != *b"bmp" {
         return Err(invalid());
     }
     let bmp = &source[27..];

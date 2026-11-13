@@ -98,7 +98,7 @@ impl Target {
         };
         let rules = constraints::resolve(series, &config.profile)?;
         let signature = format!(
-            "page-ver21234-11:{}:{}:{width}:{height}:{}:{}:{}",
+            "page-ver21234-12:{}:{}:{width}:{height}:{}:{}:{}",
             config.profile,
             config.orientation,
             sha256(DEFAULT_PROGRAM.as_bytes()),
@@ -118,18 +118,17 @@ impl Target {
                 control_types: crate::controls::DEFINITIONS
                     .iter()
                     .filter(|d| rules.control_support.get(d.name).copied().unwrap_or(true))
-                    .filter(|d| config.profile != "TJC4827X543_011" || !matches!(d.code, 112 | 113))
                     .map(|d| d.name.into())
                     .collect(),
                 image_codecs: if config.profile == "TJC4827X543_011" {
-                    Vec::new()
+                    vec!["jpeg".into()]
                 } else {
                     vec!["rgb565".into()]
                 },
                 font_versions: vec![6],
                 control_property_constraints: rules.property_constraints,
             },
-            data_revision: 11,
+            data_revision: 12,
             profile_data_sha256: sha256(signature.as_bytes()),
         })
     }

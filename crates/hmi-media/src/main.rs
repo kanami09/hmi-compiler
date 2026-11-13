@@ -12,7 +12,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[command(
     name = "hmi-media",
     version,
-    about = "编码 HMI 媒体资产，支持 K/T RGB565 图片和 UTF-8 ZI v6 字库"
+    about = "编码 HMI 媒体资产，支持 RGB565／JPEG 图片和 UTF-8 ZI v6 字库"
 )]
 struct Args {
     #[arg(long, global = true)]

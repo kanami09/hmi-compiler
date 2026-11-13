@@ -18,7 +18,7 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// 编译页面；当前支持基础控件，以及 K/T 的图片和切图。
+    /// 编译页面、控件及事件，支持范围见目标配置。
     Page {
         source: PathBuf,
         #[arg(long)]
