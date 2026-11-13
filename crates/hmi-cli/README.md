@@ -65,7 +65,7 @@ load = "events/load.s"
 
 ## 控件
 
-控件写在页面文件的 objects 数组中。数组顺序决定图层和最终控件 ID，普通控件从 1 开始编号。增加、删除或重排条目后重新构建即可，不需要手动维护 id。
+控件写在页面文件的 objects 数组中。数组顺序决定图层和最终控件 ID，普通控件从 1 开始编号。增加、删除或重排条目后重建即可，不需要手动维护 id。
 
 ```toml
 [[objects]]
@@ -121,7 +121,7 @@ vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不
 
 统一入口在 `.build/hmi-toolchain` 保存相同的目标文件和链接描述，可用独立链接器再次链接。此目录尚未用作增量缓存，也未提供多进程构建调度。
 
-当前 `.hmo` 使用 `hmi.object/2`，保存对象记录、脚本分析结果和 ID 重定位表。编译阶段的控件 ID 为零占位值，链接阶段才分配最终 ID，并生成页面头、索引和 CRC。更新到此阶段后应重新构建工程，旧 `.hmo` 和 target.json 不可继续使用；这些格式／数据版本与分发版本号分别管理。
+当前 `.hmo` 使用 `hmi.object/2`，保存对象记录、脚本分析结果和 ID 重定位表。编译阶段的控件 ID 为零占位值，链接阶段才分配最终 ID，并生成页面头、索引和 CRC。更新到此阶段后应重建工程，旧 `.hmo` 和 target.json 不可继续使用；这些格式／数据版本与分发版本号分别管理。
 
 `hmi-compile inspect` 会按注册类型显示属性，包括变量的有符号 val、UTF-8 文本和容量。普通控件显示 id_pending=true，表示 ID 尚未由链接器填写；最终 ID 以 HMI 或 link-map.json 为准。
 
@@ -216,3 +216,12 @@ font 必须使用 `{ ref = "..." }` 或 `{ id = ... }`。ref 引用当前资产�
 | isbr、spax、spay | 默认均为 0；isbr 为 0／1，spax、spay 为 0～255 |
 
 文本另有 pw，默认 0，可设 0／1。按钮另有按下状态颜色 bco2=1024、pco2=65535，颜色范围同上；val 为 0／1，默认 0。文本的 key 和所有非活动图片字段暂由原生配方生成，不作为可编辑属性。
+
+生成字库／文本验收工程时，提供两份包含 ABC012 的独立字库，建议字高分别为 24 和 68：
+
+```powershell
+cargo build --workspace --bins --locked
+python examples/prepare_fonts_acceptance.py --font-small path/to/small.zi --font-large path/to/large.zi
+```
+
+脚本不附带字库，也不读取已有 HMI。它复制输入 ZI 作为验收工程素材，生成 T035 的 0° 和 K035 的 90° 工程，交换字体顺序以核对引用，检查文本／按钮的属性和事件，并实际执行独立工具计划比较输出。结果和核对说明位于 `target/acceptance-fonts/`；已有目录不会覆盖，可另用 --output。命令行字库路径仅用于定位文件，工程内的 source 指向复制后的独立素材。
