@@ -106,6 +106,7 @@ impl Target {
                 media_assets: config.profile != "TJC4827X543_011",
                 control_types: crate::controls::DEFINITIONS
                     .iter()
+                    .filter(|d| config.profile != "TJC4827X543_011" || !matches!(d.code, 112 | 113))
                     .map(|d| d.name.into())
                     .collect(),
                 image_codecs: if config.profile == "TJC4827X543_011" {

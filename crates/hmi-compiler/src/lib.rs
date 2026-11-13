@@ -208,6 +208,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
         page.name.clone(),
         write::object(&page_attributes(target, &page.name, bco), &events)?,
     )];
+    let mut resources = Vec::new();
     for (index, object) in page.objects.iter().enumerate() {
         let compiled = (|| {
             let definition = controls::by_name(&object.type_name)?;
@@ -221,7 +222,36 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                     format!("当前目标未开放控件类型 {}", object.type_name),
                 ));
             }
-            let attributes = definition.attributes(&object.name, &object.properties)?;
+            let mut properties = object.properties.clone();
+            for property in definition.properties {
+                if matches!(property.storage, controls::Storage::Image) {
+                    let value = properties.get(property.name).ok_or_else(|| {
+                        error(
+                            "property_required",
+                            format!("必须指定资源属性 {}", property.name),
+                        )
+                    })?;
+                    let reference: hmi_core::asset::ResourceReference =
+                        value.clone().try_into().map_err(|_| {
+                            error(
+                                "resource_reference",
+                                format!("属性 {} 必须使用 ref、id 或 none 的引用表", property.name),
+                            )
+                        })?;
+                    reference.validate()?;
+                    if reference.none == Some(true) || reference.id == Some(65535) {
+                        return Err(error("resource_reference", "图片和切图控件不允许空图片"));
+                    }
+                    properties.insert(property.name.into(), 0_i64.into());
+                    resources.push(hmi_artifact::Relocation {
+                        object: index + 1,
+                        property: property.name.into(),
+                        kind: hmi_artifact::RelocationKind::ImageId,
+                        reference: Some(reference),
+                    });
+                }
+            }
+            let attributes = definition.attributes(&object.name, &properties)?;
             let events = compile_events(
                 &object.events,
                 definition.events,
@@ -240,7 +270,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
         records.push(compiled);
     }
     Ok(Compilation {
-        object: CompiledObject::page(page.name, target, facts, records)?,
+        object: CompiledObject::page(page.name, target, facts, records, resources)?,
         inputs,
     })
 }

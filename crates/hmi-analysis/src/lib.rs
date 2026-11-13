@@ -44,12 +44,22 @@ pub struct Context {
 }
 impl Context {
     pub fn from_project(project: &Project) -> Self {
+        Self::from_pages(
+            project.pages.iter().map(|(_, page)| page),
+            project.references.clone(),
+        )
+    }
+
+    /// 源码检查只需要已完成重定位的页面和资源表，不需要已编码媒体或完整容器。
+    pub fn from_pages<'a>(
+        pages: impl IntoIterator<Item = &'a hmi_format::page::Page>,
+        references: Vec<hmi_format::project::Reference>,
+    ) -> Self {
         Self {
-            references: project.references.clone(),
-            pages: project
-                .pages
-                .iter()
-                .map(|(_, page)| SymbolPage {
+            references,
+            pages: pages
+                .into_iter()
+                .map(|page| SymbolPage {
                     name: page.name.clone(),
                     valid: true,
                     objects: page

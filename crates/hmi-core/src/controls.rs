@@ -21,6 +21,7 @@ pub enum Storage {
     U16,
     I32,
     Text,
+    Image,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -125,6 +126,19 @@ const TIMER_PROPERTIES: &[Property] = &[
     integer("en", Storage::U8, 0, 1, DefaultValue::Integer(1)),
 ];
 
+const fn image_properties(name: &'static str) -> [Property; 7] {
+    let mut properties = [SCOPE; 7];
+    let mut index = 0;
+    while index < 6 {
+        properties[index] = HOTSPOT_PROPERTIES[index];
+        index += 1;
+    }
+    properties[6] = integer(name, Storage::Image, 0, 65534, DefaultValue::Required);
+    properties
+}
+const PICTURE_PROPERTIES: &[Property] = &image_properties("pic");
+const CROP_PROPERTIES: &[Property] = &image_properties("picc");
+
 const HOTSPOT_FIELDS: &[Field] = &[
     field("type", FieldValue::Type),
     field("id", FieldValue::Id),
@@ -161,6 +175,28 @@ const VARIABLE_FIELDS: &[Field] = &[
     field("txt_maxl", FieldValue::Property("txt_maxl")),
     field("val", FieldValue::Property("val")),
 ];
+
+const fn drawable_fields<const N: usize>() -> [Field; N] {
+    let mut fields = [HOTSPOT_FIELDS[0]; N];
+    let mut index = 0;
+    while index < HOTSPOT_FIELDS.len() {
+        fields[index] = HOTSPOT_FIELDS[index];
+        index += 1;
+    }
+    fields
+}
+const PICTURE_FIELDS: [Field; 22] = {
+    let mut fields = drawable_fields();
+    fields[21] = field("pic", FieldValue::Property("pic"));
+    fields
+};
+const CROP_FIELDS: [Field; 24] = {
+    let mut fields = drawable_fields();
+    fields[21] = field("picc", FieldValue::Property("picc"));
+    fields[22] = field("vvs0", FieldValue::Constant(&[0, 0]));
+    fields[23] = field("vvs1", FieldValue::Constant(&[0, 0]));
+    fields
+};
 const TIMER_FIELDS: &[Field] = &[
     field("type", FieldValue::Type),
     field("id", FieldValue::Id),
@@ -195,13 +231,27 @@ pub const DEFINITIONS: &[Definition] = &[
         fields: TIMER_FIELDS,
         events: &["timer"],
     },
+    Definition {
+        name: "picture",
+        code: 112,
+        properties: PICTURE_PROPERTIES,
+        fields: &PICTURE_FIELDS,
+        events: &["down", "up"],
+    },
+    Definition {
+        name: "crop",
+        code: 113,
+        properties: CROP_PROPERTIES,
+        fields: &CROP_FIELDS,
+        events: &["down", "up"],
+    },
 ];
 
 pub fn by_name(name: &str) -> Result<&'static Definition> {
     DEFINITIONS.iter().find(|d| d.name == name).ok_or_else(|| {
         error(
             "control_type",
-            format!("当前尚未接入控件类型 {name}，已支持 hotspot、variable、timer"),
+            format!("当前尚未接入控件类型 {name}，已支持 hotspot、variable、timer、picture、crop"),
         )
     })
 }
@@ -261,7 +311,7 @@ impl Property {
         }
         Ok(match self.storage {
             Storage::U8 => vec![number as u8],
-            Storage::U16 => (number as u16).to_le_bytes().to_vec(),
+            Storage::U16 | Storage::Image => (number as u16).to_le_bytes().to_vec(),
             Storage::I32 => (number as i32).to_le_bytes().to_vec(),
             Storage::Text => unreachable!(),
         })
@@ -282,7 +332,7 @@ impl Property {
                     .filter(|_| bytes.len() == 1)
                     .ok_or_else(invalid)?,
             )),
-            Storage::U16 => toml::Value::Integer(i64::from(u16::from_le_bytes(
+            Storage::U16 | Storage::Image => toml::Value::Integer(i64::from(u16::from_le_bytes(
                 bytes.try_into().map_err(|_| invalid())?,
             ))),
             Storage::I32 => toml::Value::Integer(i64::from(i32::from_le_bytes(

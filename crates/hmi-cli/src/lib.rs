@@ -2,6 +2,7 @@
 //!
 //! 编译和链接直接调用共享库；计划中的独立命令使用相同的输入与格式。
 
+use hmi_artifact::asset::{AssetObject as EncodedAsset, ImageInfo};
 use hmi_core::{
     Result, error, file,
     model::*,
@@ -23,6 +24,12 @@ pub struct Prepared {
     pub program: Compilation,
     pub pages: Vec<Compilation>,
     pub inputs: Vec<PathBuf>,
+    pub assets: Vec<AssetInput>,
+}
+pub struct AssetInput {
+    pub key: String,
+    pub source: PathBuf,
+    pub probe: hmi_media::ImageProbe,
 }
 
 /// 显式目录直接使用；未指定时向上查找工程清单。
@@ -95,17 +102,27 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
     if project.pages.sources.is_empty() {
         return Err(error("page_count", "工程至少需要一个页面"));
     }
-    if !project.assets.items.is_empty() {
-        return Err(error(
-            "project_assets",
-            "当前阶段尚未接入媒体资产，无法处理含资产的工程",
-        ));
-    }
     let target = Target::resolve(&project.target)?;
     let program = compile_program(&root.join(&project.program.source), &target)?;
     let mut inputs = vec![manifest];
     inputs.extend(program.inputs.iter().cloned());
     let mut pages = Vec::new();
+    let mut assets = Vec::new();
+    let mut keys = std::collections::BTreeSet::new();
+    for asset in &project.assets.items {
+        hmi_core::asset::check_key(&asset.key)?;
+        if !keys.insert(&asset.key) {
+            return Err(error("asset_key", format!("资产符号 {} 重复", asset.key)));
+        }
+        let source = root.join(&asset.source);
+        let probe = hmi_media::probe(&source, &target)?;
+        inputs.extend(probe.inputs.iter().cloned());
+        assets.push(AssetInput {
+            key: asset.key.clone(),
+            source,
+            probe,
+        });
+    }
     let mut paths = std::collections::BTreeSet::new();
     for source in &project.pages.sources {
         let path = root.join(source);
@@ -124,12 +141,35 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         program,
         pages,
         inputs,
+        assets,
     })
 }
 
 impl Prepared {
-    pub fn link(&self, deny_warnings: bool) -> Result<hmi_linker::Linked> {
-        hmi_linker::link(
+    pub fn encode_assets(&self) -> Result<Vec<(String, EncodedAsset)>> {
+        self.assets
+            .iter()
+            .map(|asset| {
+                let encoded = hmi_media::encode(&asset.source, &self.target)?;
+                if encoded.object.metadata.image != asset.probe.info
+                    || encoded.inputs != asset.probe.inputs
+                {
+                    return Err(error(
+                        "input_changed",
+                        format!("资产 {} 在构建期间发生变化，请重试", asset.key),
+                    ));
+                }
+                Ok((asset.key.clone(), encoded.object))
+            })
+            .collect()
+    }
+    pub fn check(&self, deny_warnings: bool) -> Result<Vec<hmi_core::diagnostic::Diagnostic>> {
+        let images = self
+            .assets
+            .iter()
+            .map(|asset| (asset.key.clone(), asset.probe.info.clone()))
+            .collect::<Vec<(String, ImageInfo)>>();
+        hmi_linker::check(
             &self.target,
             &self.program.object,
             &self
@@ -137,6 +177,20 @@ impl Prepared {
                 .iter()
                 .map(|p| p.object.clone())
                 .collect::<Vec<_>>(),
+            &images,
+            deny_warnings,
+        )
+    }
+    pub fn link(&self, deny_warnings: bool) -> Result<hmi_linker::Linked> {
+        hmi_linker::link_with_assets(
+            &self.target,
+            &self.program.object,
+            &self
+                .pages
+                .iter()
+                .map(|p| p.object.clone())
+                .collect::<Vec<_>>(),
+            &self.encode_assets()?,
             deny_warnings,
         )
     }
@@ -172,6 +226,9 @@ impl Prepared {
             directory.join("obj/program.hmo"),
         ];
         paths.extend((0..self.pages.len()).map(|id| directory.join(format!("obj/p{id:05}.hmo"))));
+        paths.extend(
+            (0..self.assets.len()).map(|id| directory.join(format!("assets/a{id:05}.hma"))),
+        );
         paths
     }
 
@@ -181,6 +238,21 @@ impl Prepared {
         directory: &Path,
         write_objects: bool,
         requested_output: Option<&Path>,
+    ) -> Result<()> {
+        let assets = if write_objects {
+            self.encode_assets()?
+        } else {
+            Vec::new()
+        };
+        self.save_plan_inner(directory, write_objects, requested_output, &assets)
+    }
+
+    fn save_plan_inner(
+        &self,
+        directory: &Path,
+        write_objects: bool,
+        requested_output: Option<&Path>,
+        assets: &[(String, EncodedAsset)],
     ) -> Result<()> {
         let directory = file::absolute(directory)?;
         let protected: Vec<_> = self.inputs.iter().map(|p| p.as_path()).collect();
@@ -200,7 +272,17 @@ impl Prepared {
                     .map(|id| format!("obj/p{id:05}.hmo"))
                     .collect(),
             },
-            assets: AssetObjects::default(),
+            assets: AssetObjects {
+                items: self
+                    .assets
+                    .iter()
+                    .enumerate()
+                    .map(|(id, asset)| AssetObject {
+                        key: asset.key.clone(),
+                        object: format!("assets/a{id:05}.hma"),
+                    })
+                    .collect(),
+            },
         };
         let mut jobs = vec![
             serde_json::json!({"command":"hmi-compile","args":["program",self.root.join(&self.project.program.source),"--target",target,"-o",program]}),
@@ -210,6 +292,13 @@ impl Prepared {
             jobs.push(serde_json::json!({"command":"hmi-compile","args":["page",self.root.join(source),"--target",target,"-o",output]}));
             if write_objects {
                 self.pages[id].object.write(&output, &protected)?;
+            }
+        }
+        for (id, asset) in self.assets.iter().enumerate() {
+            let output = directory.join(format!("assets/a{id:05}.hma"));
+            jobs.push(serde_json::json!({"command":"hmi-media","args":["encode",asset.source,"--target",target,"-o",output]}));
+            if write_objects {
+                assets[id].1.write(&output, &protected)?;
             }
         }
         let output = self.output_path(requested_output)?;
@@ -239,7 +328,18 @@ pub fn build(
     deny_warnings: bool,
 ) -> Result<(PathBuf, hmi_linker::Linked)> {
     let prepared = prepare(root)?;
-    let linked = prepared.link(deny_warnings)?;
+    let assets = prepared.encode_assets()?;
+    let linked = hmi_linker::link_with_assets(
+        &prepared.target,
+        &prepared.program.object,
+        &prepared
+            .pages
+            .iter()
+            .map(|p| p.object.clone())
+            .collect::<Vec<_>>(),
+        &assets,
+        deny_warnings,
+    )?;
     let output = prepared.output_path(requested)?;
     let map = output.parent().unwrap().join("link-map.json");
     if file::absolute(&output)? == file::absolute(&map)? {
@@ -251,7 +351,7 @@ pub fn build(
     let protected: Vec<_> = protected_paths.iter().map(|p| p.as_path()).collect();
     file::protect_output(&output, &protected)?;
     file::protect_output(&map, &protected)?;
-    prepared.save_plan(&build_directory, true, Some(&output))?;
+    prepared.save_plan_inner(&build_directory, true, Some(&output), &assets)?;
     file::write_atomic(&map, &file::json(&linked.map)?, &protected)?;
     file::write_atomic(&output, &linked.bytes, &protected)?;
     Ok((output, linked))

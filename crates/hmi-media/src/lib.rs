@@ -204,9 +204,18 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
         && config.encoding.alpha == Alpha::Preserve
         && bytes.len() >= 54
         && &bytes[..2] == b"BM"
+        && u32::try_from(bytes.len())
+            .ok()
+            .is_some_and(|size| bytes[2..6] == size.to_le_bytes())
         && bytes[14..18] == 40u32.to_le_bytes()
         && bytes[26..30] == [1, 0, 24, 0]
-        && bytes[30..34] == [0; 4];
+        && bytes[30..34] == [0; 4]
+        && bytes[18..22] == u32::from(width).to_le_bytes()
+        && i32::from_le_bytes(bytes[22..26].try_into().unwrap()).unsigned_abs()
+            == u32::from(height)
+        && (u32::from_le_bytes(bytes[10..14].try_into().unwrap()) as usize)
+            .checked_add(((usize::from(width) * 3 + 3) & !3) * usize::from(height))
+            == Some(bytes.len());
     let source = if preserve_bmp {
         bytes.clone()
     } else {

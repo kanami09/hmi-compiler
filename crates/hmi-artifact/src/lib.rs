@@ -38,6 +38,7 @@ pub struct PageLayout {
 #[serde(rename_all = "snake_case")]
 pub enum RelocationKind {
     ObjectId,
+    ImageId,
 }
 
 /// object 指目标文件内的记录序号，不是预先分配的 HMI 控件 ID。
@@ -47,6 +48,8 @@ pub struct Relocation {
     pub object: usize,
     pub property: String,
     pub kind: RelocationKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reference: Option<hmi_core::asset::ResourceReference>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -97,6 +100,7 @@ impl CompiledObject {
         target: &Target,
         scripts: Vec<ScriptFacts>,
         records: Vec<(u8, String, Vec<u8>)>,
+        resources: Vec<Relocation>,
     ) -> Result<Self> {
         let mut object = Self::new(ObjectKind::Page, Some(name), target, scripts, Vec::new());
         let mut layout = PageLayout {
@@ -119,10 +123,12 @@ impl CompiledObject {
                     object: index,
                     property: "id".into(),
                     kind: RelocationKind::ObjectId,
+                    reference: None,
                 });
             }
         }
         object.metadata.layout = Some(layout);
+        object.metadata.relocations.extend(resources);
         object.validate()?;
         Ok(object)
     }
@@ -211,17 +217,50 @@ impl CompiledObject {
         for relocation in &self.metadata.relocations {
             if relocation.object == 0
                 || relocation.object >= layout.objects.len()
-                || relocation.property != "id"
-                || !relocated.insert(relocation.object)
+                || !relocated.insert((relocation.object, relocation.property.as_str()))
             {
                 return Err(error(
                     "object_relocation",
                     "控件 ID 重定位重复、缺失或指向无效记录",
                 ));
             }
+            match relocation.kind {
+                RelocationKind::ObjectId => {
+                    if relocation.property != "id" || relocation.reference.is_some() {
+                        return Err(error("object_relocation", "控件 ID 重定位无效"));
+                    }
+                }
+                RelocationKind::ImageId => {
+                    let definition =
+                        hmi_core::controls::by_code(layout.objects[relocation.object].type_code)?;
+                    if !definition.properties.iter().any(|p| {
+                        p.name == relocation.property
+                            && matches!(p.storage, hmi_core::controls::Storage::Image)
+                    }) {
+                        return Err(error("object_relocation", "图片重定位指向非资源属性"));
+                    }
+                    let reference = relocation
+                        .reference
+                        .as_ref()
+                        .ok_or_else(|| error("object_relocation", "图片重定位缺少引用"))?;
+                    reference.validate()?;
+                    if reference.none == Some(true) || reference.id == Some(65535) {
+                        return Err(error("resource_reference", "图片和切图控件不允许空图片"));
+                    }
+                }
+            }
         }
-        if relocated.len() != layout.objects.len() - 1 {
-            return Err(error("object_relocation", "普通控件缺少 ID 重定位"));
+        for (index, record) in layout.objects.iter().enumerate().skip(1) {
+            if !relocated.contains(&(index, "id")) {
+                return Err(error("object_relocation", "普通控件缺少 ID 重定位"));
+            }
+            for property in hmi_core::controls::by_code(record.type_code)?.properties {
+                if matches!(property.storage, hmi_core::controls::Storage::Image)
+                    && !relocated.contains(&(index, property.name))
+                {
+                    return Err(error("object_relocation", "图片属性缺少资源重定位"));
+                }
+            }
         }
         for facts in &self.metadata.scripts {
             if facts.source.page.is_some()

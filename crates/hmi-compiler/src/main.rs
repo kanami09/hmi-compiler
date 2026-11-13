@@ -18,7 +18,7 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// 编译页面；当前支持热区、变量、定时器及其事件。
+    /// 编译页面；当前支持基础控件，以及 K/T 的图片和切图。
     Page {
         source: PathBuf,
         #[arg(long)]
@@ -45,7 +45,7 @@ fn run(args: &Args) -> Result<CommandResult> {
             if let Some(layout) = &object.metadata.layout {
                 for (index, record) in layout.objects.iter().enumerate() {
                     let parsed = hmi_format::page::Object::parse(object.record(index)?)?;
-                    let properties = if index == 0 {
+                    let mut properties = if index == 0 {
                         serde_json::json!({"w":parsed.integer("w"),"h":parsed.integer("h"),"sta":parsed.integer("sta"),"bco":parsed.integer("bco")})
                     } else {
                         let definition = hmi_core::controls::by_code(parsed.type_code)?;
@@ -57,6 +57,14 @@ fn run(args: &Args) -> Result<CommandResult> {
                         definition.validate_record(&parsed.name, &attributes)?;
                         serde_json::json!(definition.properties_from_record(&attributes)?)
                     };
+                    for relocation in &object.metadata.relocations {
+                        if relocation.object == index
+                            && relocation.kind == hmi_artifact::RelocationKind::ImageId
+                        {
+                            properties[&relocation.property] =
+                                serde_json::json!(relocation.reference);
+                        }
+                    }
                     records.push(serde_json::json!({"record":index,"name":record.name,"type":hmi_format::page::type_name(record.type_code),"properties":properties,"id_pending":index>0}));
                 }
             }

@@ -93,11 +93,11 @@ fn run(args: &Args) -> Result<CommandResult> {
         Command::Check { directory } => {
             let root = hmi_cli::locate_root(directory.as_deref())?;
             let prepared = hmi_cli::prepare(&root)?;
-            let linked = prepared.link(args.warnings.is_some())?;
+            let diagnostics = prepared.check(args.warnings.is_some())?;
             Ok(CommandResult {
                 result: serde_json::json!({"pages":prepared.pages.len(),"output_written":false}),
                 message: "工程检查通过。".into(),
-                diagnostics: linked.diagnostics,
+                diagnostics,
             })
         }
         Command::Build { directory, output } | Command::Rebuild { directory, output } => {

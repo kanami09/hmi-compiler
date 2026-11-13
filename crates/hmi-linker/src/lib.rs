@@ -1,6 +1,7 @@
 //! 按最终页面顺序解析引用、生成容器并校验输出，不读取页面或脚本源码。
 
 use hmi_analysis::{Context, check_linked_facts};
+use hmi_artifact::asset::{AssetObject, ImageInfo};
 use hmi_artifact::{CompiledObject, ObjectKind, RelocationKind};
 use hmi_core::{
     Result, controls,
@@ -28,6 +29,7 @@ fn assemble_page(
     object: &CompiledObject,
     target: &Target,
     page_id: usize,
+    images: &[(String, ImageInfo)],
 ) -> Result<(Vec<u8>, Vec<hmi_analysis::ScriptFacts>)> {
     let layout = object
         .metadata
@@ -164,6 +166,52 @@ fn assemble_page(
                     .map_err(|_| error("object_count", "控件 ID 超出 u8 范围"))?;
                 values[relocation.object].insert(relocation.property.clone(), vec![id]);
             }
+            RelocationKind::ImageId => {
+                let reference = relocation.reference.as_ref().unwrap();
+                let current = &parsed[relocation.object];
+                let id = resolve_image(images, reference).map_err(|error| -> hmi_core::Error {
+                    let mut diagnostic = error.as_diagnostic().cloned().unwrap_or_else(|| {
+                        Diagnostic::error("resource_reference", error.to_string())
+                    });
+                    diagnostic.location.page = Some(name.into());
+                    diagnostic.location.object = Some(current.name.clone());
+                    diagnostic.location.object_index = Some(relocation.object);
+                    diagnostic.location.property = Some(relocation.property.clone());
+                    diagnostic.into()
+                })?;
+                if current
+                    .attribute(&relocation.property)
+                    .is_none_or(|a| a.value != [0, 0])
+                {
+                    return Err(error("object_relocation", "图片资源 ID 占位值必须为零"));
+                }
+                if current.type_code == 113 {
+                    let info = &images[usize::from(id)].1;
+                    if info.width != target.canvas.width || info.height != target.canvas.height {
+                        return Err(error(
+                            "crop_image",
+                            format!(
+                                "切图控件 {} 要求使用与当前页面同尺寸的全屏图片",
+                                current.name
+                            ),
+                        ));
+                    }
+                    if current
+                        .integer("endx")
+                        .is_none_or(|x| x >= u32::from(info.width))
+                        || current
+                            .integer("endy")
+                            .is_none_or(|y| y >= u32::from(info.height))
+                    {
+                        return Err(error(
+                            "crop_geometry",
+                            format!("切图控件 {} 的区域超出全屏图片范围", current.name),
+                        ));
+                    }
+                }
+                values[relocation.object]
+                    .insert(relocation.property.clone(), id.to_le_bytes().to_vec());
+            }
         }
     }
     let objects = parsed
@@ -174,38 +222,73 @@ fn assemble_page(
     Ok((write::page(name, &objects)?, bound))
 }
 
-pub fn from_manifest(path: &Path, deny_warnings: bool) -> Result<Linked> {
-    let source: LinkSource = file::read_toml(path)?;
-    check_schema(&source.schema, "hmi.link/1")?;
-    if !source.assets.items.is_empty() {
-        return Err(error("link_assets", "当前阶段尚未接入资产链接"));
+fn resolve_image(
+    images: &[(String, ImageInfo)],
+    reference: &hmi_core::asset::ResourceReference,
+) -> Result<u16> {
+    reference.validate()?;
+    if let Some(name) = &reference.name {
+        return images
+            .iter()
+            .position(|(key, _)| key == name)
+            .map(|i| i as u16)
+            .ok_or_else(|| error("resource_symbol", format!("图片资产 {name} 不存在")));
     }
-    let directory = path.parent().unwrap_or(Path::new("."));
-    let target_path = directory.join(&source.target);
-    let target = file::read_json(&target_path)?;
-    let program_path = directory.join(&source.program);
-    let program = CompiledObject::read(&program_path)?;
-    let mut inputs = vec![path.to_path_buf(), target_path, program_path];
-    let mut pages = Vec::new();
-    for object in source.pages.objects {
-        let input = directory.join(object);
-        pages.push(CompiledObject::read(&input)?);
-        inputs.push(input);
+    if let Some(id) = reference.id
+        && usize::from(id) < images.len()
+    {
+        return Ok(id);
     }
-    let mut linked = link(&target, &program, &pages, deny_warnings)?;
-    linked.inputs = inputs;
-    Ok(linked)
+    Err(error(
+        "resource_id",
+        format!(
+            "图片 ID {:?} 不存在，当前共有 {} 个图片资源",
+            reference.id,
+            images.len()
+        ),
+    ))
 }
 
-pub fn link(
+struct Layout {
+    pages: Vec<Vec<u8>>,
+    diagnostics: Vec<Diagnostic>,
+}
+
+fn layout(
     target: &Target,
     program: &CompiledObject,
     pages: &[CompiledObject],
+    images: &[(String, ImageInfo)],
     deny_warnings: bool,
-) -> Result<Linked> {
+) -> Result<Layout> {
     target.validate()?;
     if pages.is_empty() {
         return Err(error("page_count", "工程至少需要一个页面"));
+    }
+    let resource_count = images
+        .len()
+        .checked_mul(2)
+        .and_then(|n| n.checked_add(pages.len() + 2))
+        .ok_or_else(|| error("resource_count", "资源数量溢出"))?;
+    if resource_count > (hmi_format::container::BACKUP_START - 8) / 28 || images.len() >= 65535 {
+        return Err(error("resource_count", "资源数量超过当前目录容量"));
+    }
+    let mut keys = BTreeSet::new();
+    for (key, info) in images {
+        hmi_core::asset::check_key(key)?;
+        if !keys.insert(key) {
+            return Err(error("asset_key", format!("资产符号 {key} 重复")));
+        }
+        if info.width == 0
+            || info.height == 0
+            || info.orientation != target.orientation
+            || !target.capabilities.image_codecs.contains(&info.codec)
+        {
+            return Err(error(
+                "asset_target",
+                format!("图片资产 {key} 的尺寸、编码或方向与目标不匹配"),
+            ));
+        }
     }
     program.validate()?;
     if program.metadata.kind != ObjectKind::Program || program.metadata.target != *target {
@@ -221,56 +304,51 @@ pub fn link(
     }
     file::script_lines(&program.metadata.scripts[0].source.text)?;
     let mut names = BTreeSet::new();
-    let mut resources = vec![("Program.s".to_string(), program.payload.clone())];
-    let mut all_facts = Vec::new();
-    for (id, object) in pages.iter().enumerate() {
+    let mut native = Vec::new();
+    let mut facts_by_page = Vec::new();
+    for (index, object) in pages.iter().enumerate() {
         object.validate()?;
         if object.metadata.kind != ObjectKind::Page || object.metadata.target != *target {
             return Err(error(
                 "link_target",
-                format!("第 {id} 个页面目标类型或目标配置不匹配"),
+                format!("第 {index} 个页面目标类型或目标配置不匹配"),
             ));
         }
         let name = object.metadata.name.as_ref().unwrap();
         if !names.insert(name) {
             return Err(error("page_name", format!("页面名称 {name} 重复")));
         }
-        let (page, bound) = assemble_page(object, target, id)?;
-        all_facts.push(bound);
-        resources.push((format!("{id}.pa"), page));
+        let (bytes, facts) = assemble_page(object, target, index, images)?;
+        native.push(bytes);
+        facts_by_page.push(facts);
     }
-    let references: Vec<_> = resources[1..]
+    let parsed = native
         .iter()
-        .map(|(name, _)| ("pa", name.as_str()))
-        .collect();
-    let main = write::main_resource(
-        &target.profile,
-        target.header_tag()?,
-        target.orientation,
-        &references,
-    )?;
-    resources.push(("main.HMI".into(), main));
-    let bytes = write::container(&resources)?;
-    let container = Container::parse(bytes.clone())?;
-    let project = Project::parse(&container)?;
-    project.strict()?;
-    let context = Context::from_project(&project);
-    let mut global = program.metadata.scripts.clone();
-    global[0].source.page = None;
-    global[0].source.object = None;
-    global[0].source.event = None;
-    let mut diagnostics = check_linked_facts(&context, None, &global);
-    let mut static_errors = global
+        .map(|bytes| hmi_format::page::Page::parse(bytes))
+        .collect::<Result<Vec<_>>>()?;
+    let mut references = images
         .iter()
-        .flat_map(|facts| facts.static_page_errors(project.pages.len()))
+        .enumerate()
+        .map(|(id, _)| hmi_format::project::Reference {
+            kind: "i".into(),
+            resource: format!("{id}.i"),
+        })
         .collect::<Vec<_>>();
-    for (id, facts) in all_facts.iter().enumerate() {
+    references.extend((0..pages.len()).map(|id| hmi_format::project::Reference {
+        kind: "pa".into(),
+        resource: format!("{id}.pa"),
+    }));
+    let context = Context::from_pages(parsed.iter(), references);
+    let mut diagnostics = check_linked_facts(&context, None, &program.metadata.scripts);
+    let mut static_errors = program
+        .metadata
+        .scripts
+        .iter()
+        .flat_map(|f| f.static_page_errors(pages.len()))
+        .collect::<Vec<_>>();
+    for (id, facts) in facts_by_page.iter().enumerate() {
         diagnostics.extend(check_linked_facts(&context, Some(id), facts));
-        static_errors.extend(
-            facts
-                .iter()
-                .flat_map(|facts| facts.static_page_errors(project.pages.len())),
-        );
+        static_errors.extend(facts.iter().flat_map(|f| f.static_page_errors(pages.len())));
     }
     if let Some(error) = static_errors.into_iter().next() {
         return Err(error.into());
@@ -290,23 +368,126 @@ pub fn link(
             diagnostic.severity = Severity::Error;
         }
     }
-    if let Some(diagnostic) = diagnostics.iter().find(|d| d.severity == Severity::Error) {
-        return Err(diagnostic.clone().into());
+    if let Some(d) = diagnostics.iter().find(|d| d.severity == Severity::Error) {
+        return Err(d.clone().into());
     }
-    if deny_warnings && let Some(diagnostic) = diagnostics.first() {
-        let mut diagnostic = diagnostic.clone();
-        diagnostic.original_severity = Some(diagnostic.severity);
-        diagnostic.severity = Severity::Error;
-        return Err(diagnostic.into());
+    if deny_warnings && let Some(d) = diagnostics.first() {
+        let mut d = d.clone();
+        d.original_severity = Some(d.severity);
+        d.severity = Severity::Error;
+        return Err(d.into());
     }
-    let map = serde_json::json!({
-        "schema":"hmi.link-map/1", "target":target,
-        "pages":project.pages.iter().enumerate().map(|(id,(entry,page))| serde_json::json!({"id":id,"name":page.name,"resource":container.entries[*entry].name,"objects":page.objects.iter().map(|o|serde_json::json!({"id":o.id,"name":o.name,"type":hmi_format::page::type_name(o.type_code)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
-        "resources":container.entries, "output_sha256":hmi_core::sha256(&bytes),
-    });
+    Ok(Layout {
+        pages: native,
+        diagnostics,
+    })
+}
+
+/// 只使用媒体探测信息检查符号、几何、ID 和脚本，不要求先执行媒体编码。
+pub fn check(
+    target: &Target,
+    program: &CompiledObject,
+    pages: &[CompiledObject],
+    images: &[(String, ImageInfo)],
+    deny_warnings: bool,
+) -> Result<Vec<Diagnostic>> {
+    Ok(layout(target, program, pages, images, deny_warnings)?.diagnostics)
+}
+
+pub fn from_manifest(path: &Path, deny_warnings: bool) -> Result<Linked> {
+    let source: LinkSource = file::read_toml(path)?;
+    check_schema(&source.schema, "hmi.link/1")?;
+    let directory = path.parent().unwrap_or(Path::new("."));
+    let target_path = directory.join(&source.target);
+    let target = file::read_json(&target_path)?;
+    let program_path = directory.join(&source.program);
+    let program = CompiledObject::read(&program_path)?;
+    let mut inputs = vec![path.to_path_buf(), target_path, program_path];
+    let mut pages = Vec::new();
+    let mut assets = Vec::new();
+    for name in source.pages.objects {
+        let input = directory.join(name);
+        pages.push(CompiledObject::read(&input)?);
+        inputs.push(input);
+    }
+    for asset in source.assets.items {
+        let input = directory.join(asset.object);
+        assets.push((asset.key, AssetObject::read(&input)?));
+        inputs.push(input);
+    }
+    let mut linked = link_with_assets(&target, &program, &pages, &assets, deny_warnings)?;
+    linked.inputs = inputs;
+    Ok(linked)
+}
+
+pub fn link(
+    target: &Target,
+    program: &CompiledObject,
+    pages: &[CompiledObject],
+    deny_warnings: bool,
+) -> Result<Linked> {
+    link_with_assets(target, program, pages, &[], deny_warnings)
+}
+
+pub fn link_with_assets(
+    target: &Target,
+    program: &CompiledObject,
+    pages: &[CompiledObject],
+    assets: &[(String, AssetObject)],
+    deny_warnings: bool,
+) -> Result<Linked> {
+    for (_, asset) in assets {
+        asset.validate_for(target)?;
+    }
+    let images = assets
+        .iter()
+        .map(|(key, asset)| (key.clone(), asset.metadata.image.clone()))
+        .collect::<Vec<_>>();
+    let layout = layout(target, program, pages, &images, deny_warnings)?;
+    let mut resources = vec![("Program.s".into(), program.payload.clone())];
+    resources.extend(
+        layout
+            .pages
+            .into_iter()
+            .enumerate()
+            .map(|(id, bytes)| (format!("{id}.pa"), bytes)),
+    );
+    for (id, (_, asset)) in assets.iter().enumerate() {
+        for (index, member) in asset.metadata.members.iter().enumerate() {
+            resources.push((
+                format!("{id}.{}", member.extension),
+                asset.member(index)?.to_vec(),
+            ));
+        }
+    }
+    let mut references = (0..assets.len())
+        .map(|id| ("i".to_string(), format!("{id}.i")))
+        .collect::<Vec<_>>();
+    references.extend((0..pages.len()).map(|id| ("pa".to_string(), format!("{id}.pa"))));
+    let borrowed = references
+        .iter()
+        .map(|(kind, name)| (kind.as_str(), name.as_str()))
+        .collect::<Vec<_>>();
+    resources.push((
+        "main.HMI".into(),
+        write::main_resource(
+            &target.profile,
+            target.header_tag()?,
+            target.orientation,
+            &borrowed,
+        )?,
+    ));
+    let bytes = write::container(&resources)?;
+    let container = Container::parse(bytes.clone())?;
+    let project = Project::parse(&container)?;
+    project.strict()?;
+    let map = serde_json::json!({"schema":"hmi.link-map/1","target":target,
+        "pages":project.pages.iter().enumerate().map(|(id,(entry,page))|serde_json::json!({"id":id,"name":page.name,"resource":container.entries[*entry].name,"objects":page.objects.iter().map(|o|serde_json::json!({"id":o.id,"name":o.name,"type":hmi_format::page::type_name(o.type_code)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
+        "assets":images.iter().enumerate().map(|(id,(key,info))|serde_json::json!({"key":key,"kind":"image","id":id,"resource":format!("{id}.i"),"width":info.width,"height":info.height})).collect::<Vec<_>>(),
+        "resources":container.entries,"output_sha256":hmi_core::sha256(&bytes)});
     Ok(Linked {
         bytes,
-        diagnostics,
+        diagnostics: layout.diagnostics,
         map,
         inputs: Vec::new(),
     })
