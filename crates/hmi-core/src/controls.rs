@@ -13,6 +13,7 @@ use crate::{
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+mod graphics;
 mod indicators;
 mod interaction;
 mod numeric;
@@ -23,6 +24,7 @@ pub const PAGE_EVENTS: &[&str] = &["load", "loadend", "down", "up", "unload"];
 pub enum Storage {
     U8,
     U16,
+    I16,
     I32,
     Text,
     Image,
@@ -322,6 +324,9 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    graphics::GAUGE,
+    graphics::WAVEFORM,
+    graphics::QRCODE,
     interaction::SLIDER,
     interaction::TOUCH_CAPTURE,
     interaction::DUAL_STATE_BUTTON,
@@ -454,6 +459,7 @@ impl Property {
         Ok(match self.storage {
             Storage::U8 | Storage::Font => vec![number as u8],
             Storage::U16 | Storage::Image => (number as u16).to_le_bytes().to_vec(),
+            Storage::I16 => (number as i16).to_le_bytes().to_vec(),
             Storage::I32 => (number as i32).to_le_bytes().to_vec(),
             Storage::Text => unreachable!(),
         })
@@ -475,6 +481,9 @@ impl Property {
                     .ok_or_else(invalid)?,
             )),
             Storage::U16 | Storage::Image => toml::Value::Integer(i64::from(u16::from_le_bytes(
+                bytes.try_into().map_err(|_| invalid())?,
+            ))),
+            Storage::I16 => toml::Value::Integer(i64::from(i16::from_le_bytes(
                 bytes.try_into().map_err(|_| invalid())?,
             ))),
             Storage::I32 => toml::Value::Integer(i64::from(i32::from_le_bytes(
@@ -525,7 +534,7 @@ impl Definition {
             };
             values.insert(property.name, property.encode(value)?);
         }
-        if matches!(self.code, 52 | 53 | 55 | 116 | 98) {
+        if matches!(self.code, 52 | 53 | 55 | 58 | 116 | 98) {
             let capacity =
                 u16::from_le_bytes(values["txt_maxl"].as_slice().try_into().unwrap()) as usize;
             if values["txt"].len() > capacity {

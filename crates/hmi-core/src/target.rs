@@ -99,7 +99,7 @@ impl Target {
         let (control_property_constraints, constraints_fingerprint) =
             constraints::resolve(series, &config.profile)?;
         let signature = format!(
-            "page-ver21234-9:{}:{}:{width}:{height}:{}:{}:{}",
+            "page-ver21234-10:{}:{}:{width}:{height}:{}:{}:{}",
             config.profile,
             config.orientation,
             sha256(DEFAULT_PROGRAM.as_bytes()),
@@ -129,7 +129,7 @@ impl Target {
                 font_versions: vec![6],
                 control_property_constraints,
             },
-            data_revision: 9,
+            data_revision: 10,
             profile_data_sha256: sha256(signature.as_bytes()),
         })
     }

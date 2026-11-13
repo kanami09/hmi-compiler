@@ -57,7 +57,10 @@ impl ControlPropertyConstraint {
         let p = self.property_definition()?;
         if !matches!(
             p.storage,
-            controls::Storage::U8 | controls::Storage::U16 | controls::Storage::I32
+            controls::Storage::U8
+                | controls::Storage::U16
+                | controls::Storage::I16
+                | controls::Storage::I32
         ) {
             return Err(error(
                 "target_rules",
@@ -238,6 +241,19 @@ mod tests {
 
     #[test]
     fn generic_rules_handle_signed_ranges_and_enum_sets_on_other_controls() {
+        let signed16 = ControlPropertyConstraint {
+            control: "gauge".into(),
+            property: "up".into(),
+            constraint: IntegerConstraint::Range { min: -10, max: 10 },
+        };
+        signed16.validate().unwrap();
+        check(
+            "test",
+            &[signed16],
+            122,
+            &[("up".into(), (-2i16).to_le_bytes().to_vec())],
+        )
+        .unwrap();
         let range = ControlPropertyConstraint {
             control: "number".into(),
             property: "val".into(),
