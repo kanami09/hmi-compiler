@@ -407,3 +407,12 @@ objWid、objHig、inittrue、molloc_s、molloc 按原生配方初始化为零，
 二维码的 sta 是中心 LOGO 开关；当前支持 sta=0，无中心 LOGO，不能套用其他类型的背景模式。默认 bco=65535、pco=0，txt 必填，txt_maxl 默认 16、范围 0～192，按 UTF-8 字节检查。文本保存在控件中，由上位机／屏幕生成二维码，不需要导入字体或预先编码成图片。原生 dis 保持 8、pic 保持空值 65535，本批不作为可编辑属性。
 
 本批验证控件结构、静态预览及上位机编译；扫码结果、动态曲线和硬件运行分别验收。
+
+生成这一批的验收工程：
+
+```powershell
+cargo build --workspace --bins --locked
+python examples/prepare_graphics_acceptance.py
+```
+
+脚本无需媒体素材，生成 K035、X543 的 0° 工程，每份含 gauge、wave、qrcode、qrcode2 四页，并实际执行 6 条独立命令比较输出。它核对负尾长的有符号属性显示、二维码文本及空资产构建；结果和说明在 `target/acceptance-graphics/`，已有目录不会覆盖，可另用 --output。脚本不读取已有 HMI、字库或内部资料。
