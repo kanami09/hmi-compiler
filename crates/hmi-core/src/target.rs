@@ -3,6 +3,9 @@
 use crate::{Result, error, model::check_schema, sha256};
 use serde::{Deserialize, Serialize};
 
+mod constraints;
+pub use constraints::{ControlPropertyConstraint, IntegerConstraint};
+
 pub const DEFAULT_PROGRAM: &str = include_str!("../../../data/profiles/default-program.s");
 
 /// 用户写入 hmi.toml 的目标配置。
@@ -34,9 +37,9 @@ pub struct Capabilities {
     pub image_codecs: Vec<String>,
     #[serde(default)]
     pub font_versions: Vec<u8>,
-    /// 本工具已接入的滑块游标模式；不是硬件支持范围的完整声明。
+    /// 只列出已知型号例外，缺省使用控件注册表的通用范围。
     #[serde(default)]
-    pub slider_cursor_modes: Vec<u8>,
+    pub control_property_constraints: Vec<ControlPropertyConstraint>,
 }
 
 /// 已展开的共同目标输入。消费者重新核对内置规则，拒绝被修改的几何或版本。
@@ -76,10 +79,11 @@ impl Target {
                 "工程方向必须为 0、90、180 或 270",
             ));
         }
-        let (base_width, base_height) = match config.profile.as_str() {
-            "TJC4832K035_011" | "TJC4832T035_011" => (320, 480),
-            "TJC3224T028_011" => (240, 320),
-            "TJC4827X543_011" => (480, 272),
+        let (base_width, base_height, series) = match config.profile.as_str() {
+            "TJC4832K035_011" => (320, 480, "k0"),
+            "TJC4832T035_011" => (320, 480, "t0"),
+            "TJC3224T028_011" => (240, 320, "t0"),
+            "TJC4827X543_011" => (480, 272, "x5"),
             _ => {
                 return Err(error(
                     "target_profile",
@@ -92,12 +96,15 @@ impl Target {
         } else {
             (base_width, base_height)
         };
+        let (control_property_constraints, constraints_fingerprint) =
+            constraints::resolve(series, &config.profile)?;
         let signature = format!(
-            "page-ver21234-8:{}:{}:{width}:{height}:{}:{}",
+            "page-ver21234-9:{}:{}:{width}:{height}:{}:{}:{}",
             config.profile,
             config.orientation,
             sha256(DEFAULT_PROGRAM.as_bytes()),
-            crate::controls::fingerprint()
+            crate::controls::fingerprint(),
+            constraints_fingerprint
         );
         Ok(Self {
             schema: "hmi.target/1".into(),
@@ -120,13 +127,9 @@ impl Target {
                     vec!["rgb565".into()]
                 },
                 font_versions: vec![6],
-                slider_cursor_modes: if config.profile == "TJC4827X543_011" {
-                    vec![0, 2]
-                } else {
-                    vec![0]
-                },
+                control_property_constraints,
             },
-            data_revision: 8,
+            data_revision: 9,
             profile_data_sha256: sha256(signature.as_bytes()),
         })
     }
@@ -154,36 +157,12 @@ impl Target {
         code: u8,
         attributes: &[(String, Vec<u8>)],
     ) -> Result<()> {
-        if code == 1 {
-            let cursor = attributes
-                .iter()
-                .find(|(name, _)| name == "psta")
-                .and_then(|(_, b)| b.first())
-                .copied()
-                .ok_or_else(|| error("object_property", "滑块记录缺少 psta"))?;
-            if !self.capabilities.slider_cursor_modes.contains(&cursor) {
-                let allowed = self
-                    .capabilities
-                    .slider_cursor_modes
-                    .iter()
-                    .map(u8::to_string)
-                    .collect::<Vec<_>>()
-                    .join("、");
-                return Err(crate::diagnostic::Diagnostic::error(
-                    "control_capability",
-                    format!(
-                        "型号 {} 当前可构建的滑块 psta 为 {allowed}，不支持 psta={cursor}",
-                        self.profile
-                    ),
-                )
-                .at(crate::diagnostic::Location {
-                    property: Some("psta".into()),
-                    ..Default::default()
-                })
-                .into());
-            }
-        }
-        Ok(())
+        constraints::check(
+            &self.profile,
+            &self.capabilities.control_property_constraints,
+            code,
+            attributes,
+        )
     }
 
     /// 此字节仅是已观察到的工程头标签，不作为通用系列能力位。

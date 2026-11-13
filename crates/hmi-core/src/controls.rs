@@ -459,7 +459,7 @@ impl Property {
         })
     }
 
-    fn decode(&self, bytes: &[u8]) -> Result<toml::Value> {
+    pub(crate) fn decode(&self, bytes: &[u8]) -> Result<toml::Value> {
         let invalid = || {
             property_error(
                 "object_property",

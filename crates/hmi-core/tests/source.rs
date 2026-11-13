@@ -50,6 +50,15 @@ fn target_rejects_unknown_profiles_and_tampered_geometry() {
         orientation: 0,
     };
     let mut target = Target::resolve(&config).unwrap();
+    target.capabilities.control_property_constraints.push(
+        hmi_core::target::ControlPropertyConstraint {
+            control: "slider".into(),
+            property: "psta".into(),
+            constraint: hmi_core::target::IntegerConstraint::Range { min: 0, max: 0 },
+        },
+    );
+    assert!(target.validate().is_err());
+    let mut target = Target::resolve(&config).unwrap();
     target.canvas.width = 1;
     assert!(target.validate().is_err());
     for orientation in [1, 45, 360, u16::MAX] {

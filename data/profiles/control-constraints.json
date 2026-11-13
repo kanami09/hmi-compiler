@@ -1,0 +1,13 @@
+{
+  "schema": "hmi.control-constraints/1",
+  "series": {
+    "k0": [
+      {
+        "control": "slider",
+        "property": "psta",
+        "constraint": { "kind": "range", "min": 0, "max": 1 }
+      }
+    ]
+  },
+  "profiles": {}
+}

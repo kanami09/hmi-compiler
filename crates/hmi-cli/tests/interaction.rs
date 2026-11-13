@@ -212,10 +212,15 @@ fn slider_cursor_modes_follow_the_target_in_both_compilation_and_linking() {
     for profile in hmi_core::target::PROFILES {
         config.target.profile = (*profile).into();
         fs::write(&source, file::toml(&config).unwrap()).unwrap();
-        if *profile == "TJC4827X543_011" {
+        if *profile != "TJC4832K035_011" {
             let p = hmi_cli::prepare(tmp.path()).unwrap();
             p.check(true).unwrap();
-            assert_eq!(p.target.capabilities.slider_cursor_modes, [0, 2]);
+            assert!(
+                p.target
+                    .capabilities
+                    .control_property_constraints
+                    .is_empty()
+            );
             assert_eq!(link(tmp.path()).objects[1].integer("psta"), Some(2));
         } else {
             let e = hmi_cli::prepare(tmp.path()).err().unwrap();
