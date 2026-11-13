@@ -39,6 +39,7 @@ pub struct PageLayout {
 pub enum RelocationKind {
     ObjectId,
     ImageId,
+    FontId,
 }
 
 /// object 指目标文件内的记录序号，不是预先分配的 HMI 控件 ID。
@@ -230,22 +231,34 @@ impl CompiledObject {
                         return Err(error("object_relocation", "控件 ID 重定位无效"));
                     }
                 }
-                RelocationKind::ImageId => {
+                RelocationKind::ImageId | RelocationKind::FontId => {
+                    let font = relocation.kind == RelocationKind::FontId;
                     let definition =
                         hmi_core::controls::by_code(layout.objects[relocation.object].type_code)?;
                     if !definition.properties.iter().any(|p| {
                         p.name == relocation.property
-                            && matches!(p.storage, hmi_core::controls::Storage::Image)
+                            && if font {
+                                matches!(p.storage, hmi_core::controls::Storage::Font)
+                            } else {
+                                matches!(p.storage, hmi_core::controls::Storage::Image)
+                            }
                     }) {
-                        return Err(error("object_relocation", "图片重定位指向非资源属性"));
+                        return Err(error("object_relocation", "资源重定位的类别与属性不符"));
                     }
                     let reference = relocation
                         .reference
                         .as_ref()
-                        .ok_or_else(|| error("object_relocation", "图片重定位缺少引用"))?;
+                        .ok_or_else(|| error("object_relocation", "资源重定位缺少引用"))?;
                     reference.validate()?;
-                    if reference.none == Some(true) || reference.id == Some(65535) {
-                        return Err(error("resource_reference", "图片和切图控件不允许空图片"));
+                    if reference.none == Some(true)
+                        || reference
+                            .id
+                            .is_some_and(|id| id >= if font { 255 } else { 65535 })
+                    {
+                        return Err(error(
+                            "resource_reference",
+                            "资源重定位不能引用空资源或保留 ID",
+                        ));
                     }
                 }
             }
@@ -255,10 +268,12 @@ impl CompiledObject {
                 return Err(error("object_relocation", "普通控件缺少 ID 重定位"));
             }
             for property in hmi_core::controls::by_code(record.type_code)?.properties {
-                if matches!(property.storage, hmi_core::controls::Storage::Image)
-                    && !relocated.contains(&(index, property.name))
+                if matches!(
+                    property.storage,
+                    hmi_core::controls::Storage::Image | hmi_core::controls::Storage::Font
+                ) && !relocated.contains(&(index, property.name))
                 {
-                    return Err(error("object_relocation", "图片属性缺少资源重定位"));
+                    return Err(error("object_relocation", "资源属性缺少重定位"));
                 }
             }
         }

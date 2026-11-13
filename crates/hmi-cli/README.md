@@ -1,6 +1,6 @@
-# 新工具链：基础控件与图片
+# 新工具链使用说明
 
-当前可从零新建工程，添加热区、变量、定时器，以及 K/T 配置下的图片和切图，编译页面、控件事件和全局代码，再链接为 HMI。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，添加热区、变量、定时器、单色文本和按钮，以及 K/T 配置下的图片和切图；支持 ZI 字库方向适配，编译页面、控件事件和全局代码，再链接为 HMI。构建过程不需要已有 HMI 或逆向资料。
 
 当前支持的型号和方向见根目录 `data/profiles/README.md`。X 系列图片编码、其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
@@ -93,6 +93,8 @@ events = { timer = "events/tm0.timer.s" }
 | timer（定时器） | tim 默认 400，范围为 50～65534 毫秒；en 默认 1；vscope 默认 0 | timer |
 | picture（图片） | x/y/w/h 必填；pic 为图片引用表；vscope、sendkey 默认 0 | down、up |
 | crop（切图） | x/y/w/h 必填；picc 须引用与当前页面同尺寸的全屏图片，取图区域不得越界；vscope、sendkey 默认 0 | down、up |
+| text（文本） | x/y/w/h、font 引用表、txt 必填；当前 sta=1；style 为 0 平面或 1 边框 | down、up |
+| button（按钮） | x/y/w/h、font 引用表、txt 必填；当前 sta=1；style 为 1 边框或 4 3D_Auto，默认 4 | down、up |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -113,7 +115,7 @@ vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不
 - `hmi-compile program` 编译全局代码。
 - `hmi-compile page` 编译单个页面。
 - `hmi-compile inspect` 检查 `.hmo` 描述、版本和摘要。
-- `hmi-media probe/encode/inspect` 探测、编码和检查图片资产，详见 [图片编码器](../hmi-media/README.md)。
+- `hmi-media probe/encode/inspect` 探测、编码和检查媒体资产，详见[媒体编码器](../hmi-media/README.md)。
 - `hmi-link` 仅使用链接描述、target.json、`.hmo` 和 `.hma`，不依赖源码。
 - `hmi-link --check` 在内存中生成并校验 HMI，不写输出文件。
 
@@ -172,3 +174,45 @@ python examples/prepare_pictures_acceptance.py
 ```
 
 结果在 `target/acceptance-pictures/`。脚本生成标准 BMP 和透明 PNG，验证去透明、缩放、图片与切图引用，并实际执行导出的独立命令比较输出；不会覆盖已有验收目录。
+
+## 字库、文本和按钮
+
+字库描述示例：
+
+```toml
+schema = "hmi.asset/1"
+kind = "font"
+source = "fonts/ui.zi"
+```
+
+将该描述加入工程的 assets.items，例如 `{ key = "ui_font", source = "assets/ui.asset.toml" }`。字库与图片可以交错排列，各自按相对顺序分配 ID；两份内容相同的显式资产也不会自动合并。输入为受支持的 UTF-8 ZI v6，不从 TTF 自动制字，方向由编码器内部适配。
+
+```toml
+[[objects]]
+name = "title"
+type = "text"
+properties = { x = 10, y = 10, w = 280, h = 100, font = { ref = "ui_font" }, txt = "ABC012" }
+
+[[objects]]
+name = "confirm"
+type = "button"
+properties = { x = 10, y = 160, w = 160, h = 60, font = { id = 0 }, txt = "ABC", style = 1 }
+events = { up = "events/confirm.up.s" }
+```
+
+font 必须使用 `{ ref = "..." }` 或 `{ id = ... }`。ref 引用当前资产符号，id 指最终字体列表的位置，范围为 0～254；不能写裸整数、none 或保留值 255。引用按资源类别检查，不会把图片 ID 当作字体 ID。字体由多个控件共享，控件尺寸不会改变字高。
+
+文本和按钮都检查 txt_maxl 的 UTF-8 字节容量，默认 10。例如“测试A”占 7 字节，需要容量至少为 7。工具目前不检查每个字符是否存在字形，UTF-8 字库也可能只含少量字符；请按字库覆盖范围设置文字。
+
+本批仅开放单色背景 sta=1。文本的 style 默认 0；按钮默认 4。即使 UI 隐藏图片等字段，输出仍保留原生布局和非活动值，但不能通过源码设置尚未开放的背景模式。
+
+| 公共属性 | 默认值与范围 |
+|---|---|
+| vscope、sendkey | 默认 0，可设 0／1 |
+| bco、pco | RGB565 颜色值，0～65535；文本默认白底黑字，按钮普通状态 bco=50712、pco=0 |
+| borderc、borderw | 默认 0、2，范围分别为 0～65535、0～255 |
+| xcen、ycen | 默认 1；0 靠左／靠上、1 居中、2 靠右／靠下 |
+| txt_maxl | 默认 10，范围 0～65535，单位为 UTF-8 字节 |
+| isbr、spax、spay | 默认均为 0；isbr 为 0／1，spax、spay 为 0～255 |
+
+文本另有 pw，默认 0，可设 0／1。按钮另有按下状态颜色 bco2=1024、pco2=65535，颜色范围同上；val 为 0／1，默认 0。文本的 key 和所有非活动图片字段暂由原生配方生成，不作为可编辑属性。

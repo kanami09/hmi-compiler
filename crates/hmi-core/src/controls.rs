@@ -22,6 +22,7 @@ pub enum Storage {
     I32,
     Text,
     Image,
+    Font,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -139,6 +140,64 @@ const fn image_properties(name: &'static str) -> [Property; 7] {
 const PICTURE_PROPERTIES: &[Property] = &image_properties("pic");
 const CROP_PROPERTIES: &[Property] = &image_properties("picc");
 
+/// 单色文本和按钮保留全部原生字段；当前不开放图片背景或透明背景。
+const fn text_properties<const N: usize>(button: bool) -> [Property; N] {
+    let mut p = [SCOPE; N];
+    let mut i = 0;
+    while i < 6 {
+        p[i] = HOTSPOT_PROPERTIES[i];
+        i += 1;
+    }
+    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+    p[7] = integer(
+        "style",
+        Storage::U8,
+        if button { 1 } else { 0 },
+        if button { 4 } else { 1 },
+        DefaultValue::Integer(if button { 4 } else { 0 }),
+    );
+    p[8] = integer("borderc", Storage::U16, 0, 65535, DefaultValue::Integer(0));
+    p[9] = integer("borderw", Storage::U8, 0, 255, DefaultValue::Integer(2));
+    p[10] = integer("font", Storage::Font, 0, 254, DefaultValue::Required);
+    p[11] = integer(
+        "bco",
+        Storage::U16,
+        0,
+        65535,
+        DefaultValue::Integer(if button { 50712 } else { 65535 }),
+    );
+    p[12] = integer("pco", Storage::U16, 0, 65535, DefaultValue::Integer(0));
+    p[13] = integer("xcen", Storage::U8, 0, 2, DefaultValue::Integer(1));
+    p[14] = integer("ycen", Storage::U8, 0, 2, DefaultValue::Integer(1));
+    p[15] = Property {
+        name: "txt",
+        storage: Storage::Text,
+        min: 0,
+        max: 0,
+        default: DefaultValue::Required,
+    };
+    p[16] = integer(
+        "txt_maxl",
+        Storage::U16,
+        0,
+        65535,
+        DefaultValue::Integer(10),
+    );
+    p[17] = integer("isbr", Storage::U8, 0, 1, DefaultValue::Integer(0));
+    p[18] = integer("spax", Storage::U8, 0, 255, DefaultValue::Integer(0));
+    p[19] = integer("spay", Storage::U8, 0, 255, DefaultValue::Integer(0));
+    if button {
+        p[20] = integer("bco2", Storage::U16, 0, 65535, DefaultValue::Integer(1024));
+        p[21] = integer("pco2", Storage::U16, 0, 65535, DefaultValue::Integer(65535));
+        p[22] = integer("val", Storage::U8, 0, 1, DefaultValue::Integer(0));
+    } else {
+        p[20] = integer("pw", Storage::U8, 0, 1, DefaultValue::Integer(0));
+    }
+    p
+}
+const TEXT_PROPERTIES: [Property; 21] = text_properties(false);
+const BUTTON_PROPERTIES: [Property; 23] = text_properties(true);
+
 const HOTSPOT_FIELDS: &[Field] = &[
     field("type", FieldValue::Type),
     field("id", FieldValue::Id),
@@ -197,6 +256,55 @@ const CROP_FIELDS: [Field; 24] = {
     fields[23] = field("vvs1", FieldValue::Constant(&[0, 0]));
     fields
 };
+const TEXT_FIELDS: [Field; 39] = {
+    let mut fields = drawable_fields();
+    fields[21] = field("sta", FieldValue::Property("sta"));
+    fields[22] = field("style", FieldValue::Property("style"));
+    fields[23] = field("key", FieldValue::Constant(&[255]));
+    fields[24] = field("borderc", FieldValue::Property("borderc"));
+    fields[25] = field("borderw", FieldValue::Property("borderw"));
+    fields[26] = field("font", FieldValue::Property("font"));
+    fields[27] = field("bco", FieldValue::Property("bco"));
+    fields[28] = field("picc", FieldValue::Constant(&[255, 255]));
+    fields[29] = field("pic", FieldValue::Constant(&[255, 255]));
+    fields[30] = field("pco", FieldValue::Property("pco"));
+    fields[31] = field("xcen", FieldValue::Property("xcen"));
+    fields[32] = field("ycen", FieldValue::Property("ycen"));
+    fields[33] = field("pw", FieldValue::Property("pw"));
+    fields[34] = field("txt", FieldValue::Property("txt"));
+    fields[35] = field("txt_maxl", FieldValue::Property("txt_maxl"));
+    fields[36] = field("isbr", FieldValue::Property("isbr"));
+    fields[37] = field("spax", FieldValue::Property("spax"));
+    fields[38] = field("spay", FieldValue::Property("spay"));
+    fields
+};
+
+const BUTTON_FIELDS: [Field; 42] = {
+    let mut fields = drawable_fields();
+    fields[21] = field("sta", FieldValue::Property("sta"));
+    fields[22] = field("style", FieldValue::Property("style"));
+    fields[23] = field("borderc", FieldValue::Property("borderc"));
+    fields[24] = field("borderw", FieldValue::Property("borderw"));
+    fields[25] = field("font", FieldValue::Property("font"));
+    fields[26] = field("pic", FieldValue::Constant(&[255, 255]));
+    fields[27] = field("picc", FieldValue::Constant(&[255, 255]));
+    fields[28] = field("bco", FieldValue::Property("bco"));
+    fields[29] = field("pic2", FieldValue::Constant(&[255, 255]));
+    fields[30] = field("picc2", FieldValue::Constant(&[255, 255]));
+    fields[31] = field("bco2", FieldValue::Property("bco2"));
+    fields[32] = field("pco", FieldValue::Property("pco"));
+    fields[33] = field("pco2", FieldValue::Property("pco2"));
+    fields[34] = field("xcen", FieldValue::Property("xcen"));
+    fields[35] = field("ycen", FieldValue::Property("ycen"));
+    fields[36] = field("val", FieldValue::Property("val"));
+    fields[37] = field("txt", FieldValue::Property("txt"));
+    fields[38] = field("txt_maxl", FieldValue::Property("txt_maxl"));
+    fields[39] = field("isbr", FieldValue::Property("isbr"));
+    fields[40] = field("spax", FieldValue::Property("spax"));
+    fields[41] = field("spay", FieldValue::Property("spay"));
+    fields
+};
+
 const TIMER_FIELDS: &[Field] = &[
     field("type", FieldValue::Type),
     field("id", FieldValue::Id),
@@ -210,6 +318,20 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    Definition {
+        name: "text",
+        code: 116,
+        properties: &TEXT_PROPERTIES,
+        fields: &TEXT_FIELDS,
+        events: &["down", "up"],
+    },
+    Definition {
+        name: "button",
+        code: 98,
+        properties: &BUTTON_PROPERTIES,
+        fields: &BUTTON_FIELDS,
+        events: &["down", "up"],
+    },
     Definition {
         name: "hotspot",
         code: 109,
@@ -310,7 +432,7 @@ impl Property {
             ));
         }
         Ok(match self.storage {
-            Storage::U8 => vec![number as u8],
+            Storage::U8 | Storage::Font => vec![number as u8],
             Storage::U16 | Storage::Image => (number as u16).to_le_bytes().to_vec(),
             Storage::I32 => (number as i32).to_le_bytes().to_vec(),
             Storage::Text => unreachable!(),
@@ -326,7 +448,7 @@ impl Property {
             )
         };
         Ok(match self.storage {
-            Storage::U8 => toml::Value::Integer(i64::from(
+            Storage::U8 | Storage::Font => toml::Value::Integer(i64::from(
                 *bytes
                     .first()
                     .filter(|_| bytes.len() == 1)
@@ -383,7 +505,7 @@ impl Definition {
             };
             values.insert(property.name, property.encode(value)?);
         }
-        if self.code == 52 {
+        if matches!(self.code, 52 | 116 | 98) {
             let capacity =
                 u16::from_le_bytes(values["txt_maxl"].as_slice().try_into().unwrap()) as usize;
             if values["txt"].len() > capacity {
@@ -396,6 +518,13 @@ impl Definition {
                     ),
                 ));
             }
+        }
+        if self.code == 98 && !matches!(values["style"].as_slice(), [1] | [4]) {
+            return Err(property_error(
+                "property_range",
+                "style",
+                "当前按钮 style 支持 1（边框）和 4（3D_Auto）",
+            ));
         }
         let endpoint = |position: &str, size: &str| -> Result<Vec<u8>> {
             let start = u16::from_le_bytes(values[position].as_slice().try_into().unwrap());

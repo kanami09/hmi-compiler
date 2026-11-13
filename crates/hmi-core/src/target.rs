@@ -90,7 +90,7 @@ impl Target {
             (base_width, base_height)
         };
         let signature = format!(
-            "page-ver21234-4:{}:{}:{width}:{height}:{}:{}",
+            "page-ver21234-5:{}:{}:{width}:{height}:{}:{}",
             config.profile,
             config.orientation,
             sha256(DEFAULT_PROGRAM.as_bytes()),
@@ -118,7 +118,7 @@ impl Target {
                 },
                 font_versions: vec![6],
             },
-            data_revision: 4,
+            data_revision: 5,
             profile_data_sha256: sha256(signature.as_bytes()),
         })
     }

@@ -30,7 +30,7 @@ fn assemble_page(
     target: &Target,
     page_id: usize,
     images: &[(String, ImageInfo)],
-    _fonts: &[(String, FontInfo)],
+    fonts: &[(String, FontInfo)],
 ) -> Result<(Vec<u8>, Vec<hmi_analysis::ScriptFacts>)> {
     let layout = object
         .metadata
@@ -170,16 +170,18 @@ fn assemble_page(
             RelocationKind::ImageId => {
                 let reference = relocation.reference.as_ref().unwrap();
                 let current = &parsed[relocation.object];
-                let id = resolve_image(images, reference).map_err(|error| -> hmi_core::Error {
-                    let mut diagnostic = error.as_diagnostic().cloned().unwrap_or_else(|| {
-                        Diagnostic::error("resource_reference", error.to_string())
-                    });
-                    diagnostic.location.page = Some(name.into());
-                    diagnostic.location.object = Some(current.name.clone());
-                    diagnostic.location.object_index = Some(relocation.object);
-                    diagnostic.location.property = Some(relocation.property.clone());
-                    diagnostic.into()
-                })?;
+                let id = resolve_resource(images, reference, "图片").map_err(
+                    |error| -> hmi_core::Error {
+                        let mut diagnostic = error.as_diagnostic().cloned().unwrap_or_else(|| {
+                            Diagnostic::error("resource_reference", error.to_string())
+                        });
+                        diagnostic.location.page = Some(name.into());
+                        diagnostic.location.object = Some(current.name.clone());
+                        diagnostic.location.object_index = Some(relocation.object);
+                        diagnostic.location.property = Some(relocation.property.clone());
+                        diagnostic.into()
+                    },
+                )?;
                 if current
                     .attribute(&relocation.property)
                     .is_none_or(|a| a.value != [0, 0])
@@ -213,6 +215,31 @@ fn assemble_page(
                 values[relocation.object]
                     .insert(relocation.property.clone(), id.to_le_bytes().to_vec());
             }
+            RelocationKind::FontId => {
+                let reference = relocation.reference.as_ref().unwrap();
+                let current = &parsed[relocation.object];
+                let id = resolve_resource(fonts, reference, "字库").map_err(
+                    |error| -> hmi_core::Error {
+                        let mut d = error.as_diagnostic().cloned().unwrap_or_else(|| {
+                            Diagnostic::error("resource_reference", error.to_string())
+                        });
+                        d.location.page = Some(name.into());
+                        d.location.object = Some(current.name.clone());
+                        d.location.object_index = Some(relocation.object);
+                        d.location.property = Some(relocation.property.clone());
+                        d.into()
+                    },
+                )?;
+                if current
+                    .attribute(&relocation.property)
+                    .is_none_or(|a| a.value != [0])
+                {
+                    return Err(error("object_relocation", "字体 ID 必须使用单字节零占位"));
+                }
+                let id =
+                    u8::try_from(id).map_err(|_| error("resource_id", "字体 ID 超过单字节范围"))?;
+                values[relocation.object].insert(relocation.property.clone(), vec![id]);
+            }
         }
     }
     let objects = parsed
@@ -223,29 +250,30 @@ fn assemble_page(
     Ok((write::page(name, &objects)?, bound))
 }
 
-fn resolve_image(
-    images: &[(String, ImageInfo)],
+fn resolve_resource<T>(
+    assets: &[(String, T)],
     reference: &hmi_core::asset::ResourceReference,
+    kind: &str,
 ) -> Result<u16> {
     reference.validate()?;
     if let Some(name) = &reference.name {
-        return images
+        return assets
             .iter()
             .position(|(key, _)| key == name)
             .map(|i| i as u16)
-            .ok_or_else(|| error("resource_symbol", format!("图片资产 {name} 不存在")));
+            .ok_or_else(|| error("resource_symbol", format!("{kind}资产 {name} 不存在")));
     }
     if let Some(id) = reference.id
-        && usize::from(id) < images.len()
+        && usize::from(id) < assets.len()
     {
         return Ok(id);
     }
     Err(error(
         "resource_id",
         format!(
-            "图片 ID {:?} 不存在，当前共有 {} 个图片资源",
+            "{kind} ID {:?} 不存在，当前共有 {} 个{kind}资源",
             reference.id,
-            images.len()
+            assets.len()
         ),
     ))
 }

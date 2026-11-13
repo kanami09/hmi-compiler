@@ -224,7 +224,10 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
             }
             let mut properties = object.properties.clone();
             for property in definition.properties {
-                if matches!(property.storage, controls::Storage::Image) {
+                if matches!(
+                    property.storage,
+                    controls::Storage::Image | controls::Storage::Font
+                ) {
                     let value = properties.get(property.name).ok_or_else(|| {
                         error(
                             "property_required",
@@ -239,14 +242,26 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                             )
                         })?;
                     reference.validate()?;
-                    if reference.none == Some(true) || reference.id == Some(65535) {
-                        return Err(error("resource_reference", "图片和切图控件不允许空图片"));
+                    let font = matches!(property.storage, controls::Storage::Font);
+                    if reference.none == Some(true)
+                        || reference
+                            .id
+                            .is_some_and(|id| id >= if font { 255 } else { 65535 })
+                    {
+                        return Err(error(
+                            "resource_reference",
+                            "资源属性必须引用有效的图片或字体 ID，不能使用空资源",
+                        ));
                     }
                     properties.insert(property.name.into(), 0_i64.into());
                     resources.push(hmi_artifact::Relocation {
                         object: index + 1,
                         property: property.name.into(),
-                        kind: hmi_artifact::RelocationKind::ImageId,
+                        kind: if font {
+                            hmi_artifact::RelocationKind::FontId
+                        } else {
+                            hmi_artifact::RelocationKind::ImageId
+                        },
                         reference: Some(reference),
                     });
                 }

@@ -59,7 +59,11 @@ fn run(args: &Args) -> Result<CommandResult> {
                     };
                     for relocation in &object.metadata.relocations {
                         if relocation.object == index
-                            && relocation.kind == hmi_artifact::RelocationKind::ImageId
+                            && matches!(
+                                relocation.kind,
+                                hmi_artifact::RelocationKind::ImageId
+                                    | hmi_artifact::RelocationKind::FontId
+                            )
                         {
                             properties[&relocation.property] =
                                 serde_json::json!(relocation.reference);
