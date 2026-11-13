@@ -5,9 +5,54 @@
       {
         "control": "slider",
         "property": "psta",
-        "constraint": { "kind": "range", "min": 0, "max": 1 }
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 1
+        }
       }
     ]
   },
-  "profiles": {}
+  "profiles": {},
+  "control_support": {
+    "series": {
+      "t0": [
+        {
+          "control": "switch",
+          "supported": false
+        },
+        {
+          "control": "combo_box",
+          "supported": false
+        },
+        {
+          "control": "text_select",
+          "supported": false
+        },
+        {
+          "control": "sliding_text",
+          "supported": false
+        }
+      ],
+      "k0": [
+        {
+          "control": "switch",
+          "supported": false
+        },
+        {
+          "control": "combo_box",
+          "supported": false
+        },
+        {
+          "control": "text_select",
+          "supported": false
+        },
+        {
+          "control": "sliding_text",
+          "supported": false
+        }
+      ]
+    },
+    "profiles": {}
+  }
 }

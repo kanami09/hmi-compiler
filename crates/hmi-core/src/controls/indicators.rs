@@ -73,6 +73,7 @@ pub(super) const CHECKBOX: Definition = Definition {
     properties: &CHECKBOX_PROPERTIES,
     fields: &CHECKBOX_FIELDS,
     events: &["down", "up"],
+    readonly_properties: &[],
 };
 pub(super) const RADIO: Definition = Definition {
     name: "radio",
@@ -80,6 +81,7 @@ pub(super) const RADIO: Definition = Definition {
     properties: &RADIO_PROPERTIES,
     fields: &RADIO_FIELDS,
     events: &["down", "up"],
+    readonly_properties: &[],
 };
 pub(super) const PROGRESS: Definition = Definition {
     name: "progress_bar",
@@ -87,4 +89,5 @@ pub(super) const PROGRESS: Definition = Definition {
     properties: &PROGRESS_PROPERTIES,
     fields: &PROGRESS_FIELDS,
     events: &["down", "up"],
+    readonly_properties: &[],
 };

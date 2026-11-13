@@ -1,6 +1,6 @@
 # 新工具链使用说明
 
-当前可从零新建工程，使用下表列出的 19 类控件，编译页面、控件事件和全局代码，再链接为 HMI。媒体支持 ZI 字库方向适配，以及 K/T 配置下的 RGB565 图片。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，使用下表列出的 23 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持 ZI 字库方向适配，以及 K/T 配置下的 RGB565 图片。构建过程不需要已有 HMI 或逆向资料。
 
 当前支持的型号和方向见根目录 `data/profiles/README.md`。X 系列图片编码、其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
@@ -107,6 +107,10 @@ events = { timer = "events/tm0.timer.s" }
 | gauge（指针） | x/y/w/h 必填；val 为 0～360，尖长／尾长为有符号整数；当前 sta=1 | down、up |
 | waveform（波形） | x/y/w/h 必填；ch 为 1～4，支持方向、网格、通道颜色和缩放；当前 sta=1 | down、up |
 | qrcode（二维码） | x/y/w/h、txt 必填；txt_maxl 为 0～192；当前 sta=0，无中心 LOGO | down、up |
+| switch（状态开关） | x/y/w/h、font 引用表必填；val 为 0／1，dez 为方向；当前仅 X543 | down、up |
+| combo_box（下拉框） | x/y/w/h、font 引用表必填；path 是选项集合，txt 是独立保存的文本；当前仅 X543 | down、up |
+| text_select（选择文本） | x/y/w/h、font 引用表必填；path 是选项集合，val 为 u32，txt 只读；当前仅 X543 | down、up |
+| sliding_text（滑动文本） | x/y/w/h、font 引用表、txt 必填；maxval_y 只读，当前仅 X543 | down、up |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -416,3 +420,60 @@ python examples/prepare_graphics_acceptance.py
 ```
 
 脚本无需媒体素材，生成 K035、X543 的 0° 工程，每份含 gauge、wave、qrcode、qrcode2 四页，并实际执行 6 条独立命令比较输出。它核对负尾长的有符号属性显示、二维码文本及空资产构建；结果和说明在 `target/acceptance-graphics/`，已有目录不会覆盖，可另用 --output。脚本不读取已有 HMI、字库或内部资料。
+
+## X 系列交互控件
+
+本批四类控件按官方系列说明开放于 X543，T0、K0 已记录为不支持。限制位于通用型号配置的 control_support 中，编译器不为每个类型单独判断型号。四类都支持 vscope、sendkey，默认均为 0；字体引用使用 ref／id 表，当前需要有效字体资产。
+
+```toml
+[[objects]]
+name = "sw0"
+type = "switch"
+properties = { x = 20, y = 20, w = 320, h = 88, font = { ref = "ui" }, txt = "0/1", val = 0 }
+
+[[objects]]
+name = "cb0"
+type = "combo_box"
+properties = { x = 20, y = 20, w = 300, h = 84, font = { ref = "ui" }, path = "A\nB\nC", path_m = 64, txt = "LABEL", val = 1 }
+
+[[objects]]
+name = "select0"
+type = "text_select"
+properties = { x = 20, y = 20, w = 300, h = 232, font = { ref = "ui" }, path = "A\nB\nC", path_m = 64, val = 1 }
+
+[[objects]]
+name = "slt0"
+type = "sliding_text"
+properties = { x = 20, y = 20, w = 440, h = 232, font = { ref = "ui" }, txt = "A\nB\nC\nD", txt_maxl = 64, path_m = 0 }
+```
+
+这些条目用于分别演示四页配置。path 在下拉框／选择文本中表示选项文本，每行一项，不是本机文件路径；滑动文本的正文使用 txt。可以写 TOML 转义换行，也可以使用多行字符串。LF 和 CRLF 均统一保存为原生 CRLF；空行和末尾换行保留，容量按转换后的 UTF-8 字节数检查，单独的 CR 报错。
+
+状态开关的 val 为 0／1，dez 为 0 横向／1 竖向，默认均为 0；txt 默认为空，可以使用如 0/1 的两段标签，txt_maxl 默认 24、允许 0～24。dis 为 0～100、默认 100。状态 0 的 bco/pco 默认 50712／65535，状态 1 的 bco2/pco2 默认 1024／65535；文字色 pco1 默认 0。颜色均为 RGB565 的 0～65535。
+
+下拉框、选择文本和滑动文本当前仅支持单色背景 sta=1、默认白底黑字，边框默认颜色 0、宽度 2；下拉框／滑动文本的 style 为 0～4，选择文本为 0～1，默认均为 0。
+
+| 下拉框属性 | 默认值与范围 |
+|---|---|
+| path、path_m | 选项集合默认空，容量默认 64，范围 0～65535 字节 |
+| txt、txt_maxl | 独立保存的文本默认空，容量默认 16，范围 0～65535 字节 |
+| val | 初始选择值，0～255、默认 0，不在编译时据此重写 txt |
+| dir、qty | 展开方向 0 上／1 下／2 左／3 右，默认 1；展开数量 1～254，默认 2 |
+| hig、down | 单元格高／宽 16～255，默认 72；展开状态 0 收缩／1 展开，默认 0 |
+| up、pco3 | 箭头显示 0／1，默认 1；箭头颜色默认 42292 |
+| bco1、pco1、bco2、pco2 | 普通单元格背景／字体默认 65535／0，选中背景／字体默认 31／65535 |
+| mode、wid | 滑动标识类型 0～2、默认 2；标识高／宽 8～255、默认 12 |
+| vvs0、vvs1 | 单元格间距、标识间距，0～255，默认 8／2 |
+| ch、dis | 滑动惯性 0～32、默认 8；圆角比例 0～100、默认 25 |
+
+下拉框还支持 xcen/ycen（0～2、默认 1）和 spax（0～255、默认 0）。drastate 固定初始化为零，未作为输入。用户可以明确设置 txt，但运行时如何随 val 更新由控件处理；构建过程不会强行把示例 LABEL 改成 B。
+
+选择文本的 path/path_m 同样是集合和容量，默认空／64。val 按四字节 u32 保存，范围 0～4294967295；不把它误作下拉框的一字节值。txt 是运行时只读结果，当前原生缓存初始化为空、txt_maxl 保留 255，不接受这两个源码属性；也不根据 val 预先填入某项文字。选择索引在运行时的具体行为另行核对。
+
+选择文本的 hig 为 16～255、默认 72；dis 为选中项横线开关 0／1、默认 1，pco1 为横线色、默认 31；pco2 为选中字体色、默认 63488。ch 为 0～32、默认 8，spax 为 0～255、默认 0。
+
+滑动文本的 txt 必填，txt_maxl 默认 64、范围 0～65535；path_m 表示行缓冲容量，默认 0 自动取 txt_maxl，按每行两个字节计算可用行数。文本行数不能超过此容量的一半；这里不是选项集合的长度。原生 path 保持为空，不把正文复制进去。
+
+滑动文本支持 xcen（0～2、默认 0）、left（0 隐藏／1 操作时显示／2 始终显示进度条，默认 1）、ch（0～32、默认 8）、isbr（0／1、默认 0）、spax/spay（0～255、默认 0）。maxval_y 由运行时计算、只读；val_y 可在脚本中设置，本批在文件中初始化为零，不开放初始位置输入。leftshow 初始化为零。
+
+只读规则由控件注册表声明，触摸捕捉 val、选择文本 txt、滑动文本 maxval_y 共用静态赋值检查；读取和比较可用。检查范围仍以本工具已支持的静态引用形式为限。

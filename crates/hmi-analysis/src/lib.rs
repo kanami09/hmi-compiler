@@ -392,12 +392,20 @@ impl Checker<'_> {
             );
             return;
         };
-        if self.check_modes && object.type_code == 5 && field == Some("val") && write {
+        if self.check_modes
+            && write
+            && field.is_some_and(|field| {
+                hmi_core::controls::by_code(object.type_code)
+                    .is_ok_and(|d| d.readonly_properties.contains(&field))
+            })
+        {
             self.warn(
                 "script_readonly",
                 format!(
-                    "{}.{}.val 是触摸捕捉结果，只能读取，不能赋值",
-                    page.name, object.name
+                    "{}.{}.{} 是只读属性，不能赋值",
+                    page.name,
+                    object.name,
+                    field.unwrap()
                 ),
                 line,
             );

@@ -17,6 +17,7 @@ mod graphics;
 mod indicators;
 mod interaction;
 mod numeric;
+mod x_interaction;
 
 pub const PAGE_EVENTS: &[&str] = &["load", "loadend", "down", "up", "unload"];
 
@@ -26,7 +27,9 @@ pub enum Storage {
     U16,
     I16,
     I32,
+    U32,
     Text,
+    Lines,
     Image,
     Font,
 }
@@ -72,6 +75,8 @@ pub struct Definition {
     pub properties: &'static [Property],
     pub fields: &'static [Field],
     pub events: &'static [&'static str],
+    /// 原生只读属性仍可作为脚本输入，但不能成为静态赋值目标。
+    pub readonly_properties: &'static [&'static str],
 }
 
 const fn integer(
@@ -324,6 +329,10 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    x_interaction::SWITCH,
+    x_interaction::COMBO_BOX,
+    x_interaction::TEXT_SELECT,
+    x_interaction::SLIDING_TEXT,
     graphics::GAUGE,
     graphics::WAVEFORM,
     graphics::QRCODE,
@@ -342,6 +351,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: &TEXT_PROPERTIES,
         fields: &TEXT_FIELDS,
         events: &["down", "up"],
+        readonly_properties: &[],
     },
     Definition {
         name: "button",
@@ -349,6 +359,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: &BUTTON_PROPERTIES,
         fields: &BUTTON_FIELDS,
         events: &["down", "up"],
+        readonly_properties: &[],
     },
     Definition {
         name: "hotspot",
@@ -356,6 +367,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: HOTSPOT_PROPERTIES,
         fields: HOTSPOT_FIELDS,
         events: &["down", "up"],
+        readonly_properties: &[],
     },
     Definition {
         name: "variable",
@@ -363,6 +375,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: VARIABLE_PROPERTIES,
         fields: VARIABLE_FIELDS,
         events: &[],
+        readonly_properties: &[],
     },
     Definition {
         name: "timer",
@@ -370,6 +383,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: TIMER_PROPERTIES,
         fields: TIMER_FIELDS,
         events: &["timer"],
+        readonly_properties: &[],
     },
     Definition {
         name: "picture",
@@ -377,6 +391,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: PICTURE_PROPERTIES,
         fields: &PICTURE_FIELDS,
         events: &["down", "up"],
+        readonly_properties: &[],
     },
     Definition {
         name: "crop",
@@ -384,6 +399,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: CROP_PROPERTIES,
         fields: &CROP_FIELDS,
         events: &["down", "up"],
+        readonly_properties: &[],
     },
 ];
 
@@ -426,8 +442,8 @@ fn property_error(code: &str, property: &str, message: impl Into<String>) -> cra
 
 impl Property {
     fn encode(&self, value: &toml::Value) -> Result<Vec<u8>> {
-        if matches!(self.storage, Storage::Text) {
-            return value
+        if matches!(self.storage, Storage::Text | Storage::Lines) {
+            let bytes = value
                 .as_str()
                 .filter(|s| !s.contains('\0'))
                 .map(|s| s.as_bytes().to_vec())
@@ -437,7 +453,20 @@ impl Property {
                         self.name,
                         format!("属性 {} 必须为不含 NUL 的字符串", self.name),
                     )
-                });
+                })?;
+            if matches!(self.storage, Storage::Lines) {
+                let text = std::str::from_utf8(&bytes).unwrap();
+                let lf = text.replace("\r\n", "\n");
+                if lf.contains('\r') {
+                    return Err(property_error(
+                        "property_text",
+                        self.name,
+                        "多行文本请使用 LF 或 CRLF 换行",
+                    ));
+                }
+                return Ok(lf.replace('\n', "\r\n").into_bytes());
+            }
+            return Ok(bytes);
         }
         let number = value.as_integer().ok_or_else(|| {
             property_error(
@@ -461,7 +490,8 @@ impl Property {
             Storage::U16 | Storage::Image => (number as u16).to_le_bytes().to_vec(),
             Storage::I16 => (number as i16).to_le_bytes().to_vec(),
             Storage::I32 => (number as i32).to_le_bytes().to_vec(),
-            Storage::Text => unreachable!(),
+            Storage::U32 => (number as u32).to_le_bytes().to_vec(),
+            Storage::Text | Storage::Lines => unreachable!(),
         })
     }
 
@@ -489,7 +519,10 @@ impl Property {
             Storage::I32 => toml::Value::Integer(i64::from(i32::from_le_bytes(
                 bytes.try_into().map_err(|_| invalid())?,
             ))),
-            Storage::Text => {
+            Storage::U32 => toml::Value::Integer(i64::from(u32::from_le_bytes(
+                bytes.try_into().map_err(|_| invalid())?,
+            ))),
+            Storage::Text | Storage::Lines => {
                 toml::Value::String(std::str::from_utf8(bytes).map_err(|_| invalid())?.into())
             }
         })
@@ -534,7 +567,7 @@ impl Definition {
             };
             values.insert(property.name, property.encode(value)?);
         }
-        if matches!(self.code, 52 | 53 | 55 | 58 | 116 | 98) {
+        if matches!(self.code, 52 | 53 | 55 | 58 | 61 | 62 | 67 | 116 | 98) {
             let capacity =
                 u16::from_le_bytes(values["txt_maxl"].as_slice().try_into().unwrap()) as usize;
             if values["txt"].len() > capacity {
@@ -545,6 +578,39 @@ impl Definition {
                         "UTF-8 文本占用 {} 字节，超过 txt_maxl 的 {capacity} 字节容量",
                         values["txt"].len()
                     ),
+                ));
+            }
+        }
+        if matches!(self.code, 61 | 68) {
+            let capacity =
+                u16::from_le_bytes(values["path_m"].as_slice().try_into().unwrap()) as usize;
+            if values["path"].len() > capacity {
+                return Err(property_error(
+                    "text_capacity",
+                    "path",
+                    format!(
+                        "选项集合占用 {} 个 UTF-8 字节，超过 path_m 的 {capacity} 字节容量",
+                        values["path"].len()
+                    ),
+                ));
+            }
+        }
+        if self.code == 62 {
+            let buffer =
+                u16::from_le_bytes(values["path_m"].as_slice().try_into().unwrap()) as usize;
+            let capacity =
+                u16::from_le_bytes(values["txt_maxl"].as_slice().try_into().unwrap()) as usize;
+            let rows = if values["txt"].is_empty() {
+                0
+            } else {
+                values["txt"].iter().filter(|&&b| b == b'\n').count() + 1
+            };
+            let max_rows = (if buffer == 0 { capacity } else { buffer }) / 2;
+            if rows > max_rows {
+                return Err(property_error(
+                    "text_capacity",
+                    "path_m",
+                    format!("滑动文本包含 {rows} 行，当前缓冲区最多支持 {max_rows} 行"),
                 ));
             }
         }

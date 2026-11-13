@@ -96,15 +96,14 @@ impl Target {
         } else {
             (base_width, base_height)
         };
-        let (control_property_constraints, constraints_fingerprint) =
-            constraints::resolve(series, &config.profile)?;
+        let rules = constraints::resolve(series, &config.profile)?;
         let signature = format!(
-            "page-ver21234-10:{}:{}:{width}:{height}:{}:{}:{}",
+            "page-ver21234-11:{}:{}:{width}:{height}:{}:{}:{}",
             config.profile,
             config.orientation,
             sha256(DEFAULT_PROGRAM.as_bytes()),
             crate::controls::fingerprint(),
-            constraints_fingerprint
+            rules.fingerprint
         );
         Ok(Self {
             schema: "hmi.target/1".into(),
@@ -118,6 +117,7 @@ impl Target {
                 media_assets: true,
                 control_types: crate::controls::DEFINITIONS
                     .iter()
+                    .filter(|d| rules.control_support.get(d.name).copied().unwrap_or(true))
                     .filter(|d| config.profile != "TJC4827X543_011" || !matches!(d.code, 112 | 113))
                     .map(|d| d.name.into())
                     .collect(),
@@ -127,9 +127,9 @@ impl Target {
                     vec!["rgb565".into()]
                 },
                 font_versions: vec![6],
-                control_property_constraints,
+                control_property_constraints: rules.property_constraints,
             },
-            data_revision: 10,
+            data_revision: 11,
             profile_data_sha256: sha256(signature.as_bytes()),
         })
     }

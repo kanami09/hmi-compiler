@@ -148,6 +148,7 @@ pub(super) const GAUGE: Definition = Definition {
     properties: &GAUGE_PROPERTIES,
     fields: &GAUGE_FIELDS,
     events: &["down", "up"],
+    readonly_properties: &[],
 };
 pub(super) const WAVEFORM: Definition = Definition {
     name: "waveform",
@@ -155,6 +156,7 @@ pub(super) const WAVEFORM: Definition = Definition {
     properties: &WAVE_PROPERTIES,
     fields: &WAVE_FIELDS,
     events: &["down", "up"],
+    readonly_properties: &[],
 };
 pub(super) const QRCODE: Definition = Definition {
     name: "qrcode",
@@ -162,4 +164,5 @@ pub(super) const QRCODE: Definition = Definition {
     properties: &QR_PROPERTIES,
     fields: &QR_FIELDS,
     events: &["down", "up"],
+    readonly_properties: &[],
 };

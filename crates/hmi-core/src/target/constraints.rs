@@ -34,6 +34,30 @@ struct RuleSet {
     series: BTreeMap<String, Vec<ControlPropertyConstraint>>,
     #[serde(default)]
     profiles: BTreeMap<String, Vec<ControlPropertyConstraint>>,
+    #[serde(default)]
+    control_support: ControlSupportTable,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlSupport {
+    control: String,
+    supported: bool,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ControlSupportTable {
+    #[serde(default)]
+    series: BTreeMap<String, Vec<ControlSupport>>,
+    #[serde(default)]
+    profiles: BTreeMap<String, Vec<ControlSupport>>,
+}
+
+pub(super) struct ResolvedRules {
+    pub property_constraints: Vec<ControlPropertyConstraint>,
+    pub control_support: BTreeMap<String, bool>,
+    pub fingerprint: String,
 }
 
 impl ControlPropertyConstraint {
@@ -61,6 +85,7 @@ impl ControlPropertyConstraint {
                 | controls::Storage::U16
                 | controls::Storage::I16
                 | controls::Storage::I32
+                | controls::Storage::U32
         ) {
             return Err(error(
                 "target_rules",
@@ -137,7 +162,7 @@ impl ControlPropertyConstraint {
 impl RuleSet {
     fn validate(&self) -> Result<()> {
         check_schema(&self.schema, "hmi.control-constraints/1")?;
-        for key in self.series.keys() {
+        for key in self.series.keys().chain(self.control_support.series.keys()) {
             if !["t0", "k0", "x5"].contains(&key.as_str()) {
                 return Err(error(
                     "target_rules",
@@ -145,7 +170,11 @@ impl RuleSet {
                 ));
             }
         }
-        for key in self.profiles.keys() {
+        for key in self
+            .profiles
+            .keys()
+            .chain(self.control_support.profiles.keys())
+        {
             if !super::PROFILES.contains(&key.as_str()) {
                 return Err(error(
                     "target_rules",
@@ -161,6 +190,23 @@ impl RuleSet {
                     return Err(error(
                         "target_rules",
                         "同一系列或型号重复声明了控件属性约束",
+                    ));
+                }
+            }
+        }
+        for entries in self
+            .control_support
+            .series
+            .values()
+            .chain(self.control_support.profiles.values())
+        {
+            let mut seen = BTreeSet::new();
+            for entry in entries {
+                controls::by_name(&entry.control)?;
+                if !seen.insert(&entry.control) {
+                    return Err(error(
+                        "target_rules",
+                        "同一系列或型号重复声明了控件支持状态",
                     ));
                 }
             }
@@ -182,18 +228,40 @@ impl RuleSet {
         }
         merged.into_values().collect()
     }
+
+    fn resolve_control_support(&self, series: &str, profile: &str) -> BTreeMap<String, bool> {
+        let mut merged = BTreeMap::new();
+        for entry in self
+            .control_support
+            .series
+            .get(series)
+            .into_iter()
+            .flatten()
+            .chain(
+                self.control_support
+                    .profiles
+                    .get(profile)
+                    .into_iter()
+                    .flatten(),
+            )
+        {
+            merged.insert(entry.control.clone(), entry.supported);
+        }
+        merged
+    }
 }
 
-pub(super) fn resolve(
-    series: &str,
-    profile: &str,
-) -> Result<(Vec<ControlPropertyConstraint>, String)> {
+pub(super) fn resolve(series: &str, profile: &str) -> Result<ResolvedRules> {
     let data: RuleSet = serde_json::from_str(DATA)
         .map_err(|e| error("target_rules", format!("内置型号约束数据无效：{e}")))?;
     data.validate()?;
     // 对解析后的数据计算摘要，避免 CRLF／LF 或排版差异改变目标身份。
     let fingerprint = crate::sha256(&crate::file::json(&data)?);
-    Ok((data.resolve(series, profile), fingerprint))
+    Ok(ResolvedRules {
+        property_constraints: data.resolve(series, profile),
+        control_support: data.resolve_control_support(series, profile),
+        fingerprint,
+    })
 }
 
 pub(super) fn check(
@@ -215,8 +283,8 @@ mod tests {
 
     #[test]
     fn defaults_are_unrestricted_and_profile_rules_override_series_by_property() {
-        let (defaults, _) = resolve("t0", "TJC4832T035_011").unwrap();
-        assert!(defaults.is_empty());
+        let defaults = resolve("t0", "TJC4832T035_011").unwrap();
+        assert!(defaults.property_constraints.is_empty());
         let mut data: RuleSet = serde_json::from_str(DATA).unwrap();
         let replacement = ControlPropertyConstraint {
             control: "slider".into(),
@@ -237,6 +305,40 @@ mod tests {
         assert_eq!(merged, vec![replacement, extra]);
         assert_eq!(data.resolve("t0", "TJC3224T028_011"), vec![]);
         assert_eq!(data.resolve("k0", "other").len(), 1);
+    }
+
+    #[test]
+    fn control_support_defaults_and_profile_overrides_are_data_driven() {
+        let mut data: RuleSet = serde_json::from_str(DATA).unwrap();
+        assert_eq!(
+            data.resolve_control_support("k0", "TJC4832K035_011")
+                .get("switch"),
+            Some(&false)
+        );
+        assert!(
+            data.resolve_control_support("x5", "TJC4827X543_011")
+                .is_empty()
+        );
+        data.control_support.profiles.insert(
+            "TJC4832K035_011".into(),
+            vec![ControlSupport {
+                control: "switch".into(),
+                supported: true,
+            }],
+        );
+        data.validate().unwrap();
+        let merged = data.resolve_control_support("k0", "TJC4832K035_011");
+        assert_eq!(merged.get("switch"), Some(&true));
+        assert_eq!(merged.get("combo_box"), Some(&false));
+        data.control_support
+            .profiles
+            .get_mut("TJC4832K035_011")
+            .unwrap()
+            .push(ControlSupport {
+                control: "switch".into(),
+                supported: false,
+            });
+        assert!(data.validate().is_err());
     }
 
     #[test]
