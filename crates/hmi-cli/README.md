@@ -477,3 +477,12 @@ properties = { x = 20, y = 20, w = 440, h = 232, font = { ref = "ui" }, txt = "A
 滑动文本支持 xcen（0～2、默认 0）、left（0 隐藏／1 操作时显示／2 始终显示进度条，默认 1）、ch（0～32、默认 8）、isbr（0／1、默认 0）、spax/spay（0～255、默认 0）。maxval_y 由运行时计算、只读；val_y 可在脚本中设置，本批在文件中初始化为零，不开放初始位置输入。leftshow 初始化为零。
 
 只读规则由控件注册表声明，触摸捕捉 val、选择文本 txt、滑动文本 maxval_y 共用静态赋值检查；读取和比较可用。检查范围仍以本工具已支持的静态引用形式为限。
+
+生成本批两份状态对照工程：
+
+```powershell
+cargo build --workspace --bins --locked
+python examples/prepare_x_interaction_acceptance.py --font path/to/ui.zi
+```
+
+字库须覆盖示例 ASCII 字符，建议字高 68。脚本生成两份 X543、0° 工程，各含 switches、combo、select、sltext 四页；三类选择值分别为 0／1，滑动文本末行分别为 D／EE。下拉框的 txt 明确设为 INIT 并保留，不因 val 自动改写。每份执行 7 条独立命令比较输出。结果和说明位于 `target/acceptance-x-interaction/`；已有目录不会覆盖，可另用 --output。脚本只读取独立 ZI，不读取已有 HMI 或内部资料。
