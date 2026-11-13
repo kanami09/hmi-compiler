@@ -1,8 +1,8 @@
-# 新工具链：基础控件
+# 新工具链：基础控件与图片
 
-当前可从零新建工程，添加热区、变量和定时器，编译页面、控件事件和全局代码，再链接为 HMI。构建过程不需要已有 HMI、逆向资料或媒体工具。
+当前可从零新建工程，添加热区、变量、定时器，以及 K/T 配置下的图片和切图，编译页面、控件事件和全局代码，再链接为 HMI。构建过程不需要已有 HMI 或逆向资料。
 
-当前支持的型号和方向见根目录 `data/profiles/README.md`。其他控件、媒体资产、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
+当前支持的型号和方向见根目录 `data/profiles/README.md`。X 系列图片编码、其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
 四个内置型号均可通过 `init --orientation 0/90/180/270` 选择工程方向。新建页面会使用该方向对应的尺寸；方向字段和页面几何分别写入 HMI。
 
@@ -91,6 +91,8 @@ events = { timer = "events/tm0.timer.s" }
 | hotspot（热区） | x/y/w/h 必填；位置为 0～65535，尺寸为 1～65535，端点不能超过 65535；vscope 默认 0，sendkey 默认 0 | down、up |
 | variable（变量） | sta 默认 0：0 数值、1 字符串；val 默认为 0，范围为 i32；txt 默认为 newtxt，txt_maxl 默认为 10；vscope 默认 0 | 无 |
 | timer（定时器） | tim 默认 400，范围为 50～65534 毫秒；en 默认 1；vscope 默认 0 | timer |
+| picture（图片） | x/y/w/h 必填；pic 为图片引用表；vscope、sendkey 默认 0 | down、up |
+| crop（切图） | x/y/w/h 必填；picc 须引用与当前页面同尺寸的全屏图片，取图区域不得越界；vscope、sendkey 默认 0 | down、up |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -111,7 +113,8 @@ vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不
 - `hmi-compile program` 编译全局代码。
 - `hmi-compile page` 编译单个页面。
 - `hmi-compile inspect` 检查 `.hmo` 描述、版本和摘要。
-- `hmi-link` 仅使用链接描述、target.json 和 `.hmo`，不依赖源码。
+- `hmi-media probe/encode/inspect` 探测、编码和检查图片资产，详见 [图片编码器](../hmi-media/README.md)。
+- `hmi-link` 仅使用链接描述、target.json、`.hmo` 和 `.hma`，不依赖源码。
 - `hmi-link --check` 在内存中生成并校验 HMI，不写输出文件。
 
 统一入口在 `.build/hmi-toolchain` 保存相同的目标文件和链接描述，可用独立链接器再次链接。此目录尚未用作增量缓存，也未提供多进程构建调度。
@@ -138,3 +141,34 @@ python examples/prepare_controls_acceptance.py
 ```
 
 结果位于 `target/acceptance-basic-controls/`，该目录的 README.md 列出页面、控件、事件及核对步骤。脚本使用 Python 标准库，不读取已有 HMI 或内部资料；已有验收目录不会覆盖，重新生成时可用 `--output` 指定新目录。
+
+## 图片资产与引用
+
+工程清单使用有序的资产条目：
+
+```toml
+[assets]
+items = [
+    { key = "background", source = "assets/background.asset.toml" },
+    { key = "logo", source = "assets/logo.asset.toml" },
+]
+```
+
+每个描述指向原图及编码参数；单个资产生成一个 `.hma`，其中运行图片和编辑源只占一个逻辑图片 ID。未引用资产仍保留，不根据内容相同自动合并。输入按文件签名识别，BMP、PNG、JPG 都可用于当前 K/T RGB565 路线。
+
+控件属性使用 `pic = { ref = "logo" }` 或 `picc = { ref = "background" }`。也可显式写 `{ id = 0 }` 表示最终图片列表中的第 0 项；不能直接写裸整数，图片和切图不接受空图片。
+
+资源符号按当前清单解析。重排资产时，ref 仍绑定当前同名资产，id 则继续表示最终数值位置；脚本不自动改写。资源 ID 在链接时填写，编译器不读取原图以补全控件属性。
+
+图片编码尺寸由资产参数决定，控件 w/h 不会隐式缩放共享资源。当前不推断普通图片控件在所有型号上的显示缩放行为；需要两份不同编码尺寸时，分别声明资产。切图使用全屏资源的对应区域，不是把整图缩小。
+
+`check` 使用图片探测信息检查最终引用、几何和脚本，不生成 `.hma` 或 HMI；`build` 实际编码，并在输入与探测结果一致后完成链接。计划增加 hmi-media 作业，独立链接可以在删除原图后执行。
+
+生成 0°／90° 图片验收工程：
+
+```powershell
+cargo build --workspace --bins --locked
+python examples/prepare_pictures_acceptance.py
+```
+
+结果在 `target/acceptance-pictures/`。脚本生成标准 BMP 和透明 PNG，验证去透明、缩放、图片与切图引用，并实际执行导出的独立命令比较输出；不会覆盖已有验收目录。
