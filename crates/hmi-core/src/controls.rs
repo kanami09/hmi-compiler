@@ -14,6 +14,7 @@ use serde::Serialize;
 use std::collections::BTreeMap;
 
 mod indicators;
+mod interaction;
 mod numeric;
 
 pub const PAGE_EVENTS: &[&str] = &["load", "loadend", "down", "up", "unload"];
@@ -321,6 +322,10 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    interaction::SLIDER,
+    interaction::TOUCH_CAPTURE,
+    interaction::DUAL_STATE_BUTTON,
+    interaction::SCROLL_TEXT,
     numeric::NUMBER,
     numeric::XFLOAT,
     indicators::CHECKBOX,
@@ -520,7 +525,7 @@ impl Definition {
             };
             values.insert(property.name, property.encode(value)?);
         }
-        if matches!(self.code, 52 | 116 | 98) {
+        if matches!(self.code, 52 | 53 | 55 | 116 | 98) {
             let capacity =
                 u16::from_le_bytes(values["txt_maxl"].as_slice().try_into().unwrap()) as usize;
             if values["txt"].len() > capacity {
@@ -533,6 +538,25 @@ impl Definition {
                     ),
                 ));
             }
+        }
+        if self.code == 1 {
+            if values["psta"] == [1] {
+                return Err(property_error(
+                    "property_mode",
+                    "psta",
+                    "当前滑块支持单色游标，图片游标尚未接入",
+                ));
+            }
+            let min = u16::from_le_bytes(values["minval"].as_slice().try_into().unwrap());
+            let max = u16::from_le_bytes(values["maxval"].as_slice().try_into().unwrap());
+            if min > max {
+                return Err(property_error(
+                    "slider_range",
+                    "minval",
+                    format!("滑块 minval={min} 大于 maxval={max}"),
+                ));
+            }
+            // 原生范围仅限制滑动，不限制显式赋值，不能据此拒绝范围外的初始 val。
         }
         if self.code == 98 && !matches!(values["style"].as_slice(), [1] | [4]) {
             return Err(property_error(

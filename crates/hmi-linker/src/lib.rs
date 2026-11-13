@@ -43,8 +43,15 @@ fn assemble_page(
         .as_deref()
         .ok_or_else(|| error("page_name", "页面目标缺少名称"))?;
     let mut parsed = Vec::new();
+    let mut touch_capture = false;
     for (index, record) in layout.objects.iter().enumerate() {
         let current = Object::parse(object.record(index)?)?;
+        if current.type_code == 5 && std::mem::replace(&mut touch_capture, true) {
+            return Err(error(
+                "control_count",
+                format!("页面 {name} 最多支持一个触摸捕捉控件"),
+            ));
+        }
         if current.name != record.name || current.type_code != record.type_code || current.id != 0 {
             return Err(error(
                 "object_record",
@@ -426,6 +433,7 @@ fn layout(
                 | "script_object"
                 | "script_property"
                 | "script_property_mode"
+                | "script_readonly"
                 | "script_scope"
                 | "property_resource"
                 | "script_facts"

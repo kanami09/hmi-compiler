@@ -301,6 +301,24 @@ fn bracket(tokens: &[Token], start: usize) -> Option<(&[Token], usize)> {
     None
 }
 
+/// 判断属性后是否为直接写入运算；比较表达式中的 == 不属于赋值。
+/// 控件方法或指令的输出参数仍需各自的语法规则，不能仅凭出现引用判定写入。
+fn writes_property(tokens: &[Token], after: usize, line: usize) -> bool {
+    let Some(first) = tokens.get(after).filter(|t| t.line == line) else {
+        return false;
+    };
+    let second = tokens
+        .get(after + 1)
+        .filter(|t| t.line == line)
+        .map(|t| t.text.as_str());
+    match first.text.as_str() {
+        "=" => second != Some("="),
+        "+" | "-" => second == Some("=") || second == Some(first.text.as_str()),
+        "*" | "/" | "%" | "&" | "|" | "^" => second == Some("="),
+        _ => false,
+    }
+}
+
 fn number(tokens: &[Token]) -> Option<i64> {
     match tokens {
         [token] => token
@@ -346,7 +364,14 @@ impl Checker<'_> {
             }));
     }
 
-    fn reference(&mut self, page_id: usize, object_id: usize, field: Option<&str>, line: usize) {
+    fn reference(
+        &mut self,
+        page_id: usize,
+        object_id: usize,
+        field: Option<&str>,
+        line: usize,
+        write: bool,
+    ) {
         let Some(page) = self.project.pages.get(page_id) else {
             self.warn("script_page", format!("页面 ID {page_id} 不存在"), line);
             return;
@@ -367,6 +392,16 @@ impl Checker<'_> {
             );
             return;
         };
+        if self.check_modes && object.type_code == 5 && field == Some("val") && write {
+            self.warn(
+                "script_readonly",
+                format!(
+                    "{}.{}.val 是触摸捕捉结果，只能读取，不能赋值",
+                    page.name, object.name
+                ),
+                line,
+            );
+        }
         if let Some(field) = field
             && object.attribute(field).is_none()
         {
@@ -402,7 +437,14 @@ impl Checker<'_> {
         }
     }
 
-    fn named(&mut self, page_name: Option<&str>, object_name: &str, field: &str, line: usize) {
+    fn named(
+        &mut self,
+        page_name: Option<&str>,
+        object_name: &str,
+        field: &str,
+        line: usize,
+        write: bool,
+    ) {
         let page_id = if let Some(name) = page_name {
             match self.project.pages.iter().position(|p| p.name == name) {
                 Some(i) => i,
@@ -423,7 +465,7 @@ impl Checker<'_> {
         };
         let page = &self.project.pages[page_id];
         if let Some(i) = page.objects.iter().position(|o| o.name == object_name) {
-            self.reference(page_id, i, Some(field), line);
+            self.reference(page_id, i, Some(field), line, write);
         } else {
             self.warn(
                 "script_object",
@@ -448,7 +490,13 @@ impl Checker<'_> {
                     .filter(|t| t.text == ".")
                     .and_then(|_| tokens.get(end + 1))
                     .map(|t| t.text.as_str());
-                self.reference(page_id, object_id as usize, field, line);
+                self.reference(
+                    page_id,
+                    object_id as usize,
+                    field,
+                    line,
+                    writes_property(tokens, end + 2, line),
+                );
             }
         } else if object_id.is_none() {
             self.warn(
@@ -510,7 +558,7 @@ impl Checker<'_> {
             }
             if tokens.get(i + 1).is_some_and(|t| t.text == ".")
                 && tokens.get(i + 2).is_some()
-                && t.text.as_bytes()[0].is_ascii_alphabetic()
+                && (t.text.as_bytes()[0].is_ascii_alphabetic() || t.text.starts_with('_'))
             {
                 let second = &tokens[i + 2].text;
                 if second == "b" && tokens.get(i + 3).is_some_and(|t| t.text == "[") {
@@ -528,13 +576,25 @@ impl Checker<'_> {
                 if tokens.get(i + 3).is_some_and(|t| t.text == ".")
                     && let Some(field) = tokens.get(i + 4)
                 {
-                    self.named(Some(&t.text), second, &field.text, t.line);
+                    self.named(
+                        Some(&t.text),
+                        second,
+                        &field.text,
+                        t.line,
+                        writes_property(tokens, i + 5, t.line),
+                    );
                     i += 5;
                     continue;
                 }
                 // 方法调用属于控件 API，不将方法名误报为属性。
                 if !tokens.get(i + 3).is_some_and(|t| t.text == "(") {
-                    self.named(None, &t.text, second, t.line);
+                    self.named(
+                        None,
+                        &t.text,
+                        second,
+                        t.line,
+                        writes_property(tokens, i + 3, t.line),
+                    );
                 }
                 i += 3;
                 continue;

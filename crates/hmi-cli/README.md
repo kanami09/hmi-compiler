@@ -1,6 +1,6 @@
 # 新工具链使用说明
 
-当前可从零新建工程，添加热区、变量、定时器、单色文本和按钮、数字／虚拟浮点数、复选框／单选框、单色进度条，以及 K/T 配置下的图片和切图；支持 ZI 字库方向适配，编译页面、控件事件和全局代码，再链接为 HMI。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，使用下表列出的 16 类控件，编译页面、控件事件和全局代码，再链接为 HMI。媒体支持 ZI 字库方向适配，以及 K/T 配置下的 RGB565 图片。构建过程不需要已有 HMI 或逆向资料。
 
 当前支持的型号和方向见根目录 `data/profiles/README.md`。X 系列图片编码、其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
@@ -100,6 +100,10 @@ events = { timer = "events/tm0.timer.s" }
 | checkbox（复选框） | x/y/w/h 必填；val 为 0／1，可设颜色、style 和边框 | down、up |
 | radio（单选框） | x/y/w/h 必填；val 为 0／1，可设颜色；互斥逻辑由脚本实现 | down、up |
 | progress_bar（进度条） | x/y/w/h 必填；val 为 0～100；当前 sta=0；dez 为方向字段 | down、up |
+| slider（滑块） | x/y/w/h 必填；val/minval/maxval 为 u16；当前仅单色背景及单色游标 | down、up、slide |
+| dual_state_button（双态按钮） | x/y/w/h、font 引用表、txt 必填；val 为 0／1，当前 sta=1 | down、up |
+| scrolling_text（滚动文本） | x/y/w/h、font 引用表、txt 必填；可设滚动方向、幅度、周期和使能，当前 sta=1 | down、up |
+| touch_cap（触摸捕捉） | 仅 vscope 可设置；每页最多一个，无几何属性；val 为只读捕捉结果 | down、up |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -285,3 +289,56 @@ python examples/prepare_numeric_acceptance.py --font path/to/ui.zi
 ```
 
 字库须包含数字、负号和小数点，建议字高为 68。脚本复制该独立素材，生成 K035 和 X543 的 0° 工程，各有 numbers、choices、progress 三页，核对整数／小数显示、选择状态，以及两种进度方向。它还检查有符号目标属性和字体引用，并实际执行独立工具计划比较输出。结果及核对说明位于 `target/acceptance-numeric/`，已有目录不会覆盖，可另用 --output。脚本不读取已有 HMI 或内部资料，也不附带字库。
+
+## 滑块、双态按钮、滚动文本和触摸捕捉
+
+```toml
+[[objects]]
+name = "h0"
+type = "slider"
+properties = { x = 20, y = 20, w = 280, h = 40, minval = 0, maxval = 100, val = 40 }
+events = { slide = "events/h0.slide.s" }
+
+[[objects]]
+name = "bt0"
+type = "dual_state_button"
+properties = { x = 20, y = 80, w = 280, h = 70, font = { ref = "ui_font" }, txt = "ABC", val = 1 }
+
+[[objects]]
+name = "g0"
+type = "scrolling_text"
+properties = { x = 20, y = 160, w = 280, h = 70, font = { ref = "ui_font" }, txt = "SCROLL ABC 123", en = 0 }
+
+[[objects]]
+name = "tc0"
+type = "touch_cap"
+events = { up = "events/tc0.up.s" }
+```
+
+四类均支持 vscope，默认 0。滑块、双态按钮、滚动文本还支持 sendkey，默认 0。当前保持单色背景，不接受图片背景、图片游标或透明模式；原生记录中未启用的图片字段仍保留为空值。
+
+滑块的 mode 为 0 横向／1 竖向，默认 0；sta 当前为 1。val 默认为 0，minval/maxval 默认 0/100，三者范围均为 0～65535，且 minval 不能大于 maxval。官方说明中的 minval/maxval 只在滑动时限制 val，不能据此拒绝范围外的显式初始值，工具不会自动夹紧 val。
+
+| 滑块属性 | 默认值与范围 |
+|---|---|
+| psta | 默认 0；当前支持 0、2 两种单色游标，1 图片游标暂未接入 |
+| wid、hig | 默认 255，范围 0～255；255 表示自动，0 表示无游标 |
+| dis、ch | 默认 100、25，范围 0～100；分别为圆角比例、背景宽度比例 |
+| bco、bco1、pco | 默认 50712、1024、63488，范围 0～65535；分别为背景、前景和游标颜色 |
+
+psta=0 的实际外观有型号差异：此前 K035 预览为方形，X543 为圆形。工具保留相同字段和值，不在 K035 上自动改成其他模式，也不保证编辑器、模拟器和硬件表现完全相同。
+
+双态按钮的 val 为 0 弹起／1 按下，默认 0；原生双态状态由控件自身处理，不额外生成切换脚本。颜色、字体和容量与普通按钮相同，style 支持 0～4、默认 4。txt 必填，txt_maxl 默认 10，按 UTF-8 字节检查容量。
+
+滚动文本没有普通文本的 pw 字段。txt 必填，txt_maxl 默认 64；style 为 0～4、默认 0；默认左对齐 xcen=0、垂直居中 ycen=1，白底黑字。其余边框、间距、容量规则与文本相同。
+
+| 滚动属性 | 默认值与范围 |
+|---|---|
+| dir | 默认 1；0 左到右、1 右到左、2 上到下、3 下到上 |
+| dis | 默认 4，范围 2～50，单位像素；不同于进度条或滑块的同名属性 |
+| tim | 默认 80，范围 80～65534 毫秒；不能套用定时器控件的最小周期 |
+| en | 默认 1，0 关闭／1 开启 |
+
+滚动文本的四个 vvs 保留字段由工具初始化为零，未作为可编辑属性。静态画布是否滚动不用于判断 en 是否正确，属性和实际运行需要分别核对。
+
+触摸捕捉没有可见几何；val 是当前捕捉到的控件 ID，初始化为 0，不能在源码 properties 中设置。工具按官方建议限制每页最多一个，独立链接器也会复查数量。脚本可以读取 `tc0.val`，例如 `sys0=tc0.val`；静态确定的直接赋值、复合赋值或自增／自减会报错，包括名称和常量 ID 引用。比较表达式如 `if(tc0.val==1)` 不属于赋值。该检查不代替对所有指令输出参数或方法调用的完整语义分析。
