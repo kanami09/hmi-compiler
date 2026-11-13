@@ -37,6 +37,8 @@ pub struct JpegInfo {
     pub padded_width: u16,
     pub padded_height: u16,
     pub sampling: String,
+    #[serde(default)]
+    pub has_alpha: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -242,7 +244,7 @@ impl AssetObject {
         if !matches!(info.codec.as_str(), "rgb565" | "jpeg")
             || info.width == 0
             || info.height == 0
-            || info.editor_source_format != "bmp"
+            || !matches!(info.editor_source_format.as_str(), "bmp" | "png")
             || !matches!(info.orientation, 0 | 90 | 180 | 270)
         {
             return Err(error(
@@ -254,6 +256,9 @@ impl AssetObject {
             "rgb565" => {
                 if info.jpeg.is_some() {
                     return Err(error("asset_metadata", "RGB565 目标不能声明 JPEG 参数"));
+                }
+                if info.editor_source_format != "bmp" {
+                    return Err(error("asset_format", "RGB565 使用 BMP 编辑源"));
                 }
                 if matches!(info.orientation, 90 | 270) {
                     (info.height, info.width)
@@ -272,6 +277,14 @@ impl AssetObject {
                         != hmi_format::picture::jpeg::padded_dimensions(info.width, info.height)?
                 {
                     return Err(error("asset_metadata", "JPEG 质量、补齐尺寸或采样格式无效"));
+                }
+                if settings.has_alpha
+                    && (info.editor_source_format != "png" || info.alpha != Alpha::Preserve)
+                {
+                    return Err(error(
+                        "asset_metadata",
+                        "保留透明度的 JPEG 需要 PNG 编辑源和 preserve 策略",
+                    ));
                 }
                 hmi_format::picture::jpeg::storage_dimensions(
                     info.width,
@@ -293,6 +306,8 @@ impl AssetObject {
                 info.width,
                 info.height,
                 info.orientation,
+                &info.editor_source_format,
+                info.jpeg.as_ref().unwrap().has_alpha,
             )?;
         } else {
             hmi_format::picture::validate(

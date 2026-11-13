@@ -137,3 +137,46 @@ fn changed_jpeg_quality_is_detected_and_failed_encoding_preserves_output() {
     assert!(hmi_cli::build(tmp.path(), Some(&output), true).is_err());
     assert_eq!(fs::read(output).unwrap(), b"previous");
 }
+
+#[test]
+fn transparent_png_assets_link_without_original_source_and_keep_png_editor_data() {
+    use image::ImageEncoder;
+    for orientation in [0, 90, 180, 270] {
+        let tmp = setup(orientation);
+        let path = tmp.path().join("assets/icon.asset.toml");
+        let mut config: ImageSource = file::read_toml(&path).unwrap();
+        config.source = "icon.png".into();
+        fs::write(&path, file::toml(&config).unwrap()).unwrap();
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                &[0, 220, 255, 128].repeat(61 * 35),
+                61,
+                35,
+                image::ExtendedColorType::Rgba8,
+            )
+            .unwrap();
+        fs::write(tmp.path().join("assets/icon.png"), png).unwrap();
+        let p = hmi_cli::prepare(tmp.path()).unwrap();
+        p.check(true).unwrap();
+        let linked = p.link(true).unwrap();
+        let c = Container::parse(linked.bytes.clone()).unwrap();
+        let runtime = c.data(c.active("1.i").unwrap()).unwrap();
+        assert!(
+            hmi_format::picture::jpeg::parts(runtime, 61, 35, orientation)
+                .unwrap()
+                .alpha
+                .is_some()
+        );
+        assert_eq!(&c.data(c.active("1.is").unwrap()).unwrap()[24..27], b"png");
+        let moved = tempfile::tempdir().unwrap();
+        p.save_plan(moved.path(), true, None).unwrap();
+        tmp.close().unwrap();
+        assert_eq!(
+            hmi_linker::from_manifest(&moved.path().join("link.toml"), true)
+                .unwrap()
+                .bytes,
+            linked.bytes
+        );
+    }
+}

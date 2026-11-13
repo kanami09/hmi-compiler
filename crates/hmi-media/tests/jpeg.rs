@@ -160,7 +160,7 @@ fn quality_is_explicit_baseline_420_even_at_100_and_target_metadata_is_checked()
 }
 
 #[test]
-fn alpha_requires_explicit_flatten_and_small_images_use_48_pixel_storage() {
+fn alpha_preserve_and_explicit_flatten_use_small_image_storage() {
     let tmp = tempfile::tempdir().unwrap();
     let mut bytes = Vec::new();
     image::codecs::png::PngEncoder::new(&mut bytes)
@@ -177,7 +177,17 @@ fn alpha_requires_explicit_flatten_and_small_images_use_48_pixel_storage() {
         ..Default::default()
     };
     let p = description(tmp.path(), &c);
-    assert!(hmi_media::probe(&p, &target(0)).is_err());
+    let preserved = hmi_media::probe(&p, &target(0)).unwrap();
+    assert!(
+        preserved
+            .info
+            .image()
+            .unwrap()
+            .jpeg
+            .as_ref()
+            .unwrap()
+            .has_alpha
+    );
     c.encoding.alpha = hmi_core::asset::Alpha::Flatten;
     c.encoding.background = Some("#FFFFFF".into());
     let p = description(tmp.path(), &c);

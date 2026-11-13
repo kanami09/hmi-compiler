@@ -10,7 +10,7 @@ use hmi_core::{
     target::Target,
 };
 use image::{
-    DynamicImage, ImageDecoder, ImageFormat, ImageReader, Rgba, RgbaImage,
+    DynamicImage, ImageDecoder, ImageEncoder, ImageFormat, ImageReader, Rgba, RgbaImage,
     imageops::{self, FilterType},
 };
 use std::{
@@ -201,13 +201,14 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
             }
             pixel[3] = 255;
         }
-    } else if pixels.pixels().any(|pixel| pixel[3] != 255) {
+    } else if codec == "rgb565" && pixels.pixels().any(|pixel| pixel[3] != 255) {
         return Err(error(
             "image_alpha",
-            "当前图片编码未接入透明像素保留；请使用 alpha=flatten 并指定背景色",
+            "RGB565 不支持透明像素；请使用 alpha=flatten 并指定背景色",
         ));
     }
     let (width, height) = dimensions(pixels.width(), pixels.height())?;
+    let has_alpha = codec == "jpeg" && pixels.pixels().any(|pixel| pixel[3] != 255);
     let preserve_bmp = format == ImageFormat::Bmp
         && config.resize.is_none()
         && config.encoding.alpha == Alpha::Preserve
@@ -225,7 +226,19 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
         && (u32::from_le_bytes(bytes[10..14].try_into().unwrap()) as usize)
             .checked_add(((usize::from(width) * 3 + 3) & !3) * usize::from(height))
             == Some(bytes.len());
-    let source = if preserve_bmp {
+    let source = if has_alpha {
+        // 透明编辑源使用 RGBA8 PNG，保留逻辑画布的八位透明度，不从七位预览反推。
+        let mut png = Vec::new();
+        image::codecs::png::PngEncoder::new(&mut png)
+            .write_image(
+                pixels.as_raw(),
+                u32::from(width),
+                u32::from(height),
+                image::ExtendedColorType::Rgba8,
+            )
+            .map_err(|e| error("image_encode", e.to_string()))?;
+        png
+    } else if preserve_bmp {
         bytes.clone()
     } else {
         // PNG/JPG、缩放或去透明后的编辑源统一为 BMP；工程原始输入仍保持不变。
@@ -250,6 +263,7 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
             padded_width,
             padded_height,
             sampling: "yuv420".into(),
+            has_alpha,
         })
     } else {
         None
@@ -262,7 +276,7 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
         (width, height)
     };
     let backend = if codec == "jpeg" {
-        "image-rs/0.25.10+jpeg-encoder/0.6.1-yuv420/1"
+        "image-rs/0.25.10+jpeg-encoder/0.6.1-yuv420-alpha7/2"
     } else {
         "image-rs/0.25.10-rgb565/1"
     };
@@ -277,7 +291,7 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
         background: config.encoding.background,
         resize: config.resize,
         source_format: source_format.into(),
-        editor_source_format: "bmp".into(),
+        editor_source_format: if has_alpha { "png" } else { "bmp" }.into(),
         source_sha256: sha256(&bytes),
         backend: backend.into(),
         jpeg,
@@ -322,7 +336,7 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
         let mut padded = RgbaImage::from_pixel(
             u32::from(settings.padded_width),
             u32::from(settings.padded_height),
-            Rgba([0, 0, 0, 255]),
+            Rgba([0, 0, 0, if settings.has_alpha { 0 } else { 255 }]),
         );
         imageops::replace(&mut padded, &p.pixels, 0, 0);
         let rotated = match p.info.orientation {
@@ -332,6 +346,9 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
             270 => imageops::rotate270(&padded),
             _ => unreachable!("有效目标方向已校验"),
         };
+        let alpha = settings.has_alpha.then(|| {
+            hmi_format::picture::alpha7::encode(&rotated.pixels().map(|p| p[3]).collect::<Vec<_>>())
+        });
         let rgb = DynamicImage::ImageRgba8(rotated).to_rgb8();
         let mut bytes = Vec::new();
         let mut encoder = jpeg_encoder::Encoder::new(&mut bytes, settings.quality);
@@ -346,13 +363,19 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
                 jpeg_encoder::ColorType::Rgb,
             )
             .map_err(|e| error("image_encode", e.to_string()))?;
-        let runtime = hmi_format::picture::jpeg::runtime(
+        let runtime = hmi_format::picture::jpeg::runtime_with_alpha(
             p.info.width,
             p.info.height,
             p.info.orientation,
             &bytes,
+            alpha.as_deref(),
         )?;
-        let source = hmi_format::picture::editor_source(p.info.width, p.info.height, &p.source)?;
+        let source = hmi_format::picture::editor_source_with_format(
+            p.info.width,
+            p.info.height,
+            &p.info.editor_source_format,
+            &p.source,
+        )?;
         return Ok(EncodingResult {
             object: AssetObject::image(p.info, runtime, source)?,
             inputs: p.inputs,

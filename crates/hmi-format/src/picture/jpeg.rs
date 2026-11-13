@@ -1,4 +1,4 @@
-//! X543 的不透明 JPEG 图片：24 字节资源头、20 字节帧前缀、标准 JPEG。
+//! X543 JPEG 图片：24 字节资源头、20 字节帧前缀、JPEG 及可选七位透明度流。
 use crate::binary::{put_u32, u32_at};
 use hmi_core::{Result, error};
 
@@ -27,32 +27,52 @@ pub fn storage_dimensions(width: u16, height: u16, orientation: u16) -> Result<(
 }
 
 pub fn runtime(width: u16, height: u16, orientation: u16, jpeg: &[u8]) -> Result<Vec<u8>> {
+    runtime_with_alpha(width, height, orientation, jpeg, None)
+}
+
+pub fn runtime_with_alpha(
+    width: u16,
+    height: u16,
+    orientation: u16,
+    jpeg: &[u8],
+    alpha: Option<&[u8]>,
+) -> Result<Vec<u8>> {
     let (w, h) = storage_dimensions(width, height, orientation)?;
     if dimensions(jpeg)? != (w, h) {
         return Err(error("jpeg_dimensions", "JPEG 帧尺寸与存储尺寸不一致"));
     }
+    if let Some(alpha) = alpha {
+        super::alpha7::validate(alpha, usize::from(w) * usize::from(h))?;
+    }
+    let body_length = 20usize
+        .checked_add(jpeg.len())
+        .and_then(|v| v.checked_add(alpha.map_or(0, <[u8]>::len)))
+        .ok_or_else(|| error("image_length", "JPEG 与透明度载荷长度溢出"))?;
     let mut out = super::header(
         [10 + (orientation / 90) as u8, 0x60, 1, 4],
         width,
         height,
         24,
-        20 + jpeg.len(),
+        body_length,
     )?;
     out.resize(44, 0);
     put_u32(&mut out, 28, usize::from(w))?;
     put_u32(&mut out, 32, usize::from(h))?;
     out.extend(jpeg);
+    if let Some(alpha) = alpha {
+        // alphaaddr 相对于 24 字节资源头之后，包含 20 字节帧前缀。
+        put_u32(&mut out, 20, 20 + jpeg.len())?;
+        out.extend(alpha);
+    }
     Ok(out)
 }
 
-/// 复核封装与 JPEG 标记，不解码熵数据，链接器无需图像编解码后端。
-pub fn validate(
-    runtime: &[u8],
-    source: &[u8],
-    width: u16,
-    height: u16,
-    orientation: u16,
-) -> Result<()> {
+pub struct Parts<'a> {
+    pub jpeg: &'a [u8],
+    pub alpha: Option<&'a [u8]>,
+}
+
+pub fn parts(runtime: &[u8], width: u16, height: u16, orientation: u16) -> Result<Parts<'_>> {
     let (w, h) = storage_dimensions(width, height, orientation)?;
     super::validate_header(
         runtime,
@@ -66,11 +86,47 @@ pub fn validate(
         || runtime[36..44] != [0; 8]
         || u32_at(runtime, 28)? != u32::from(w)
         || u32_at(runtime, 32)? != u32::from(h)
-        || dimensions(&runtime[44..])? != (w, h)
     {
         return Err(error("image_layout", "JPEG 图片帧前缀或尺寸无效"));
     }
-    super::validate_bmp_source(source, width, height)
+    let body = &runtime[24..];
+    let alpha_offset = u32_at(runtime, 20)? as usize;
+    let split = if alpha_offset == 0 {
+        body.len()
+    } else {
+        alpha_offset
+    };
+    let jpeg = body
+        .get(20..split)
+        .ok_or_else(|| error("image_layout", "JPEG 透明度偏移越界"))?;
+    if dimensions(jpeg)? != (w, h) {
+        return Err(error("image_layout", "JPEG 帧尺寸与存储尺寸不一致"));
+    }
+    let alpha = if alpha_offset == 0 {
+        None
+    } else {
+        let bytes = &body[split..];
+        super::alpha7::validate(bytes, usize::from(w) * usize::from(h))?;
+        Some(bytes)
+    };
+    Ok(Parts { jpeg, alpha })
+}
+
+/// 复核封装与 JPEG 标记，不解码熵数据，链接器无需图像编解码后端。
+pub fn validate(
+    runtime: &[u8],
+    source: &[u8],
+    width: u16,
+    height: u16,
+    orientation: u16,
+    source_format: &str,
+    has_alpha: bool,
+) -> Result<()> {
+    let parts = parts(runtime, width, height, orientation)?;
+    if parts.alpha.is_some() != has_alpha {
+        return Err(error("asset_metadata", "JPEG 透明度声明与资源不一致"));
+    }
+    super::validate_source(source, width, height, source_format)
 }
 
 /// 当前输出固定为单次扫描、8 位、三个分量的 Baseline YUV420。

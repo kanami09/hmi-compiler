@@ -19,6 +19,7 @@ clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 
 [dev-dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["png"] }
 hmi-format = { path = "../hmi-format" }
 tempfile = "3"
 toml = "1.1"
