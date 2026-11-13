@@ -202,6 +202,52 @@ fn slider_range_limits_sliding_but_allows_explicit_initial_values_outside_it() {
 }
 
 #[test]
+fn slider_cursor_modes_follow_the_target_in_both_compilation_and_linking() {
+    let tmp = setup(false);
+    let source = tmp.path().join("hmi.toml");
+    let mut config: ProjectSource = file::read_toml(&source).unwrap();
+    let mut slider = widget("slider", "h0", 0);
+    slider.properties.insert("psta".into(), 2.into());
+    save(tmp.path(), "page0", vec![slider]);
+    for profile in hmi_core::target::PROFILES {
+        config.target.profile = (*profile).into();
+        fs::write(&source, file::toml(&config).unwrap()).unwrap();
+        if *profile == "TJC4827X543_011" {
+            let p = hmi_cli::prepare(tmp.path()).unwrap();
+            p.check(true).unwrap();
+            assert_eq!(p.target.capabilities.slider_cursor_modes, [0, 2]);
+            assert_eq!(link(tmp.path()).objects[1].integer("psta"), Some(2));
+        } else {
+            let e = hmi_cli::prepare(tmp.path()).err().unwrap();
+            let d = e.as_diagnostic().unwrap();
+            assert_eq!(d.code, "control_capability");
+            assert_eq!(d.location.property.as_deref(), Some("psta"));
+            assert_eq!(d.location.object.as_deref(), Some("h0"));
+        }
+    }
+    // 独立目标即使被修改为 psta=2，也不能绕过 K035 的型号检查。
+    config.target.profile = "TJC4832K035_011".into();
+    fs::write(&source, file::toml(&config).unwrap()).unwrap();
+    save(tmp.path(), "page0", vec![widget("slider", "h0", 0)]);
+    let p = hmi_cli::prepare(tmp.path()).unwrap();
+    let mut object = p.pages[0].object.clone();
+    let original = Object::parse(object.record(1).unwrap()).unwrap();
+    let bytes = original
+        .rebuild(
+            &BTreeMap::from([("psta".into(), vec![2])]),
+            &BTreeMap::new(),
+        )
+        .unwrap();
+    let offset = object.metadata.layout.as_ref().unwrap().objects[1].offset as usize;
+    object.payload[offset..offset + bytes.len()].copy_from_slice(&bytes);
+    let e = hmi_linker::check(&p.target, &p.program.object, &[object], &[], false).unwrap_err();
+    let d = e.as_diagnostic().unwrap();
+    assert_eq!(d.code, "control_capability");
+    assert_eq!(d.location.page.as_deref(), Some("page0"));
+    assert_eq!(d.location.object.as_deref(), Some("h0"));
+}
+
+#[test]
 fn control_specific_ranges_text_capacity_and_readonly_source_fields_are_checked() {
     let tmp = setup(true);
     let output = tmp.path().join("old.HMI");
@@ -209,6 +255,7 @@ fn control_specific_ranges_text_capacity_and_readonly_source_fields_are_checked(
     for (kind, field, value) in [
         ("slider", "sta", 2),
         ("slider", "psta", 1),
+        ("slider", "psta", 2),
         ("slider", "mode", 2),
         ("slider", "val", 65536),
         ("slider", "ch", 101),

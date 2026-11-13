@@ -10,6 +10,7 @@ const SLIDER_PROPERTIES: [Property; 19] = {
     }
     p[6] = integer("mode", Storage::U8, 0, 1, DefaultValue::Integer(0));
     p[7] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+    // 共同存储范围；各型号当前接入的游标模式由目标配置进一步约束。
     p[8] = integer("psta", Storage::U8, 0, 2, DefaultValue::Integer(0));
     p[9] = integer("wid", Storage::U8, 0, 255, DefaultValue::Integer(255));
     p[10] = integer("hig", Storage::U8, 0, 255, DefaultValue::Integer(255));

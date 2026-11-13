@@ -107,6 +107,18 @@ fn assemble_page(
                 ));
             }
             definition.validate_record(&current.name, &attributes)?;
+            target
+                .check_control_properties(current.type_code, &attributes)
+                .map_err(|e| -> hmi_core::Error {
+                    let mut d = e
+                        .as_diagnostic()
+                        .cloned()
+                        .unwrap_or_else(|| Diagnostic::error("control_capability", e.to_string()));
+                    d.location.page = Some(name.into());
+                    d.location.object = Some(current.name.clone());
+                    d.location.object_index = Some(index);
+                    d.into()
+                })?;
             definition.events
         };
         if current

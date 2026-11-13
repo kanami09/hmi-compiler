@@ -74,6 +74,7 @@ items=[{{key="ui",source="assets/ui.asset.toml"}}]
 ''', encoding="utf-8")
         for name in pages:
             (project / "pages" / name).mkdir(parents=True)
+        cursor_mode = 2 if tag == "X543" else 0
         (project / "pages/sliders/page.toml").write_text('''schema="hmi.page/1"
 name="sliders"
 [[objects]]
@@ -84,8 +85,8 @@ events={down="h0.down.s",up="h0.up.s",slide="h0.slide.s"}
 [[objects]]
 name="h1"
 type="slider"
-properties={x=20,y=90,w=40,h=150,mode=1,psta=2,wid=20,hig=20,val=75,minval=0,maxval=100,dis=0}
-''', encoding="utf-8")
+properties={x=20,y=90,w=40,h=150,mode=1,psta=0,wid=20,hig=20,val=75,minval=0,maxval=100,dis=0}
+'''.replace("psta=0", f"psta={cursor_mode}"), encoding="utf-8")
         for slot, code in [("down", "sys0=1"), ("up", "sys0=2"), ("slide", "sys0=3")]:
             (project / f"pages/sliders/h0.{slot}.s").write_text(code + "\n", encoding="utf-8")
         (project / "pages/buttons/page.toml").write_text('''schema="hmi.page/1"
@@ -147,6 +148,7 @@ properties={x=20,y=120,w=280,h=70,font={ref="ui"},val=0}
         slider = run("hmi-compile", "inspect", plan / "obj/p00000.hmo")
         assert slider["objects"][1]["properties"]["val"] == 40
         assert slider["objects"][2]["properties"]["mode"] == 1
+        assert slider["objects"][2]["properties"]["psta"] == cursor_mode
         capture = run("hmi-compile", "inspect", plan / "obj/p00003.hmo")
         assert capture["objects"][1]["type"] == "touch_cap"
         assert "x" not in capture["objects"][1]["properties"]
@@ -154,7 +156,7 @@ properties={x=20,y=120,w=280,h=70,font={ref="ui"},val=0}
         assert font_info["source_sha256"] == hashlib.sha256(font.read_bytes()).hexdigest()
         cases.append({"file": hmi.name, "sha256": hashlib.sha256(hmi.read_bytes()).hexdigest(),
                       "profile": profile, "orientation": 0, "page_size": [width, height], "font": font_info,
-                      "pages": pages, "standalone_jobs": len(jobs), "standalone_equals_driver": True,
+                      "pages": pages, "vertical_slider_psta": cursor_mode, "standalone_jobs": len(jobs), "standalone_equals_driver": True,
                       "opened": None, "compiled": None, "content_verified": None})
     (output / "verification.json").write_text(json.dumps({"generated_on": date.today().isoformat(),
         "stage": "slider-dual-scroll-touch", "automatic_checks_passed": True, "cases": cases},
@@ -175,9 +177,9 @@ properties={x=20,y=120,w=280,h=70,font={ref="ui"},val=0}
 | 控件／ID | 位置与尺寸 | 重点属性 |
 |---|---|---|
 | h0／1 | 20/20，280×40 | mode=0、sta=1、psta=0；val=40，minval=0、maxval=100；wid=hig=255，dis=100、ch=25 |
-| h1／2 | 20/90，40×150 | mode=1、sta=1、psta=2；val=75，范围 0～100；wid=hig=20，dis=0、ch=25 |
+| h1／2 | 20/90，40×150 | mode=1、sta=1；K035 的 psta=0，X543 的 psta=2；val=75，范围 0～100；wid=hig=20，dis=0、ch=25 |
 
-背景灰色 bco=50712、前景绿色 bco1=1024、游标红色 pco=63488。h0 应横向，h1 应竖向且为四边形游标。本批特别核对竖向滑块及 psta=2。此前 h0 的同类 psta=0 在 K035 预览为方形、X543 为圆形，不要求两型号游标形状相同。
+背景灰色 bco=50712、前景绿色 bco1=1024、游标红色 pco=63488。h0 应横向，h1 应竖向；K035 的 h1 使用 psta=0，X543 的 h1 使用 psta=2 单色四边形，按型号区分。此前 h0 的 psta=0 在 K035 预览为方形、X543 为圆形，不要求两型号游标形状相同。
 
 h0.down、up、slide 分别为 sys0=1、sys0=2、sys0=3；h1 事件为空。
 

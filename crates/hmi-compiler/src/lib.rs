@@ -274,6 +274,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                 }
             }
             let attributes = definition.attributes(&object.name, &properties)?;
+            target.check_control_properties(definition.code, &attributes)?;
             let events = compile_events(
                 &object.events,
                 definition.events,

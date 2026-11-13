@@ -34,6 +34,9 @@ pub struct Capabilities {
     pub image_codecs: Vec<String>,
     #[serde(default)]
     pub font_versions: Vec<u8>,
+    /// 本工具已接入的滑块游标模式；不是硬件支持范围的完整声明。
+    #[serde(default)]
+    pub slider_cursor_modes: Vec<u8>,
 }
 
 /// 已展开的共同目标输入。消费者重新核对内置规则，拒绝被修改的几何或版本。
@@ -90,7 +93,7 @@ impl Target {
             (base_width, base_height)
         };
         let signature = format!(
-            "page-ver21234-7:{}:{}:{width}:{height}:{}:{}",
+            "page-ver21234-8:{}:{}:{width}:{height}:{}:{}",
             config.profile,
             config.orientation,
             sha256(DEFAULT_PROGRAM.as_bytes()),
@@ -117,8 +120,13 @@ impl Target {
                     vec!["rgb565".into()]
                 },
                 font_versions: vec![6],
+                slider_cursor_modes: if config.profile == "TJC4827X543_011" {
+                    vec![0, 2]
+                } else {
+                    vec![0]
+                },
             },
-            data_revision: 7,
+            data_revision: 8,
             profile_data_sha256: sha256(signature.as_bytes()),
         })
     }
@@ -136,6 +144,44 @@ impl Target {
                 "target_data",
                 "目标配置与当前版本的数据不一致，请重新导出 target.json 并重新编译相关目标文件",
             ));
+        }
+        Ok(())
+    }
+
+    /// 编译与链接共用型号属性约束；调用者已校验目标和控件字段布局。
+    pub fn check_control_properties(
+        &self,
+        code: u8,
+        attributes: &[(String, Vec<u8>)],
+    ) -> Result<()> {
+        if code == 1 {
+            let cursor = attributes
+                .iter()
+                .find(|(name, _)| name == "psta")
+                .and_then(|(_, b)| b.first())
+                .copied()
+                .ok_or_else(|| error("object_property", "滑块记录缺少 psta"))?;
+            if !self.capabilities.slider_cursor_modes.contains(&cursor) {
+                let allowed = self
+                    .capabilities
+                    .slider_cursor_modes
+                    .iter()
+                    .map(u8::to_string)
+                    .collect::<Vec<_>>()
+                    .join("、");
+                return Err(crate::diagnostic::Diagnostic::error(
+                    "control_capability",
+                    format!(
+                        "型号 {} 当前可构建的滑块 psta 为 {allowed}，不支持 psta={cursor}",
+                        self.profile
+                    ),
+                )
+                .at(crate::diagnostic::Location {
+                    property: Some("psta".into()),
+                    ..Default::default()
+                })
+                .into());
+            }
         }
         Ok(())
     }
