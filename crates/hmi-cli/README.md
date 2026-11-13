@@ -543,3 +543,12 @@ dir 是屏幕的目录路径，不是构建机路径；构建时不会枚举、�
 脚本可在所属页设置文件流 val、读取 qty/en；qty/en 只读，文件流不允许跨页访问或调用。属性访问规则集中在注册表的 access 中：readonly 表示不可写，page_local 表示只限所属页，compile_only 表示不能在运行脚本中访问。这些限制与源码 properties 是否可编辑分别声明。
 
 本批只接入静态控件和显式图标。数据记录控件及其 .data 配套文件、自动图标依赖和真实 SD 读写另行接入／验收。
+
+生成文件控件的验收工程：
+
+```powershell
+cargo build --workspace --bins --locked
+python examples/prepare_files_acceptance.py --font path/to/ui.zi
+```
+
+脚本用标准库绘制两个 64×64 透明图标，并读取指定的独立字库，生成 X543 的 Files0／Files1 两份工程。两份过滤条件分别为 *.txt／*.txt|*.data，文件流名称分别为 fs0／fs1；每份实际执行 7 条独立命令比较输出。结果在 `target/acceptance-files/`，已有目录不会覆盖，可另用 --output。脚本不访问虚拟 SD，不读取已有 HMI 或内部素材。
