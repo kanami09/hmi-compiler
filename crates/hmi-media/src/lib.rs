@@ -1,9 +1,9 @@
-//! 常规图片解码与 K/T RGB565 编码。运行资源和编辑源作为同一个资产目标交付。
+//! 常规图片编码与 ZI 字库方向适配。链接器只需消费输出的媒体目标。
 
-use hmi_artifact::asset::{AssetObject, ImageInfo};
+use hmi_artifact::asset::{AssetInfo, AssetObject, FontInfo, ImageInfo};
 use hmi_core::{
     Result,
-    asset::{Alpha, ImageSource, ResizeMode},
+    asset::{Alpha, FontSource, ImageSource, ResizeMode},
     error, file,
     model::check_schema,
     sha256,
@@ -19,8 +19,8 @@ use std::{
 };
 
 const MAX_RGBA_BYTES: u64 = 64 * 1024 * 1024;
-pub struct ImageProbe {
-    pub info: ImageInfo,
+pub struct AssetProbe {
+    pub info: AssetInfo,
     pub inputs: Vec<PathBuf>,
 }
 pub struct EncodingResult {
@@ -261,15 +261,31 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
 }
 
 /// 探测会完整解码和检查变换，但不生成运行像素、.hma 或其他输出文件。
-pub fn probe(path: &Path, target: &Target) -> Result<ImageProbe> {
+pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
+    if is_font(path)? {
+        let (info, _, inputs) = prepare_font(path, target).map_err(|e| file::at_file(e, path))?;
+        return Ok(AssetProbe {
+            info: AssetInfo::Font { font: info },
+            inputs,
+        });
+    }
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
-    Ok(ImageProbe {
-        info: p.info,
+    Ok(AssetProbe {
+        info: AssetInfo::Image { image: p.info },
         inputs: p.inputs,
     })
 }
 
 pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
+    if is_font(path)? {
+        let (info, bytes, inputs) =
+            prepare_font(path, target).map_err(|e| file::at_file(e, path))?;
+        let output = hmi_format::font::adapt(&bytes, target.orientation)?;
+        return Ok(EncodingResult {
+            object: AssetObject::font(info, output)?,
+            inputs,
+        });
+    }
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
     let w = u32::from(p.info.width);
     let h = u32::from(p.info.height);
@@ -325,4 +341,42 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
         object: AssetObject::image(p.info, runtime, source)?,
         inputs: p.inputs,
     })
+}
+
+fn is_font(path: &Path) -> Result<bool> {
+    let value: toml::Value = file::read_toml(path)?;
+    match value.get("kind").and_then(toml::Value::as_str) {
+        Some("font") => Ok(true),
+        Some("image") => Ok(false),
+        _ => Err(error("asset_kind", "当前媒体编码器支持 image 和 font 资产")),
+    }
+}
+
+fn prepare_font(path: &Path, target: &Target) -> Result<(FontInfo, Vec<u8>, Vec<PathBuf>)> {
+    target.validate()?;
+    if !target.capabilities.font_versions.contains(&6) {
+        return Err(error("font_backend", "目标尚未接入 ZI v6 字库"));
+    }
+    let config: FontSource = file::read_toml(path)?;
+    check_schema(&config.schema, "hmi.asset/1")?;
+    if config.kind != "font" || config.input != "source" {
+        return Err(error("asset_input", "字库编码器需要 font 的 source 输入"));
+    }
+    if config.delivery.mode != "embedded" || config.delivery.path.is_some() {
+        return Err(error("asset_delivery", "当前字库路线仅支持内嵌资源"));
+    }
+    let source = path.parent().unwrap_or(Path::new(".")).join(&config.source);
+    let bytes = file::read(&source)?;
+    let header = hmi_format::font::inspect(&bytes).map_err(|e| file::at_file(e, &source))?;
+    let info = FontInfo {
+        version: 6,
+        encoding: "utf-8".into(),
+        height: header.height,
+        glyph_count: header.glyph_count,
+        orientation: target.orientation,
+        source_orientation: header.orientation,
+        source_sha256: sha256(&bytes),
+        backend: "hmi-zi-v6-rle/1".into(),
+    };
+    Ok((info, bytes, vec![path.into(), source]))
 }

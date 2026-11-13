@@ -1,7 +1,7 @@
 //! 按最终页面顺序解析引用、生成容器并校验输出，不读取页面或脚本源码。
 
 use hmi_analysis::{Context, check_linked_facts};
-use hmi_artifact::asset::{AssetObject, ImageInfo};
+use hmi_artifact::asset::{AssetInfo, AssetObject, FontInfo, ImageInfo};
 use hmi_artifact::{CompiledObject, ObjectKind, RelocationKind};
 use hmi_core::{
     Result, controls,
@@ -30,6 +30,7 @@ fn assemble_page(
     target: &Target,
     page_id: usize,
     images: &[(String, ImageInfo)],
+    _fonts: &[(String, FontInfo)],
 ) -> Result<(Vec<u8>, Vec<hmi_analysis::ScriptFacts>)> {
     let layout = object
         .metadata
@@ -258,27 +259,46 @@ fn layout(
     target: &Target,
     program: &CompiledObject,
     pages: &[CompiledObject],
-    images: &[(String, ImageInfo)],
+    assets: &[(String, AssetInfo)],
     deny_warnings: bool,
 ) -> Result<Layout> {
     target.validate()?;
+    let images = assets
+        .iter()
+        .filter_map(|(key, info)| match info {
+            AssetInfo::Image { image } => Some((key.clone(), image.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let fonts = assets
+        .iter()
+        .filter_map(|(key, info)| match info {
+            AssetInfo::Font { font } => Some((key.clone(), font.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
     if pages.is_empty() {
         return Err(error("page_count", "工程至少需要一个页面"));
     }
     let resource_count = images
         .len()
         .checked_mul(2)
-        .and_then(|n| n.checked_add(pages.len() + 2))
+        .and_then(|n| n.checked_add(pages.len() + fonts.len() + 2))
         .ok_or_else(|| error("resource_count", "资源数量溢出"))?;
-    if resource_count > (hmi_format::container::BACKUP_START - 8) / 28 || images.len() >= 65535 {
+    if resource_count > (hmi_format::container::BACKUP_START - 8) / 28
+        || images.len() >= 65535
+        || fonts.len() > 255
+    {
         return Err(error("resource_count", "资源数量超过当前目录容量"));
     }
     let mut keys = BTreeSet::new();
-    for (key, info) in images {
+    for (key, _) in assets {
         hmi_core::asset::check_key(key)?;
         if !keys.insert(key) {
             return Err(error("asset_key", format!("资产符号 {key} 重复")));
         }
+    }
+    for (key, info) in &images {
         if info.width == 0
             || info.height == 0
             || info.orientation != target.orientation
@@ -287,6 +307,20 @@ fn layout(
             return Err(error(
                 "asset_target",
                 format!("图片资产 {key} 的尺寸、编码或方向与目标不匹配"),
+            ));
+        }
+    }
+    for (key, info) in &fonts {
+        if info.height == 0
+            || info.glyph_count == 0
+            || info.glyph_count > 65536
+            || info.orientation != target.orientation
+            || info.encoding != target.encoding
+            || !target.capabilities.font_versions.contains(&info.version)
+        {
+            return Err(error(
+                "asset_target",
+                format!("字库资产 {key} 的格式或方向与目标不匹配"),
             ));
         }
     }
@@ -318,7 +352,7 @@ fn layout(
         if !names.insert(name) {
             return Err(error("page_name", format!("页面名称 {name} 重复")));
         }
-        let (bytes, facts) = assemble_page(object, target, index, images)?;
+        let (bytes, facts) = assemble_page(object, target, index, &images, &fonts)?;
         native.push(bytes);
         facts_by_page.push(facts);
     }
@@ -334,6 +368,10 @@ fn layout(
             resource: format!("{id}.i"),
         })
         .collect::<Vec<_>>();
+    references.extend((0..fonts.len()).map(|id| hmi_format::project::Reference {
+        kind: "zi".into(),
+        resource: format!("{id}.zi"),
+    }));
     references.extend((0..pages.len()).map(|id| hmi_format::project::Reference {
         kind: "pa".into(),
         resource: format!("{id}.pa"),
@@ -388,10 +426,10 @@ pub fn check(
     target: &Target,
     program: &CompiledObject,
     pages: &[CompiledObject],
-    images: &[(String, ImageInfo)],
+    assets: &[(String, AssetInfo)],
     deny_warnings: bool,
 ) -> Result<Vec<Diagnostic>> {
-    Ok(layout(target, program, pages, images, deny_warnings)?.diagnostics)
+    Ok(layout(target, program, pages, assets, deny_warnings)?.diagnostics)
 }
 
 pub fn from_manifest(path: &Path, deny_warnings: bool) -> Result<Linked> {
@@ -439,11 +477,11 @@ pub fn link_with_assets(
     for (_, asset) in assets {
         asset.validate_for(target)?;
     }
-    let images = assets
+    let infos = assets
         .iter()
-        .map(|(key, asset)| (key.clone(), asset.metadata.image.clone()))
+        .map(|(key, asset)| (key.clone(), asset.metadata.info.clone()))
         .collect::<Vec<_>>();
-    let layout = layout(target, program, pages, &images, deny_warnings)?;
+    let layout = layout(target, program, pages, &infos, deny_warnings)?;
     let mut resources = vec![("Program.s".into(), program.payload.clone())];
     resources.extend(
         layout
@@ -452,17 +490,28 @@ pub fn link_with_assets(
             .enumerate()
             .map(|(id, bytes)| (format!("{id}.pa"), bytes)),
     );
-    for (id, (_, asset)) in assets.iter().enumerate() {
+    let mut next_id = BTreeMap::new();
+    let mut references = Vec::new();
+    let mut asset_map = Vec::new();
+    for (key, asset) in assets {
+        // 数字 ID 按资源类别分配，不能直接使用混合输入列表的序号。
+        let kind = asset.metadata.info.kind();
+        let id = next_id.entry(kind).or_insert(0usize);
         for (index, member) in asset.metadata.members.iter().enumerate() {
-            resources.push((
-                format!("{id}.{}", member.extension),
-                asset.member(index)?.to_vec(),
-            ));
+            let name = format!("{id}.{}", member.extension);
+            resources.push((name.clone(), asset.member(index)?.to_vec()));
+            if let Some(reference_kind) = member.reference_kind {
+                let end = reference_kind.iter().position(|&b| b == 0).unwrap_or(8);
+                references.push((
+                    String::from_utf8_lossy(&reference_kind[..end]).into_owned(),
+                    name,
+                ));
+            }
         }
+        asset_map
+            .push(serde_json::json!({"key":key,"kind":kind,"id":id,"info":asset.metadata.info}));
+        *id += 1;
     }
-    let mut references = (0..assets.len())
-        .map(|id| ("i".to_string(), format!("{id}.i")))
-        .collect::<Vec<_>>();
     references.extend((0..pages.len()).map(|id| ("pa".to_string(), format!("{id}.pa"))));
     let borrowed = references
         .iter()
@@ -483,7 +532,7 @@ pub fn link_with_assets(
     project.strict()?;
     let map = serde_json::json!({"schema":"hmi.link-map/1","target":target,
         "pages":project.pages.iter().enumerate().map(|(id,(entry,page))|serde_json::json!({"id":id,"name":page.name,"resource":container.entries[*entry].name,"objects":page.objects.iter().map(|o|serde_json::json!({"id":o.id,"name":o.name,"type":hmi_format::page::type_name(o.type_code)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
-        "assets":images.iter().enumerate().map(|(id,(key,info))|serde_json::json!({"key":key,"kind":"image","id":id,"resource":format!("{id}.i"),"width":info.width,"height":info.height})).collect::<Vec<_>>(),
+        "assets":asset_map,
         "resources":container.entries,"output_sha256":hmi_core::sha256(&bytes)});
     Ok(Linked {
         bytes,

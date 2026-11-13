@@ -5,6 +5,67 @@ use hmi_core::{
 };
 use hmi_format::{container::Container, project::Project};
 use std::{collections::BTreeMap, fs, path::Path};
+mod zi_fixture {
+    include!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../tests/support/zi.rs"
+    ));
+}
+
+#[test]
+fn mixed_assets_use_separate_id_tables_and_link_without_originals() {
+    let tmp = setup();
+    fs::write(tmp.path().join("assets/font.zi"), zi_fixture::font()).unwrap();
+    fs::write(
+        tmp.path().join("assets/font.asset.toml"),
+        "schema='hmi.asset/1'\nkind='font'\nsource='font.zi'\n",
+    )
+    .unwrap();
+    let source = tmp.path().join("hmi.toml");
+    let mut config: ProjectSource = file::read_toml(&source).unwrap();
+    config.assets.items.insert(
+        1,
+        AssetSource {
+            key: "font_a".into(),
+            source: "assets/font.asset.toml".into(),
+        },
+    );
+    config.assets.items.push(AssetSource {
+        key: "font_b".into(),
+        source: "assets/font.asset.toml".into(),
+    });
+    fs::write(&source, file::toml(&config).unwrap()).unwrap();
+    let p = hmi_cli::prepare(tmp.path()).unwrap();
+    p.check(true).unwrap();
+    assert!(!tmp.path().join(".build").exists());
+    let linked = p.link(true).unwrap();
+    let (c, project) = parse(linked.bytes.clone());
+    assert_eq!(project.pages[0].1.objects[1].integer("pic"), Some(1));
+    assert_eq!(
+        project
+            .references
+            .iter()
+            .filter(|r| r.kind == "zi")
+            .map(|r| r.resource.as_str())
+            .collect::<Vec<_>>(),
+        ["0.zi", "1.zi"]
+    );
+    assert_eq!(
+        c.data(c.active("0.zi").unwrap()).unwrap(),
+        zi_fixture::font()
+    );
+    assert_eq!(linked.map["assets"][2]["id"], 1);
+    assert_eq!(linked.map["assets"][3]["id"], 1);
+    let moved = tempfile::tempdir().unwrap();
+    p.save_plan(moved.path(), true, None).unwrap();
+    tmp.close().unwrap();
+    assert_eq!(
+        hmi_linker::from_manifest(&moved.path().join("link.toml"), true)
+            .unwrap()
+            .bytes,
+        linked.bytes
+    );
+}
 
 fn bmp(width: u32, height: u32, red: u8) -> Vec<u8> {
     let stride = (width * 3 + 3) & !3;

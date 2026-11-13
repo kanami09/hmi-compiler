@@ -12,7 +12,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[command(
     name = "hmi-media",
     version,
-    about = "编码 HMI 媒体资产，当前支持 K/T RGB565 图片"
+    about = "编码 HMI 媒体资产，支持 K/T RGB565 图片和 UTF-8 ZI v6 字库"
 )]
 struct Args {
     #[arg(long, global = true)]
@@ -22,13 +22,13 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// 解码并检查图片输入及处理参数，不写输出。
+    /// 检查媒体输入及处理参数，不写输出。
     Probe {
         source: PathBuf,
         #[arg(long)]
         target: PathBuf,
     },
-    /// 编码图片，生成包含运行数据和编辑源的 .hma。
+    /// 编码媒体，生成自包含的 .hma。
     Encode {
         source: PathBuf,
         #[arg(long)]
@@ -52,8 +52,8 @@ fn run(args: &Args) -> Result<CommandResult> {
             let target: Target = file::read_json(target)?;
             let probe = hmi_media::probe(source, &target)?;
             Ok(cli::success(
-                serde_json::json!({"image":probe.info}),
-                "图片检查通过。",
+                serde_json::json!(probe.info),
+                "媒体输入检查通过。",
             ))
         }
         Command::Encode {
@@ -71,8 +71,8 @@ fn run(args: &Args) -> Result<CommandResult> {
             inputs.push(target);
             encoded.object.write(output, &inputs)?;
             Ok(cli::success(
-                serde_json::json!({"output":output,"image":encoded.object.metadata.image}),
-                format!("图片编码完成：{}", output.display()),
+                serde_json::json!({"output":output,"asset":encoded.object.metadata.info}),
+                format!("媒体编码完成：{}", output.display()),
             ))
         }
     }

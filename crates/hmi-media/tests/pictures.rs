@@ -66,7 +66,10 @@ fn rgb565_rotation_preserves_logical_dimensions_and_bmp_source() {
             .object;
         assert_eq!(colors(&asset), expected);
         assert_eq!(
-            (asset.metadata.image.width, asset.metadata.image.height),
+            (
+                asset.metadata.info.image().unwrap().width,
+                asset.metadata.info.image().unwrap().height
+            ),
             (2, 3)
         );
         assert_eq!(&asset.member(1).unwrap()[27..], bytes);
@@ -125,14 +128,14 @@ fn signature_png_alpha_and_resize_follow_explicit_parameters() {
     config.encoding.background = Some("#000000".into());
     description(tmp.path(), &config);
     let asset = hmi_media::encode(&path, &target(0)).unwrap().object;
-    assert_eq!(asset.metadata.image.source_format, "png");
+    assert_eq!(asset.metadata.info.image().unwrap().source_format, "png");
     assert_eq!(
         colors(&asset),
         [0x8000, 0x8000, 0x8000, 0x8000, 0xffff, 0xffff]
     );
     assert_eq!(&asset.member(1).unwrap()[27..29], b"BM");
     let probe = hmi_media::probe(&path, &target(0)).unwrap();
-    assert_eq!(probe.info, asset.metadata.image);
+    assert_eq!(probe.info, asset.metadata.info);
     config.encoding.quality = Some(80);
     description(tmp.path(), &config);
     assert!(hmi_media::encode(&path, &target(0)).is_err());
@@ -157,7 +160,7 @@ fn jpeg_and_asset_target_validation_require_no_original_file_at_link_time() {
     };
     let path = description(tmp.path(), &config);
     let asset = hmi_media::encode(&path, &target(0)).unwrap().object;
-    assert_eq!(asset.metadata.image.source_format, "jpeg");
+    assert_eq!(asset.metadata.info.image().unwrap().source_format, "jpeg");
     asset.validate_for(&target(0)).unwrap();
     assert!(asset.validate_for(&target(90)).is_err());
     let encoded = asset.encode().unwrap();

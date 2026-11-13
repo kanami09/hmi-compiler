@@ -2,7 +2,7 @@
 //!
 //! 编译和链接直接调用共享库；计划中的独立命令使用相同的输入与格式。
 
-use hmi_artifact::asset::{AssetObject as EncodedAsset, ImageInfo};
+use hmi_artifact::asset::{AssetInfo, AssetObject as EncodedAsset};
 use hmi_core::{
     Result, error, file,
     model::*,
@@ -29,7 +29,7 @@ pub struct Prepared {
 pub struct AssetInput {
     pub key: String,
     pub source: PathBuf,
-    pub probe: hmi_media::ImageProbe,
+    pub probe: hmi_media::AssetProbe,
 }
 
 /// 显式目录直接使用；未指定时向上查找工程清单。
@@ -151,7 +151,7 @@ impl Prepared {
             .iter()
             .map(|asset| {
                 let encoded = hmi_media::encode(&asset.source, &self.target)?;
-                if encoded.object.metadata.image != asset.probe.info
+                if encoded.object.metadata.info != asset.probe.info
                     || encoded.inputs != asset.probe.inputs
                 {
                     return Err(error(
@@ -168,7 +168,7 @@ impl Prepared {
             .assets
             .iter()
             .map(|asset| (asset.key.clone(), asset.probe.info.clone()))
-            .collect::<Vec<(String, ImageInfo)>>();
+            .collect::<Vec<(String, AssetInfo)>>();
         hmi_linker::check(
             &self.target,
             &self.program.object,

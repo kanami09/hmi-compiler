@@ -1,4 +1,4 @@
-//! 图片输入、处理参数和资源符号；不包含图像库或容器读写。
+//! 媒体输入、处理参数和资源符号；不包含媒体后端或容器读写。
 
 use crate::{Result, error};
 use serde::{Deserialize, Serialize};
@@ -124,6 +124,19 @@ pub struct ImageSource {
     #[serde(default)]
     pub encoding: Encoding,
     pub resize: Option<Resize>,
+    #[serde(default)]
+    pub delivery: Delivery,
+}
+
+/// ZI 输入不接受图片参数；方向由目标推导，不向制字工具添加选项。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FontSource {
+    pub schema: String,
+    pub kind: String,
+    #[serde(default = "source_mode")]
+    pub input: String,
+    pub source: String,
     #[serde(default)]
     pub delivery: Delivery,
 }

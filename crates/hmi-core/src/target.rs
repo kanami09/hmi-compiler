@@ -32,6 +32,8 @@ pub struct Capabilities {
     pub control_types: Vec<String>,
     #[serde(default)]
     pub image_codecs: Vec<String>,
+    #[serde(default)]
+    pub font_versions: Vec<u8>,
 }
 
 /// 已展开的共同目标输入。消费者重新核对内置规则，拒绝被修改的几何或版本。
@@ -88,7 +90,7 @@ impl Target {
             (base_width, base_height)
         };
         let signature = format!(
-            "page-ver21234-3:{}:{}:{width}:{height}:{}:{}",
+            "page-ver21234-4:{}:{}:{width}:{height}:{}:{}",
             config.profile,
             config.orientation,
             sha256(DEFAULT_PROGRAM.as_bytes()),
@@ -103,7 +105,7 @@ impl Target {
             canvas: Canvas { width, height },
             capabilities: Capabilities {
                 ordinary_controls: true,
-                media_assets: config.profile != "TJC4827X543_011",
+                media_assets: true,
                 control_types: crate::controls::DEFINITIONS
                     .iter()
                     .filter(|d| config.profile != "TJC4827X543_011" || !matches!(d.code, 112 | 113))
@@ -114,8 +116,9 @@ impl Target {
                 } else {
                     vec!["rgb565".into()]
                 },
+                font_versions: vec![6],
             },
-            data_revision: 3,
+            data_revision: 4,
             profile_data_sha256: sha256(signature.as_bytes()),
         })
     }

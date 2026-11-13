@@ -356,6 +356,7 @@ dependencies = [
  "image",
  "serde_json",
  "tempfile",
+ "toml",
 ]
 
 [[package]]
