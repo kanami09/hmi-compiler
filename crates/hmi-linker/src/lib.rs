@@ -446,6 +446,7 @@ fn layout(
                 | "script_property"
                 | "script_property_mode"
                 | "script_readonly"
+                | "script_property_access"
                 | "script_scope"
                 | "property_resource"
                 | "script_facts"

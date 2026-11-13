@@ -59,7 +59,7 @@ pub(super) const DUAL_STATE_BUTTON: Definition = Definition {
     properties: &DUAL_PROPERTIES,
     fields: &BUTTON_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &[],
+    access: PropertyAccess::DEFAULT,
 };
 
 const SCROLL_PROPERTIES: [Property; 24] = {
@@ -124,7 +124,7 @@ pub(super) const SLIDER: Definition = Definition {
     properties: &SLIDER_PROPERTIES,
     fields: &SLIDER_FIELDS,
     events: &["down", "up", "slide"],
-    readonly_properties: &[],
+    access: PropertyAccess::DEFAULT,
 };
 pub(super) const TOUCH_CAPTURE: Definition = Definition {
     name: "touch_cap",
@@ -132,7 +132,7 @@ pub(super) const TOUCH_CAPTURE: Definition = Definition {
     properties: &[SCOPE],
     fields: &TOUCH_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &["val"],
+    access: PropertyAccess::readonly(&["val"]),
 };
 pub(super) const SCROLL_TEXT: Definition = Definition {
     name: "scrolling_text",
@@ -140,5 +140,5 @@ pub(super) const SCROLL_TEXT: Definition = Definition {
     properties: &SCROLL_PROPERTIES,
     fields: &SCROLL_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &[],
+    access: PropertyAccess::DEFAULT,
 };

@@ -64,7 +64,7 @@ pub(super) const NUMBER: Definition = Definition {
     properties: &NUMBER_PROPERTIES,
     fields: &NUMBER_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &[],
+    access: PropertyAccess::DEFAULT,
 };
 pub(super) const XFLOAT: Definition = Definition {
     name: "xfloat",
@@ -72,5 +72,5 @@ pub(super) const XFLOAT: Definition = Definition {
     properties: &XFLOAT_PROPERTIES,
     fields: &XFLOAT_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &[],
+    access: PropertyAccess::DEFAULT,
 };

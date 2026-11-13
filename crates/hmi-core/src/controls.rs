@@ -13,6 +13,7 @@ use crate::{
 use serde::Serialize;
 use std::collections::BTreeMap;
 
+mod files;
 mod graphics;
 mod indicators;
 mod interaction;
@@ -67,6 +68,27 @@ pub struct Field {
     pub value: FieldValue,
 }
 
+/// 控件属性的运行时访问规则，集中声明读写和跨页面限制。
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct PropertyAccess {
+    pub readonly: &'static [&'static str],
+    pub page_local: &'static [&'static str],
+    pub compile_only: &'static [&'static str],
+}
+impl PropertyAccess {
+    pub const DEFAULT: Self = Self {
+        readonly: &[],
+        page_local: &[],
+        compile_only: &[],
+    };
+    pub const fn readonly(fields: &'static [&'static str]) -> Self {
+        Self {
+            readonly: fields,
+            ..Self::DEFAULT
+        }
+    }
+}
+
 /// 同一份定义用于源码检查和目标记录检查，避免两个阶段接受不同字段。
 #[derive(Debug, Serialize)]
 pub struct Definition {
@@ -75,8 +97,8 @@ pub struct Definition {
     pub properties: &'static [Property],
     pub fields: &'static [Field],
     pub events: &'static [&'static str],
-    /// 原生只读属性仍可作为脚本输入，但不能成为静态赋值目标。
-    pub readonly_properties: &'static [&'static str],
+    /// 运行时读取／写入限制；与源码属性是否可设置分别声明。
+    pub access: PropertyAccess,
 }
 
 const fn integer(
@@ -329,6 +351,8 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    files::FILE_BROWSER,
+    files::FILE_STREAM,
     x_interaction::SWITCH,
     x_interaction::COMBO_BOX,
     x_interaction::TEXT_SELECT,
@@ -351,7 +375,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: &TEXT_PROPERTIES,
         fields: &TEXT_FIELDS,
         events: &["down", "up"],
-        readonly_properties: &[],
+        access: PropertyAccess::DEFAULT,
     },
     Definition {
         name: "button",
@@ -359,7 +383,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: &BUTTON_PROPERTIES,
         fields: &BUTTON_FIELDS,
         events: &["down", "up"],
-        readonly_properties: &[],
+        access: PropertyAccess::DEFAULT,
     },
     Definition {
         name: "hotspot",
@@ -367,7 +391,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: HOTSPOT_PROPERTIES,
         fields: HOTSPOT_FIELDS,
         events: &["down", "up"],
-        readonly_properties: &[],
+        access: PropertyAccess::DEFAULT,
     },
     Definition {
         name: "variable",
@@ -375,7 +399,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: VARIABLE_PROPERTIES,
         fields: VARIABLE_FIELDS,
         events: &[],
-        readonly_properties: &[],
+        access: PropertyAccess::DEFAULT,
     },
     Definition {
         name: "timer",
@@ -383,7 +407,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: TIMER_PROPERTIES,
         fields: TIMER_FIELDS,
         events: &["timer"],
-        readonly_properties: &[],
+        access: PropertyAccess::DEFAULT,
     },
     Definition {
         name: "picture",
@@ -391,7 +415,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: PICTURE_PROPERTIES,
         fields: &PICTURE_FIELDS,
         events: &["down", "up"],
-        readonly_properties: &[],
+        access: PropertyAccess::DEFAULT,
     },
     Definition {
         name: "crop",
@@ -399,7 +423,7 @@ pub const DEFINITIONS: &[Definition] = &[
         properties: CROP_PROPERTIES,
         fields: &CROP_FIELDS,
         events: &["down", "up"],
-        readonly_properties: &[],
+        access: PropertyAccess::DEFAULT,
     },
 ];
 
@@ -593,6 +617,20 @@ impl Definition {
                         values["path"].len()
                     ),
                 ));
+            }
+        }
+        if self.code == 65 {
+            for (field, capacity) in [("dir", 255), ("filter", 64)] {
+                if values[field].len() > capacity {
+                    return Err(property_error(
+                        "text_capacity",
+                        field,
+                        format!(
+                            "文件浏览器 {field} 占用 {} 个 UTF-8 字节，超过 {capacity} 字节容量",
+                            values[field].len()
+                        ),
+                    ));
+                }
             }
         }
         if self.code == 62 {

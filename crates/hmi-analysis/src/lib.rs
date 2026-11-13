@@ -396,7 +396,7 @@ impl Checker<'_> {
             && write
             && field.is_some_and(|field| {
                 hmi_core::controls::by_code(object.type_code)
-                    .is_ok_and(|d| d.readonly_properties.contains(&field))
+                    .is_ok_and(|d| d.access.readonly.contains(&field))
             })
         {
             self.warn(
@@ -418,6 +418,28 @@ impl Checker<'_> {
                 format!("{}.{} 没有属性 {field}", page.name, object.name),
                 line,
             );
+        }
+        if self.check_modes
+            && let Some(field) = field
+            && let Ok(definition) = hmi_core::controls::by_code(object.type_code)
+        {
+            if definition.access.compile_only.contains(&field) {
+                self.warn(
+                    "script_property_access",
+                    format!(
+                        "{}.{}.{field} 仅用于编译配置，不能在运行脚本中访问",
+                        page.name, object.name
+                    ),
+                    line,
+                );
+            }
+            if self.page != Some(page_id) && definition.access.page_local.contains(&field) {
+                self.warn(
+                    "script_scope",
+                    format!("{}.{}.{field} 只能在所属页面访问", page.name, object.name),
+                    line,
+                );
+            }
         }
         if self.check_modes
             && object.type_code == 52

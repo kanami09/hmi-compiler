@@ -32,6 +32,14 @@
         {
           "control": "sliding_text",
           "supported": false
+        },
+        {
+          "control": "file_browser",
+          "supported": false
+        },
+        {
+          "control": "file_stream",
+          "supported": false
         }
       ],
       "k0": [
@@ -49,6 +57,14 @@
         },
         {
           "control": "sliding_text",
+          "supported": false
+        },
+        {
+          "control": "file_browser",
+          "supported": false
+        },
+        {
+          "control": "file_stream",
           "supported": false
         }
       ]

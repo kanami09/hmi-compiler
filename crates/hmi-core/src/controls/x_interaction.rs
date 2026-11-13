@@ -43,7 +43,7 @@ pub(super) const SWITCH: Definition = Definition {
     properties: SWITCH_PROPERTIES,
     fields: &SWITCH_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &[],
+    access: PropertyAccess::DEFAULT,
 };
 
 const COMBO_BOX_PROPERTIES: &[Property] = &[
@@ -137,7 +137,7 @@ pub(super) const COMBO_BOX: Definition = Definition {
     properties: COMBO_BOX_PROPERTIES,
     fields: &COMBO_BOX_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &[],
+    access: PropertyAccess::DEFAULT,
 };
 
 const TEXT_SELECT_PROPERTIES: &[Property] = &[
@@ -197,7 +197,7 @@ pub(super) const TEXT_SELECT: Definition = Definition {
     properties: TEXT_SELECT_PROPERTIES,
     fields: &TEXT_SELECT_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &["txt"],
+    access: PropertyAccess::readonly(&["txt"]),
 };
 
 const SLIDING_TEXT_PROPERTIES: &[Property] = &[
@@ -266,5 +266,5 @@ pub(super) const SLIDING_TEXT: Definition = Definition {
     properties: SLIDING_TEXT_PROPERTIES,
     fields: &SLIDING_TEXT_FIELDS,
     events: &["down", "up"],
-    readonly_properties: &["maxval_y"],
+    access: PropertyAccess::readonly(&["maxval_y"]),
 };

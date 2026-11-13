@@ -1,6 +1,6 @@
 # 新工具链使用说明
 
-当前可从零新建工程，使用下表列出的 23 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持 ZI 字库方向适配、K/T 的 RGB565 图片与 X543 的 JPEG 图片。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，使用下表列出的 25 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持 ZI 字库方向适配、K/T 的 RGB565 图片与 X543 的 JPEG 图片。构建过程不需要已有 HMI 或逆向资料。
 
 当前支持的型号和方向见根目录 `data/profiles/README.md`。其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
@@ -111,6 +111,8 @@ events = { timer = "events/tm0.timer.s" }
 | combo_box（下拉框） | x/y/w/h、font 引用表必填；path 是选项集合，txt 是独立保存的文本；当前仅 X543 | down、up |
 | text_select（选择文本） | x/y/w/h、font 引用表必填；path 是选项集合，val 为 u32，txt 只读；当前仅 X543 | down、up |
 | sliding_text（滑动文本） | x/y/w/h、font 引用表、txt 必填；maxval_y 只读，当前仅 X543 | down、up |
+| file_browser（文件浏览器） | x/y/w/h、font、pic1／pic2 引用表必填；可设目录、过滤条件和显示参数；当前仅 X543 | down、up |
+| file_stream（文件流） | 强制私有，当前仅声明未打开状态，无几何属性；当前仅 X543 | 无 |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -505,3 +507,39 @@ python examples/prepare_x_interaction_acceptance.py --font path/to/ui.zi
 ```
 
 字库须覆盖示例 ASCII 字符，建议字高 68。脚本生成两份 X543、0° 工程，各含 switches、combo、select、sltext 四页；三类选择值分别为 0／1，滑动文本末行分别为 D／EE。下拉框的 txt 明确设为 INIT 并保留，不因 val 自动改写。每份执行 7 条独立命令比较输出。结果和说明位于 `target/acceptance-x-interaction/`；已有目录不会覆盖，可另用 --output。脚本只读取独立 ZI，不读取已有 HMI 或内部资料。
+
+## 文件浏览器和文件流
+
+```toml
+[[objects]]
+name = "fb0"
+type = "file_browser"
+properties = { x = 20, y = 20, w = 440, h = 232, font = { ref = "ui" }, pic1 = { ref = "folder_icon" }, pic2 = { ref = "file_icon" }, dir = "sd0/", filter = "*.txt|*.data" }
+events = { up = "events/fb0.up.s" }
+
+[[objects]]
+name = "fs0"
+type = "file_stream"
+```
+
+这两类当前在 X543 中开放，T0／K0 的限制记录在通用 control_support 配置中。文件浏览器的 pic1 是文件夹图标、pic2 是默认文件图标，本批需要在工程资产表中显式声明，使用普通图片引用；不隐式导入官方图标，也不让图标 ID 固定占据前两项。重排资产后按最终图片列表重定位。图标可使用已支持的 PNG 透明图片编码。
+
+| 浏览器属性 | 默认值与范围 |
+|---|---|
+| dir | 运行时目录，默认 sd0/，最大 255 个 UTF-8 字节 |
+| filter | 文件名过滤条件，默认 *，最大 64 个 UTF-8 字节，可用 `|` 分隔模式 |
+| buffsize | 目录结果缓冲区字节数，u32，默认 32000；本工具不估算运行时可用内存 |
+| psta | 是否支持子目录，0／1、默认 0 |
+| fwarning | 编译时非 UTF-8 警告开关，0／1、默认 1；运行脚本不能读写 |
+| left、ch | 进度条显示 0～2、默认 1；滑动惯性 0～32、默认 8 |
+| dis、spax、spay | 文件名行数、横向／纵向间距，0～255，默认 3／24／8 |
+
+浏览器当前只支持单色 sta=1，默认白底黑字、style=2，style 可设 0～4；borderc/borderw 默认 0／2。选中背景 bco2=31、字体 pco2=65535，颜色范围均为 0～65535；xcen 默认 1、范围 0～2。vscope 默认 0，可设 0／1，但 txt 只能在所属页读取，全局作用域不会解除这一限制。
+
+dir 是屏幕的目录路径，不是构建机路径；构建时不会枚举、创建或清空 SD 目录，也不把 filter 当作本机文件匹配条件。txt、qty、最大滚动值和缓存保留原生初始状态，由运行环境更新，不伪造文件名或数量。val 的初始四字节为 FF FF FF FF，本批不开放源文件中的初始赋值，运行脚本可按控件规则设置；自定义文件图标 vvs2 当前保持为空。
+
+文件流是非可视控件，只有 vscope=0 可配置，没有 x/y/w/h、字体或事件槽。文件初始未打开，val=0、qty=0、en=0；原生方法分派及非零保留字段按已审查配方生成，不作为用户地址或缓存数值修改。需要打开、读取或写入时，在页面或其他控件事件中调用方法，当前静态分析不完整校验这些方法的参数和读写效果。
+
+脚本可在所属页设置文件流 val、读取 qty/en；qty/en 只读，文件流不允许跨页访问或调用。属性访问规则集中在注册表的 access 中：readonly 表示不可写，page_local 表示只限所属页，compile_only 表示不能在运行脚本中访问。这些限制与源码 properties 是否可编辑分别声明。
+
+本批只接入静态控件和显式图标。数据记录控件及其 .data 配套文件、自动图标依赖和真实 SD 读写另行接入／验收。
