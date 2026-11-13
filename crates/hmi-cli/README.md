@@ -276,3 +276,12 @@ properties = { x = 20, y = 100, w = 280, h = 40, val = 40 }
 进度条使用独立的模式定义：sta=0 表示单色，图片模式 sta=1 暂未接入。val 默认 0，范围 0～100；dez=0 横向、dez=1 竖向，默认 0。默认背景 bco=50712、前景 pco=1024，颜色范围均为 0～65535。
 
 dis 是进度条的圆角百分比字段，范围 0～100、默认 25；不能据此保证所有型号画出相同形状。此前 K035 画布显示直角，且属性栏未显示 dis；X543 显示圆角。这里保留字段和值，不在 K035 上自动清零；本工具不会模拟圆角或生成替代图片。
+
+生成这一批的验收工程：
+
+```powershell
+cargo build --workspace --bins --locked
+python examples/prepare_numeric_acceptance.py --font path/to/ui.zi
+```
+
+字库须包含数字、负号和小数点，建议字高为 68。脚本复制该独立素材，生成 K035 和 X543 的 0° 工程，各有 numbers、choices、progress 三页，核对整数／小数显示、选择状态，以及两种进度方向。它还检查有符号目标属性和字体引用，并实际执行独立工具计划比较输出。结果及核对说明位于 `target/acceptance-numeric/`，已有目录不会覆盖，可另用 --output。脚本不读取已有 HMI 或内部资料，也不附带字库。
