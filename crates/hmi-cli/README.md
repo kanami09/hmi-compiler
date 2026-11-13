@@ -176,6 +176,15 @@ items = [
 
 X543 同样接收这三种输入，编码为 JPEG，并开放 picture／crop。codec=auto 按型号选择编码，JPEG quality 默认 80、范围 1～100；质量 100 仍使用 JPEG。不透明图片可直接使用，带透明度的输入需显式 flatten。内部补齐和旋转不改变逻辑尺寸，详见[媒体编码器](../hmi-media/README.md)。
 
+生成 X543 的 0°／90° JPEG 验收工程：
+
+```powershell
+cargo build --workspace --bins --locked
+python examples/prepare_jpeg_acceptance.py
+```
+
+结果与核对说明在 `target/acceptance-jpeg/`。脚本复用公开的 BMP／PNG 生成函数，覆盖默认质量、96／100 质量、去透明、缩放、小尺寸补齐和切图，并实际执行独立工具计划比较输出。已有目录不会覆盖，可另用 --output。无需已有 HMI 或内部素材。
+
 控件属性使用 `pic = { ref = "logo" }` 或 `picc = { ref = "background" }`。也可显式写 `{ id = 0 }` 表示最终图片列表中的第 0 项；不能直接写裸整数，图片和切图不接受空图片。
 
 资源符号按当前清单解析。重排资产时，ref 仍绑定当前同名资产，id 则继续表示最终数值位置；脚本不自动改写。资源 ID 在链接时填写，编译器不读取原图以补全控件属性。
