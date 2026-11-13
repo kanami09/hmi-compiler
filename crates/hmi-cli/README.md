@@ -586,3 +586,11 @@ val 默认 4294967295，即原生的未选中状态；val、val_x、val_y 可配
 页面目标文件的 `metadata.runtime_dependencies` 保存每个控件的文件需求，包括对象序号、运行时路径、结构参数和是否允许自动创建。链接器从这些声明汇总 `link-map.json` 的 `runtime_files`，并核对声明与目标内的原生记录一致；只持有 `.hmo/.hma` 时也能完成检查。相同初始路径的结构参数不同会报错；结构相同会产生占用冲突警告，因为多个控件不能同时打开同一文件，需自行通过脚本协调。sd0/ 路径的 ASCII 字母按大小写不敏感比较，保存的路径不改写。
 
 当前 `runtime_files[].generated` 为 false，表示这是部署需求，链接器未生成 .data 文件。`structure.record_bytes/max_records/columns` 分别对应 lenth/maxval/dez；`users` 列出使用者的页面、控件、最终 ID 及 create_if_missing。此表只描述源码中的初始绑定，运行脚本后续修改 path 不会自动生成新的依赖。构建不读取虚拟 SD，不嵌入或创建 .data 文件；mode=1 时由原生环境创建，mode=0 时需要用户提供已有文件。配套文件生成仍待格式验证完成后接入。
+
+生成验收工程：
+
+```powershell
+python examples/prepare_data_record_acceptance.py --font path/to/ui.zi
+```
+
+输出位于 `target/acceptance-data-record/`，包含 Record0／Record1 两份工程，分别使用两列／三列、32／63 字节记录上限和 16／1000 条容量，绑定不同的实验路径。两份均为 X543、0°，每份实际执行 4 条独立作业并比较 HMI 和文件需求映射。脚本不访问虚拟 SD，已有输出目录不会覆盖，可用 --output 指定新目录。
