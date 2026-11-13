@@ -3,6 +3,7 @@
 //! 页面目标保存对象记录和重定位表；最终 ID、页面索引及 CRC 由链接器生成。
 
 use hmi_analysis::ScriptFacts;
+use hmi_core::dependency::{RuntimeDependency, RuntimeFile};
 use hmi_core::{Result, error, file, model::check_schema, target::Target};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -64,6 +65,9 @@ pub struct Metadata {
     pub scripts: Vec<ScriptFacts>,
     pub layout: Option<PageLayout>,
     pub relocations: Vec<Relocation>,
+    /// 文件存在于屏幕运行环境，不是 HMI 内嵌资源或构建机输入。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_dependencies: Vec<RuntimeDependency>,
 }
 
 #[derive(Clone, Debug)]
@@ -90,6 +94,7 @@ impl CompiledObject {
                 scripts,
                 layout: None,
                 relocations: Vec::new(),
+                runtime_dependencies: Vec::new(),
             },
             payload,
         }
@@ -130,8 +135,31 @@ impl CompiledObject {
         }
         object.metadata.layout = Some(layout);
         object.metadata.relocations.extend(resources);
+        object.metadata.runtime_dependencies = object.record_dependencies()?;
         object.validate()?;
         Ok(object)
+    }
+
+    /// 从自包含记录提取需求，也用来核对目标文件声明，防止漏报或伪造依赖。
+    fn record_dependencies(&self) -> Result<Vec<RuntimeDependency>> {
+        let mut dependencies = Vec::new();
+        if let Some(layout) = &self.metadata.layout {
+            for (index, record) in layout.objects.iter().enumerate().skip(1) {
+                let object = hmi_format::page::Object::parse(self.record(index)?)?;
+                let attributes = object
+                    .attributes
+                    .into_iter()
+                    .map(|a| (a.name, a.value))
+                    .collect::<Vec<_>>();
+                if let Some(file) = RuntimeFile::from_control(record.type_code, &attributes)? {
+                    dependencies.push(RuntimeDependency {
+                        object: index,
+                        file,
+                    });
+                }
+            }
+        }
+        Ok(dependencies)
     }
 
     pub fn record(&self, index: usize) -> Result<&[u8]> {
@@ -169,6 +197,7 @@ impl CompiledObject {
         if self.metadata.kind == ObjectKind::Program {
             if self.metadata.layout.is_some()
                 || !self.metadata.relocations.is_empty()
+                || !self.metadata.runtime_dependencies.is_empty()
                 || self.metadata.scripts.iter().any(|f| {
                     f.source.page.is_some() || f.source.object.is_some() || f.source.event.is_some()
                 })
@@ -276,6 +305,12 @@ impl CompiledObject {
                     return Err(error("object_relocation", "资源属性缺少重定位"));
                 }
             }
+        }
+        if self.metadata.runtime_dependencies != self.record_dependencies()? {
+            return Err(error(
+                "runtime_dependency",
+                "目标文件的运行时文件声明与控件记录不一致，请重新编译",
+            ));
         }
         for facts in &self.metadata.scripts {
             if facts.source.page.is_some()

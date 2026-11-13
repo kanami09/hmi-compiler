@@ -15,6 +15,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
+mod runtime;
 
 #[derive(Debug)]
 pub struct Linked {
@@ -300,6 +301,7 @@ fn resolve_resource<T>(
 struct Layout {
     pages: Vec<Vec<u8>>,
     diagnostics: Vec<Diagnostic>,
+    runtime_files: Vec<serde_json::Value>,
 }
 
 fn layout(
@@ -424,7 +426,12 @@ fn layout(
         resource: format!("{id}.pa"),
     }));
     let context = Context::from_pages(parsed.iter(), references);
-    let mut diagnostics = check_linked_facts(&context, None, &program.metadata.scripts);
+    let (runtime_files, mut diagnostics) = runtime::collect(pages)?;
+    diagnostics.extend(check_linked_facts(
+        &context,
+        None,
+        &program.metadata.scripts,
+    ));
     let mut static_errors = program
         .metadata
         .scripts
@@ -467,6 +474,7 @@ fn layout(
     Ok(Layout {
         pages: native,
         diagnostics,
+        runtime_files,
     })
 }
 
@@ -582,6 +590,7 @@ pub fn link_with_assets(
     let map = serde_json::json!({"schema":"hmi.link-map/1","target":target,
         "pages":project.pages.iter().enumerate().map(|(id,(entry,page))|serde_json::json!({"id":id,"name":page.name,"resource":container.entries[*entry].name,"objects":page.objects.iter().map(|o|serde_json::json!({"id":o.id,"name":o.name,"type":hmi_format::page::type_name(o.type_code)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "assets":asset_map,
+        "runtime_files":layout.runtime_files,
         "resources":container.entries,"output_sha256":hmi_core::sha256(&bytes)});
     Ok(Linked {
         bytes,

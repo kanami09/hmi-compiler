@@ -19,6 +19,7 @@ mod indicators;
 mod interaction;
 mod numeric;
 mod x_interaction;
+pub use files::DATA_RECORD_LIMIT;
 
 pub const PAGE_EVENTS: &[&str] = &["load", "loadend", "down", "up", "unload"];
 
@@ -351,6 +352,7 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    files::DATA_RECORD,
     files::FILE_BROWSER,
     files::FILE_STREAM,
     x_interaction::SWITCH,
@@ -631,6 +633,27 @@ impl Definition {
                         ),
                     ));
                 }
+            }
+        }
+        if self.code == 66 {
+            for (field, capacity) in [("path", 255), ("format", 256), ("dir", 255)] {
+                if values[field].len() > capacity {
+                    return Err(property_error(
+                        "text_capacity",
+                        field,
+                        format!(
+                            "数据记录 {field} 占用 {} 个 UTF-8 字节，超过 {capacity} 字节容量",
+                            values[field].len()
+                        ),
+                    ));
+                }
+            }
+            if values["path"].is_empty() {
+                return Err(property_error(
+                    "runtime_file_path",
+                    "path",
+                    "数据记录必须指定运行时文件路径",
+                ));
             }
         }
         if self.code == 62 {

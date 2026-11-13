@@ -163,6 +163,15 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
         return Err(error("object_count", "页面最多包含 250 个普通控件"));
     }
     let mut names = BTreeSet::from([page.name.as_str()]);
+    if page
+        .objects
+        .iter()
+        .filter(|o| o.type_name == "data_record")
+        .count()
+        > controls::DATA_RECORD_LIMIT
+    {
+        return Err(error("control_count", "一个工程最多支持八个数据记录控件"));
+    }
     let mut touch_capture = false;
     for object in &page.objects {
         if object.type_name == "touch_cap" && std::mem::replace(&mut touch_capture, true) {

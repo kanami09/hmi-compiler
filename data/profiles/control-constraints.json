@@ -40,6 +40,10 @@
         {
           "control": "file_stream",
           "supported": false
+        },
+        {
+          "control": "data_record",
+          "supported": false
         }
       ],
       "k0": [
@@ -65,6 +69,10 @@
         },
         {
           "control": "file_stream",
+          "supported": false
+        },
+        {
+          "control": "data_record",
           "supported": false
         }
       ]
