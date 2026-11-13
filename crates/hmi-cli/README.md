@@ -185,6 +185,14 @@ python examples/prepare_jpeg_acceptance.py
 
 结果与核对说明在 `target/acceptance-jpeg/`。脚本复用公开的 BMP／PNG 生成函数，覆盖默认质量、96／100 质量、去透明、缩放、小尺寸补齐和切图，并实际执行独立工具计划比较输出。已有目录不会覆盖，可另用 --output。无需已有 HMI 或内部素材。
 
+生成透明图片与白底去透明的对照工程：
+
+```powershell
+python examples/prepare_alpha_acceptance.py
+```
+
+结果在 `target/acceptance-alpha/`，包含 X543 的 0°／90° 工程。透明圆环共用一个资产，分别叠在不同底色上，另有同一 PNG 显式去透明的白底版本。脚本核对 has_alpha 和 PNG／BMP 编辑源，并实际执行独立工具计划；无需外部素材或字库，已有目录不会覆盖。
+
 控件属性使用 `pic = { ref = "logo" }` 或 `picc = { ref = "background" }`。也可显式写 `{ id = 0 }` 表示最终图片列表中的第 0 项；不能直接写裸整数，图片和切图不接受空图片。
 
 资源符号按当前清单解析。重排资产时，ref 仍绑定当前同名资产，id 则继续表示最终数值位置；脚本不自动改写。资源 ID 在链接时填写，编译器不读取原图以补全控件属性。
