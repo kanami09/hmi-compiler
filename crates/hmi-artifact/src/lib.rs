@@ -42,6 +42,7 @@ pub enum RelocationKind {
     ImageId,
     FontId,
     ExternalPath,
+    AnimationId,
 }
 
 /// object 指目标文件内的记录序号，不是预先分配的 HMI 控件 ID。
@@ -282,7 +283,7 @@ impl CompiledObject {
                         return Err(error("object_relocation", "控件 ID 重定位无效"));
                     }
                 }
-                RelocationKind::ImageId | RelocationKind::FontId => {
+                RelocationKind::ImageId | RelocationKind::FontId | RelocationKind::AnimationId => {
                     let font = relocation.kind == RelocationKind::FontId;
                     let definition =
                         hmi_core::controls::by_code(layout.objects[relocation.object].type_code)?;
@@ -290,6 +291,8 @@ impl CompiledObject {
                         p.name == relocation.property
                             && if font {
                                 matches!(p.storage, hmi_core::controls::Storage::Font)
+                            } else if relocation.kind == RelocationKind::AnimationId {
+                                matches!(p.storage, hmi_core::controls::Storage::Animation)
                             } else {
                                 matches!(p.storage, hmi_core::controls::Storage::Image)
                             }
@@ -321,7 +324,9 @@ impl CompiledObject {
             for property in hmi_core::controls::by_code(record.type_code)?.properties {
                 if matches!(
                     property.storage,
-                    hmi_core::controls::Storage::Image | hmi_core::controls::Storage::Font
+                    hmi_core::controls::Storage::Image
+                        | hmi_core::controls::Storage::Font
+                        | hmi_core::controls::Storage::Animation
                 ) && !relocated.contains(&(index, property.name))
                 {
                     return Err(error("object_relocation", "资源属性缺少重定位"));

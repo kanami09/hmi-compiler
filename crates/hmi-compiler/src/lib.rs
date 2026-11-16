@@ -274,7 +274,9 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                 }
                 if matches!(
                     property.storage,
-                    controls::Storage::Image | controls::Storage::Font
+                    controls::Storage::Image
+                        | controls::Storage::Font
+                        | controls::Storage::Animation
                 ) {
                     let value = properties.get(property.name).ok_or_else(|| {
                         error(
@@ -298,7 +300,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                     {
                         return Err(error(
                             "resource_reference",
-                            "资源属性必须引用有效的图片或字体 ID，不能使用空资源",
+                            "资源属性必须引用有效的媒体 ID，不能使用空资源",
                         ));
                     }
                     properties.insert(property.name.into(), 0_i64.into());
@@ -307,6 +309,8 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                         property: property.name.into(),
                         kind: if font {
                             hmi_artifact::RelocationKind::FontId
+                        } else if matches!(property.storage, controls::Storage::Animation) {
+                            hmi_artifact::RelocationKind::AnimationId
                         } else {
                             hmi_artifact::RelocationKind::ImageId
                         },

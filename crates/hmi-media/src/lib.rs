@@ -18,6 +18,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod animation;
+
 const MAX_RGBA_BYTES: u64 = 64 * 1024 * 1024;
 pub struct AssetProbe {
     pub info: AssetInfo,
@@ -320,7 +322,10 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
 
 /// 探测会完整解码和检查变换，但不生成运行像素、.hma 或其他输出文件。
 pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
-    if is_font(path)? {
+    if asset_kind(path)? == "animation" {
+        return animation::probe(path, target);
+    }
+    if asset_kind(path)? == "font" {
         let (info, _, inputs) = prepare_font(path, target).map_err(|e| file::at_file(e, path))?;
         return Ok(AssetProbe {
             info: AssetInfo::Font { font: info },
@@ -335,7 +340,10 @@ pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
 }
 
 pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
-    if is_font(path)? {
+    if asset_kind(path)? == "animation" {
+        return animation::encode(path, target);
+    }
+    if asset_kind(path)? == "font" {
         let (info, bytes, inputs) =
             prepare_font(path, target).map_err(|e| file::at_file(e, path))?;
         let output = hmi_format::font::adapt(&bytes, target.orientation)?;
@@ -346,37 +354,13 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
     }
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
     if let Some(settings) = &p.info.jpeg {
-        // 先在未旋转画布右侧／下侧补齐，再旋转存储光栅，避免裁剪位置错位。
-        let mut padded = RgbaImage::from_pixel(
-            u32::from(settings.padded_width),
-            u32::from(settings.padded_height),
-            Rgba([0, 0, 0, if settings.has_alpha { 0 } else { 255 }]),
-        );
-        imageops::replace(&mut padded, &p.pixels, 0, 0);
-        let rotated = match p.info.orientation {
-            0 => padded,
-            90 => imageops::rotate90(&padded),
-            180 => imageops::rotate180(&padded),
-            270 => imageops::rotate270(&padded),
-            _ => unreachable!("有效目标方向已校验"),
-        };
-        let alpha = settings.has_alpha.then(|| {
-            hmi_format::picture::alpha7::encode(&rotated.pixels().map(|p| p[3]).collect::<Vec<_>>())
-        });
-        let rgb = DynamicImage::ImageRgba8(rotated).to_rgb8();
-        let mut bytes = Vec::new();
-        let mut encoder = jpeg_encoder::Encoder::new(&mut bytes, settings.quality);
-        // 所有质量都显式使用 4:2:0 和非渐进帧，质量 100 也不切换私有编码。
-        encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_2_2);
-        encoder.set_progressive(false);
-        encoder
-            .encode(
-                rgb.as_raw(),
-                p.info.storage_width,
-                p.info.storage_height,
-                jpeg_encoder::ColorType::Rgb,
-            )
-            .map_err(|e| error("image_encode", e.to_string()))?;
+        let (bytes, alpha) = encode_jpeg_pixels(
+            &p.pixels,
+            (settings.padded_width, settings.padded_height),
+            p.info.orientation,
+            settings.quality,
+            settings.has_alpha,
+        )?;
         let runtime = hmi_format::picture::jpeg::runtime_with_alpha(
             p.info.width,
             p.info.height,
@@ -451,12 +435,16 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
     })
 }
 
-fn is_font(path: &Path) -> Result<bool> {
+fn asset_kind(path: &Path) -> Result<&'static str> {
     let value: toml::Value = file::read_toml(path)?;
     match value.get("kind").and_then(toml::Value::as_str) {
-        Some("font") => Ok(true),
-        Some("image") => Ok(false),
-        _ => Err(error("asset_kind", "当前媒体编码器支持 image 和 font 资产")),
+        Some("font") => Ok("font"),
+        Some("image") => Ok("image"),
+        Some("animation") => Ok("animation"),
+        _ => Err(error(
+            "asset_kind",
+            "当前媒体编码器支持 image、font 和 animation 资产",
+        )),
     }
 }
 
@@ -487,4 +475,51 @@ fn prepare_font(path: &Path, target: &Target) -> Result<(FontInfo, Vec<u8>, Vec<
         backend: "hmi-zi-v6-rle/1".into(),
     };
     Ok((info, bytes, vec![path.into(), source]))
+}
+
+/// 只编码显式给定的补齐画布；资源家族自行决定头部和最小补齐尺寸。
+fn encode_jpeg_pixels(
+    pixels: &RgbaImage,
+    padded_size: (u16, u16),
+    orientation: u16,
+    quality: u8,
+    has_alpha: bool,
+) -> Result<(Vec<u8>, Option<Vec<u8>>)> {
+    let storage_size = if matches!(orientation, 90 | 270) {
+        (padded_size.1, padded_size.0)
+    } else {
+        padded_size
+    };
+    // 先在未旋转画布右侧／下侧补齐，再旋转存储光栅，避免裁剪位置错位。
+    let mut padded = RgbaImage::from_pixel(
+        u32::from(padded_size.0),
+        u32::from(padded_size.1),
+        Rgba([0, 0, 0, if has_alpha { 0 } else { 255 }]),
+    );
+    imageops::replace(&mut padded, pixels, 0, 0);
+    let rotated = match orientation {
+        0 => padded,
+        90 => imageops::rotate90(&padded),
+        180 => imageops::rotate180(&padded),
+        270 => imageops::rotate270(&padded),
+        _ => unreachable!("有效目标方向已校验"),
+    };
+    let alpha = has_alpha.then(|| {
+        hmi_format::picture::alpha7::encode(&rotated.pixels().map(|p| p[3]).collect::<Vec<_>>())
+    });
+    let rgb = DynamicImage::ImageRgba8(rotated).to_rgb8();
+    let mut bytes = Vec::new();
+    let mut encoder = jpeg_encoder::Encoder::new(&mut bytes, quality);
+    // 所有质量都显式使用 4:2:0 和非渐进帧，质量 100 也不切换私有编码。
+    encoder.set_sampling_factor(jpeg_encoder::SamplingFactor::F_2_2);
+    encoder.set_progressive(false);
+    encoder
+        .encode(
+            rgb.as_raw(),
+            storage_size.0,
+            storage_size.1,
+            jpeg_encoder::ColorType::Rgb,
+        )
+        .map_err(|e| error("image_encode", e.to_string()))?;
+    Ok((bytes, alpha))
 }

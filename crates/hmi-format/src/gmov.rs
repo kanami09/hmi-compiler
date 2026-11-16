@@ -354,6 +354,7 @@ pub fn write_source(gif: &[u8]) -> Result<Vec<u8>> {
         return Err(error("animation_length", "GIF 源文件超过 64 MiB"));
     }
     let mut out = vec![0; HEADER];
+    // 模式 1 包装原 GIF；100／10 为编辑源固定字段，不是运行帧质量或 GIF 帧率。
     out[..8].copy_from_slice(b"GMOV\x0a\x64\x0a\x01");
     put_u32(&mut out, 8, 76)?;
     put_u32(&mut out, 12, info.delays.len())?;

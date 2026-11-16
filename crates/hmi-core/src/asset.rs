@@ -155,6 +155,49 @@ pub struct FontSource {
     #[serde(default)]
     pub delivery: Delivery,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnimationEncoding {
+    #[serde(default = "animation_quality")]
+    pub quality: u8,
+    #[serde(default)]
+    pub alpha: Alpha,
+    pub background: Option<String>,
+    #[serde(default = "animation_timing")]
+    pub timing: String,
+}
+fn animation_quality() -> u8 {
+    80
+}
+fn animation_timing() -> String {
+    "native-compatible".into()
+}
+impl Default for AnimationEncoding {
+    fn default() -> Self {
+        Self {
+            quality: 80,
+            alpha: Alpha::Preserve,
+            background: None,
+            timing: animation_timing(),
+        }
+    }
+}
+
+/// GIF 是权威输入；loop/en 属于控件，不属于共享资产。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AnimationSource {
+    pub schema: String,
+    pub kind: String,
+    #[serde(default = "source_mode")]
+    pub input: String,
+    pub source: String,
+    #[serde(default)]
+    pub encoding: AnimationEncoding,
+    #[serde(default)]
+    pub delivery: Delivery,
+}
 fn source_mode() -> String {
     "source".into()
 }

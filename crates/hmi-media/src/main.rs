@@ -12,7 +12,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[command(
     name = "hmi-media",
     version,
-    about = "编码 HMI 媒体资产，支持 RGB565／JPEG 图片和 UTF-8 ZI v6 字库"
+    about = "编码 HMI 媒体资产，支持图片、ZI 字库和 GIF 动画"
 )]
 struct Args {
     #[arg(long, global = true)]
@@ -39,6 +39,15 @@ enum Command {
     /// 校验并查看资产目标的描述和成员。
     Inspect { file: PathBuf },
 }
+fn timing_note(info: &hmi_artifact::asset::AssetInfo) -> String {
+    match info {
+        hmi_artifact::asset::AssetInfo::Animation { animation: a } => format!(
+            " 动画：{} 帧／{}ms → {} 帧／{}ms。",
+            a.source_frames, a.source_duration_ms, a.frame_count, a.duration_ms
+        ),
+        _ => String::new(),
+    }
+}
 fn run(args: &Args) -> Result<CommandResult> {
     match &args.command {
         Command::Inspect { file } => {
@@ -51,10 +60,8 @@ fn run(args: &Args) -> Result<CommandResult> {
         Command::Probe { source, target } => {
             let target: Target = file::read_json(target)?;
             let probe = hmi_media::probe(source, &target)?;
-            Ok(cli::success(
-                serde_json::json!(probe.info),
-                "媒体输入检查通过。",
-            ))
+            let message = format!("媒体输入检查通过。{}", timing_note(&probe.info));
+            Ok(cli::success(serde_json::json!(probe.info), message))
         }
         Command::Encode {
             source,
@@ -70,9 +77,10 @@ fn run(args: &Args) -> Result<CommandResult> {
                 .collect::<Vec<_>>();
             inputs.push(target);
             encoded.object.write(output, &inputs)?;
+            let note = timing_note(&encoded.object.metadata.info);
             Ok(cli::success(
                 serde_json::json!({"output":output,"asset":encoded.object.metadata.info}),
-                format!("媒体编码完成：{}", output.display()),
+                format!("媒体编码完成：{}{}", output.display(), note),
             ))
         }
     }

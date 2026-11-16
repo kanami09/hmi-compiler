@@ -1,6 +1,6 @@
 # 新工具链使用说明
 
-当前可从零新建工程，使用下表列出的 27 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持 ZI 字库方向适配、K/T 的 RGB565 图片与 X543 的 JPEG 图片，以及独立 XI 外部图片输出。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，使用下表列出的 28 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持 ZI 字库方向适配、K/T 的 RGB565 图片与 X543 的 JPEG 图片、独立 XI 外部图片输出，以及 GIF 动画编码。构建过程不需要已有 HMI 或逆向资料。
 
 当前支持的型号和方向见根目录 `data/profiles/README.md`。其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
@@ -115,6 +115,7 @@ events = { timer = "events/tm0.timer.s" }
 | file_stream（文件流） | 强制私有，当前仅声明未打开状态，无几何属性；当前仅 X543 | 无 |
 | data_record（数据记录） | x/y/w/h、font 引用表、path、lenth、maxval、dez 必填；强制全局，每工程最多八个；当前仅 X543 | down、up |
 | external_picture（外部图片） | x/y/w/h、path 必填；path 可为运行时路径字符串或外部图片资产的 ref；当前仅 X543 | down、up |
+| animation（动画） | x/y/w/h、vid 引用表必填；当前仅内嵌 from=0，支持播放状态、循环和速度；当前仅 X543 | down、up、playend |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -647,3 +648,56 @@ python examples/prepare_external_acceptance.py
 ```
 
 输出位于 `target/acceptance-external/`，包括 X543 的 0°／90° HMI 和 sd0/ 下的两个 XI 文件，不需要外部素材或字库。请先把两个 XI 复制到上位机的虚拟 SD 根目录，再打开对应 HMI；详细核对项目见输出目录的 README。每份实际执行五条独立作业，比较 HMI、XI 和链接映射；已有输出目录不会覆盖，可用 --output 指定新目录。
+
+## GIF 动画
+
+在工程资产表中声明动画描述，原始 GIF 作为唯一必需的媒体输入：
+
+```toml
+schema = "hmi.asset/1"
+kind = "animation"
+source = "loading.gif"
+
+[encoding]
+quality = 80
+alpha = "preserve"
+timing = "native-compatible"
+```
+
+| 字段 | 含义与默认行为 |
+|---|---|
+| source | 相对于资产描述文件的 GIF 路径；检查实际签名、逻辑画布、帧范围及数据块，按 GIF 语义合成局部帧和处理 disposal |
+| encoding.quality | JPEG 运行帧质量，1～100、默认 80；100 仍使用 JPEG，不切换到私有编码 |
+| encoding.alpha | 默认 preserve，保留透明度；flatten 时必须指定 background="#RRGGBB"，不改写原始 GIF |
+| encoding.timing | 当前只支持 native-compatible：丢弃零延时帧，按原生规则处理不足 30ms 的短帧，单帧延时最大 65000ms |
+| delivery | 当前只支持默认 embedded；外部动画输出尚未接入 |
+
+动画不接受 fps 或 codec 参数，播放时序来自 GIF 延时；loop/en 是控件属性，不放在共享资产中。当前不提供动画缩放参数，保留原始逻辑尺寸；修改控件几何不会隐式改写共享 GIF。尺寸补齐只发生在运行帧的编码光栅中，先按 16 对齐再旋转，不改变逻辑画布。
+
+当原生时序规则改变了帧或延时，会产生 animation_timing 警告，列出源帧数／时长与输出帧数／时长；-Werror 会阻止这类构建替换已有 HMI。资产描述中 timing 固定为上述策略，不用静默忽略短帧。inspect 中的 frame_indices、delays_ms、timing_adjusted 记录具体调整，frame_count/duration_ms 与 source_frames/source_duration_ms 可直接比较。独立 hmi-media 的检查／编码结果也报告帧数和时长。
+
+运行 `.gmov` 是 76 字节头、40 字节帧索引、JPEG／透明度帧和扩展区；编辑源 `.gmovs` 包装完整原 GIF，便于上位机继续编辑。二者作为不同成员封装在自包含 `.hma` 中，链接器不调用 GIF 或 JPEG 解码器，也不需要原始 GIF 仍在本机。动画与普通图片、字库分别分配 ID，重排动画资产只按最终动画列表解析引用。
+
+控件示例（clip 是当前工程的动画资产符号）：
+
+```toml
+[[objects]]
+name = "gm0"
+type = "animation"
+properties = { x = 20, y = 20, w = 160, h = 80, vid = { ref = "clip" }, en = 0, loop = 1, dis = 100 }
+events = { playend = "events/gm0.playend.s" }
+```
+
+vid 必须为动画的 `{ ref = "..." }` 或最终动画列表的 `{ id = ... }`，不能用裸整数、none 或其他媒体类别。当前内置型号中仅 X543 开放动画，支持四个方向；T0/K0 的限制通过统一能力表配置。
+
+| 控件属性 | 含义与范围 |
+|---|---|
+| from | 当前固定为 0，引用内嵌动画；外部播放和 path 输入尚未接入 |
+| vscope、sendkey | 默认均为 0，可设 0／1；动画默认私有 |
+| en | 默认 0 停止，1 播放，2 暂停 |
+| loop | 默认 0，不循环；1 表示循环；不会因为 loop=1 自动把 en 改为播放 |
+| dis | 播放速度百分比，10～1000、默认 100 |
+| tim | 当前播放时间的 u32 初值，默认 0；实际播放和定位行为需在运行环境核对 |
+| stim、qty | 运行时总时长／总帧数，只读；文件中初始化为 0，不从资产信息预先回填 |
+
+事件槽为 down、up、playend。原生保留字段按创建配方写入，不作为用户可编辑数值；属性只读检查、作用域和事件归属沿用共同规则。当前 GIF 解码使用 Rust 图像库，无需 FFmpeg 或原厂转换工具；视频／音频后端仍另行接入。支持范围为最多 1000 个源帧、源文件不超过 64 MiB，单帧解码 RGBA 不超过 64 MiB、保留帧 RGBA 总量及运行资源各不超过 128 MiB；纯文本 GIF 扩展当前明确拒绝。

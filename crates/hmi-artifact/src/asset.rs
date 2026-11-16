@@ -55,12 +55,35 @@ pub struct FontInfo {
     pub backend: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AnimationInfo {
+    pub width: u16,
+    pub height: u16,
+    pub orientation: u16,
+    pub quality: u8,
+    pub alpha: Alpha,
+    pub background: Option<String>,
+    pub timing: String,
+    pub source_frames: u32,
+    pub source_duration_ms: u32,
+    pub frame_count: u32,
+    pub duration_ms: u32,
+    pub timing_adjusted: bool,
+    pub frame_indices: Vec<u32>,
+    pub delays_ms: Vec<u16>,
+    pub has_alpha: bool,
+    pub source_sha256: String,
+    pub backend: String,
+}
+
 /// 每种资产只携带自己的描述，不能同时声明为图片和字库。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AssetInfo {
     Image { image: ImageInfo },
     Font { font: FontInfo },
+    Animation { animation: AnimationInfo },
 }
 impl AssetInfo {
     pub fn image(&self) -> Option<&ImageInfo> {
@@ -73,12 +96,14 @@ impl AssetInfo {
         match self {
             Self::Image { image } => image.orientation,
             Self::Font { font } => font.orientation,
+            Self::Animation { animation } => animation.orientation,
         }
     }
     pub fn kind(&self) -> &'static str {
         match self {
             Self::Image { .. } => "image",
             Self::Font { .. } => "font",
+            Self::Animation { .. } => "animation",
         }
     }
 }
@@ -114,6 +139,43 @@ pub struct AssetObject {
 }
 
 impl AssetObject {
+    pub fn animation(info: AnimationInfo, runtime: Vec<u8>, source: Vec<u8>) -> Result<Self> {
+        let split = runtime.len();
+        let mut payload = runtime;
+        payload.extend(&source);
+        let members = vec![
+            Member {
+                role: MemberRole::Runtime,
+                extension: "gmov".into(),
+                reference_kind: Some(*b"gmov\0\0\0\0"),
+                offset: 0,
+                length: u32::try_from(split)
+                    .map_err(|_| error("asset_length", "动画资源超过 u32 范围"))?,
+                sha256: sha256(&payload[..split]),
+            },
+            Member {
+                role: MemberRole::Source,
+                extension: "gmovs".into(),
+                reference_kind: None,
+                offset: split as u32,
+                length: u32::try_from(source.len())
+                    .map_err(|_| error("asset_length", "动画编辑源超过 u32 范围"))?,
+                sha256: sha256(&source),
+            },
+        ];
+        let object = Self {
+            metadata: AssetMetadata {
+                schema: "hmi.asset-object/1".into(),
+                format: "ver21234".into(),
+                producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
+                info: AssetInfo::Animation { animation: info },
+                members,
+            },
+            payload,
+        };
+        object.validate()?;
+        Ok(object)
+    }
     pub fn image(info: ImageInfo, runtime: Vec<u8>, source: Vec<u8>) -> Result<Self> {
         let mut members = Vec::new();
         let mut payload = Vec::new();
@@ -209,6 +271,10 @@ impl AssetObject {
             return Err(error("asset_format", "不支持此资产的容器格式"));
         }
         let expected: Vec<_> = match &self.metadata.info {
+            AssetInfo::Animation { .. } => vec![
+                (MemberRole::Runtime, "gmov", Some(*b"gmov\0\0\0\0")),
+                (MemberRole::Source, "gmovs", None),
+            ],
             AssetInfo::Image { image } if image.delivery.mode == "external" => {
                 vec![(MemberRole::Runtime, "xi", None)]
             }
@@ -244,6 +310,7 @@ impl AssetObject {
             return Err(error("asset_length", "资产成员未完整覆盖载荷"));
         }
         match &self.metadata.info {
+            AssetInfo::Animation { animation } => self.validate_animation(animation),
             AssetInfo::Image { image } => self.validate_image(image),
             AssetInfo::Font { font } => {
                 let h = hmi_format::font::inspect(self.member(0)?)?;
@@ -260,6 +327,56 @@ impl AssetObject {
                 Ok(())
             }
         }
+    }
+    fn validate_animation(&self, info: &AnimationInfo) -> Result<()> {
+        let runtime = hmi_format::gmov::inspect_runtime(self.member(0)?)?;
+        let source = hmi_format::gmov::inspect_source(self.member(1)?)?;
+        let indices = &info.frame_indices;
+        let expected = hmi_format::gmov::normalize_timing(&source.delays);
+        let adjusted = expected.len() != source.delays.len()
+            || expected.iter().enumerate().any(|(i, (index, delay))| {
+                *index as usize != i || u32::from(*delay) != source.delays[i]
+            });
+        if (info.width, info.height, info.orientation, info.quality)
+            != (
+                runtime.width,
+                runtime.height,
+                runtime.orientation,
+                runtime.quality,
+            )
+            || (source.width, source.height) != (info.width, info.height)
+            || info.source_frames as usize != source.delays.len()
+            || info.source_duration_ms != source.delays.iter().sum::<u32>()
+            || info.timing != "native-compatible"
+            || info.frame_count as usize != runtime.frames.len()
+            || info.duration_ms != runtime.duration_ms
+            || info.timing_adjusted != adjusted
+            || expected
+                != indices
+                    .iter()
+                    .copied()
+                    .zip(info.delays_ms.iter().copied())
+                    .collect::<Vec<_>>()
+            || indices.len() != runtime.frames.len()
+            || info.delays_ms
+                != runtime
+                    .frames
+                    .iter()
+                    .map(|f| f.delay_ms)
+                    .collect::<Vec<_>>()
+            || indices.iter().any(|i| *i >= info.source_frames)
+            || indices.windows(2).any(|p| p[0] >= p[1])
+            || (info.alpha == Alpha::Preserve) != runtime.alpha_enabled
+            || (info.alpha == Alpha::Preserve && info.background.is_some())
+            || info.has_alpha != runtime.frames.iter().any(|f| f.alpha_offset != 0)
+            || info.source_sha256 != sha256(&self.member(1)?[hmi_format::gmov::HEADER..])
+        {
+            return Err(error(
+                "asset_metadata",
+                "动画描述与运行帧、时序或原 GIF 不一致",
+            ));
+        }
+        Ok(())
     }
     fn validate_image(&self, info: &ImageInfo) -> Result<()> {
         info.delivery.validate()?;
@@ -378,6 +495,11 @@ impl AssetObject {
         if self.metadata.format != target.format
             || self.metadata.info.orientation() != target.orientation
             || match &self.metadata.info {
+                AssetInfo::Animation { .. } => !target
+                    .capabilities
+                    .control_types
+                    .iter()
+                    .any(|c| c == "animation"),
                 AssetInfo::Image { image } => {
                     !target.capabilities.image_codecs.contains(&image.codec)
                         || (image.delivery.mode == "external"

@@ -1,7 +1,7 @@
 //! 按最终页面顺序解析引用、生成容器并校验输出，不读取页面或脚本源码。
 
 use hmi_analysis::{Context, check_linked_facts};
-use hmi_artifact::asset::{AssetInfo, AssetObject, FontInfo, ImageInfo};
+use hmi_artifact::asset::{AnimationInfo, AssetInfo, AssetObject, FontInfo, ImageInfo};
 use hmi_artifact::{CompiledObject, ObjectKind, RelocationKind};
 use hmi_core::{
     Result, controls,
@@ -41,6 +41,7 @@ fn assemble_page(
     images: &[(String, ImageInfo)],
     fonts: &[(String, FontInfo)],
     external: &[(String, ImageInfo)],
+    animations: &[(String, AnimationInfo)],
 ) -> Result<(Vec<u8>, Vec<hmi_analysis::ScriptFacts>)> {
     let layout = object
         .metadata
@@ -191,6 +192,18 @@ fn assemble_page(
     let mut values = vec![BTreeMap::new(); parsed.len()];
     for relocation in &object.metadata.relocations {
         match relocation.kind {
+            RelocationKind::AnimationId => {
+                let id =
+                    resolve_resource(animations, relocation.reference.as_ref().unwrap(), "动画")?;
+                if parsed[relocation.object]
+                    .attribute(&relocation.property)
+                    .is_none_or(|a| a.value != [0, 0])
+                {
+                    return Err(error("object_relocation", "动画 ID 占位值必须为双字节零"));
+                }
+                values[relocation.object]
+                    .insert(relocation.property.clone(), id.to_le_bytes().to_vec());
+            }
             RelocationKind::ExternalPath => {
                 let key = relocation
                     .reference
@@ -403,17 +416,41 @@ fn layout(
             _ => None,
         })
         .collect::<Vec<_>>();
+    let animations = assets
+        .iter()
+        .filter_map(|(key, info)| match info {
+            AssetInfo::Animation { animation } => Some((key.clone(), animation.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (key, info) in &animations {
+        if info.orientation != target.orientation
+            || info.width == 0
+            || info.height == 0
+            || !target
+                .capabilities
+                .control_types
+                .iter()
+                .any(|c| c == "animation")
+        {
+            return Err(error(
+                "asset_target",
+                format!("动画资产 {key} 与目标不匹配"),
+            ));
+        }
+    }
     if pages.is_empty() {
         return Err(error("page_count", "工程至少需要一个页面"));
     }
     let resource_count = images
         .len()
         .checked_mul(2)
-        .and_then(|n| n.checked_add(pages.len() + fonts.len() + 2))
+        .and_then(|n| n.checked_add(pages.len() + fonts.len() + animations.len() * 2 + 2))
         .ok_or_else(|| error("resource_count", "资源数量溢出"))?;
     if resource_count > (hmi_format::container::BACKUP_START - 8) / 28
         || images.len() >= 65535
         || fonts.len() > 255
+        || animations.len() >= 65535
     {
         return Err(error("resource_count", "资源数量超过当前目录容量"));
     }
@@ -478,7 +515,15 @@ fn layout(
         if !names.insert(name) {
             return Err(error("page_name", format!("页面名称 {name} 重复")));
         }
-        let (bytes, facts) = assemble_page(object, target, index, &images, &fonts, &external)?;
+        let (bytes, facts) = assemble_page(
+            object,
+            target,
+            index,
+            &images,
+            &fonts,
+            &external,
+            &animations,
+        )?;
         native.push(bytes);
         facts_by_page.push(facts);
     }
@@ -498,12 +543,29 @@ fn layout(
         kind: "zi".into(),
         resource: format!("{id}.zi"),
     }));
+    references.extend(
+        (0..animations.len()).map(|id| hmi_format::project::Reference {
+            kind: "gmov".into(),
+            resource: format!("{id}.gmov"),
+        }),
+    );
     references.extend((0..pages.len()).map(|id| hmi_format::project::Reference {
         kind: "pa".into(),
         resource: format!("{id}.pa"),
     }));
     let context = Context::from_pages(parsed.iter(), references);
     let (runtime_files, mut diagnostics) = runtime::collect(&parsed, &external)?;
+    for (key, info) in &animations {
+        if info.timing_adjusted {
+            diagnostics.push(Diagnostic::warning(
+                "animation_timing",
+                format!(
+                    "动画资产 {key} 的帧延时已按原生规则调整（源：{} 帧／{}ms，输出：{} 帧／{}ms），可用 hmi-media inspect 查看各帧延时",
+                    info.source_frames, info.source_duration_ms, info.frame_count, info.duration_ms
+                ),
+            ));
+        }
+    }
     diagnostics.extend(check_linked_facts(
         &context,
         None,

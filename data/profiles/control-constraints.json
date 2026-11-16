@@ -48,6 +48,10 @@
         {
           "control": "external_picture",
           "supported": false
+        },
+        {
+          "control": "animation",
+          "supported": false
         }
       ],
       "k0": [
@@ -81,6 +85,10 @@
         },
         {
           "control": "external_picture",
+          "supported": false
+        },
+        {
+          "control": "animation",
           "supported": false
         }
       ]

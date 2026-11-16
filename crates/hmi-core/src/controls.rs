@@ -17,6 +17,7 @@ mod files;
 mod graphics;
 mod indicators;
 mod interaction;
+mod media;
 mod numeric;
 mod x_interaction;
 pub use files::DATA_RECORD_LIMIT;
@@ -35,6 +36,7 @@ pub enum Storage {
     Image,
     Font,
     ExternalPath,
+    Animation,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -353,6 +355,7 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    media::ANIMATION,
     files::EXTERNAL_PICTURE,
     files::DATA_RECORD,
     files::FILE_BROWSER,
@@ -518,7 +521,9 @@ impl Property {
         }
         Ok(match self.storage {
             Storage::U8 | Storage::Font => vec![number as u8],
-            Storage::U16 | Storage::Image => (number as u16).to_le_bytes().to_vec(),
+            Storage::U16 | Storage::Image | Storage::Animation => {
+                (number as u16).to_le_bytes().to_vec()
+            }
             Storage::I16 => (number as i16).to_le_bytes().to_vec(),
             Storage::I32 => (number as i32).to_le_bytes().to_vec(),
             Storage::U32 => (number as u32).to_le_bytes().to_vec(),
@@ -541,9 +546,9 @@ impl Property {
                     .filter(|_| bytes.len() == 1)
                     .ok_or_else(invalid)?,
             )),
-            Storage::U16 | Storage::Image => toml::Value::Integer(i64::from(u16::from_le_bytes(
-                bytes.try_into().map_err(|_| invalid())?,
-            ))),
+            Storage::U16 | Storage::Image | Storage::Animation => toml::Value::Integer(i64::from(
+                u16::from_le_bytes(bytes.try_into().map_err(|_| invalid())?),
+            )),
             Storage::I16 => toml::Value::Integer(i64::from(i16::from_le_bytes(
                 bytes.try_into().map_err(|_| invalid())?,
             ))),
