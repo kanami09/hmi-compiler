@@ -862,3 +862,9 @@ python examples/prepare_picture_modes_acceptance.py --font path/to/ui.zi
 
 
 数字、虚拟浮点数、双态按钮和滚动文本沿用相同的 ImageRule，不另建图片ID或编码路线。它们的原生记录分别仍为39／39／42／46项：仅按模式和显式引用设置图片字段，不因换背景改写 val、lenth/format、vvs0/vvs1、txt_maxl、滚动参数或事件。数字的 val 保持有符号i32，图片模式不会把它变成文本；双态按钮 val=1 时使用其第二状态图片。当前仍不开放 sta=3 透明背景。
+
+```powershell
+python examples/prepare_additional_picture_modes_acceptance.py --font path/to/ui.zi
+```
+
+此脚本复用上一批生成器，输出在 `target/acceptance-picture-modes-more/`，含 MorePic／MoreCrop／MoreColor／MoreX90 四份工程，每份 number／xfloat／dual／scroll 四页。前三份为 K035 的图片／切图／单色保留，最后一份为 X543 90° JPEG 和 ID 重排，双态按钮初值为 1。每份实际执行10条独立作业；只读取指定 ZI，图片均由代码生成，已有目录不会覆盖。
