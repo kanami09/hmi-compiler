@@ -202,6 +202,65 @@ fn source_mode() -> String {
     "source".into()
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VideoEncoding {
+    #[serde(default = "animation_quality")]
+    pub quality: u8,
+    pub fps: u8,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Clip {
+    #[serde(default)]
+    pub start_ms: u32,
+    pub duration_ms: Option<u32>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VideoAudio {
+    #[serde(default = "audio_mode")]
+    pub mode: String,
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u8>,
+}
+fn audio_mode() -> String {
+    "if-present".into()
+}
+impl Default for VideoAudio {
+    fn default() -> Self {
+        Self {
+            mode: audio_mode(),
+            sample_rate: None,
+            channels: None,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VideoSource {
+    pub schema: String,
+    pub kind: String,
+    #[serde(default = "source_mode")]
+    pub input: String,
+    pub source: String,
+    pub encoding: VideoEncoding,
+    #[serde(default)]
+    pub clip: Clip,
+    #[serde(default)]
+    pub audio: VideoAudio,
+    #[serde(default)]
+    pub delivery: Delivery,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct FfmpegInfo {
+    pub version: String,
+    pub libraries: std::collections::BTreeMap<String, u32>,
+    pub fingerprint: String,
+}
+
 impl Default for ImageSource {
     fn default() -> Self {
         Self {

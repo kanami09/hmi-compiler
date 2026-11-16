@@ -1,6 +1,6 @@
 # 新工具链使用说明
 
-当前可从零新建工程，使用下表列出的 28 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持 ZI 字库方向适配、K/T 的 RGB565 图片与 X543 的 JPEG 图片、独立 XI 外部图片输出，以及 GIF 动画编码。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，使用下表列出的 29 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持图片、ZI 字库、GIF 动画及首批无声视频编码。构建过程不需要已有 HMI 或逆向资料。
 
 当前支持的型号和方向见根目录 `data/profiles/README.md`。其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
@@ -116,6 +116,7 @@ events = { timer = "events/tm0.timer.s" }
 | data_record（数据记录） | x/y/w/h、font 引用表、path、lenth、maxval、dez 必填；强制全局，每工程最多八个；当前仅 X543 | down、up |
 | external_picture（外部图片） | x/y/w/h、path 必填；path 可为运行时路径字符串或外部图片资产的 ref；当前仅 X543 | down、up |
 | animation（动画） | x/y/w/h、vid 引用表必填；当前仅内嵌 from=0，支持播放状态、循环和速度；当前仅 X543 | down、up、playend |
+| video（视频） | x/y/w/h、vid 引用表必填；当前仅内嵌 from=0、无声视频；当前仅 X543 | down、up、playend |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -709,3 +710,52 @@ python examples/prepare_animation_acceptance.py
 ```
 
 输出位于 `target/acceptance-animation/`，包括 X543 的 Animation0／Animation90 两份工程，每份有不透明／透明动画两页。GIF 由代码生成，不需要外部素材或字库；资源全部内嵌，无需部署到虚拟 SD。两份有意重排动画资产并使用不同 loop 值，每份实际执行七条独立作业比较 HMI。已有输出目录不会覆盖，可用 --output 指定新目录，详细核对项目见输出目录的 README。
+
+## 无声视频与 FFmpeg DLL
+
+视频编码当前使用 Windows x64 的 FFmpeg 9 shared 库解码，再生成 JPEG 帧和 HMI 的 VIDEO 资源。构建前设置库目录，检查后端：
+
+```powershell
+$env:HMI_FFMPEG_DIR = "D:\tools\ffmpeg\bin"
+.\target\debug\hmi-media.exe backend --json
+```
+
+需要同包的 avutil-61、swresample-7、avcodec-63、avformat-63、swscale-10 DLL；不调用 FFmpeg EXE。未设置目录时，读取可执行文件旁的 ffmpeg 子目录。库不随本仓库自动下载，版本不匹配会报错；目录和绑定信息见[后端说明](../hmi-media/src/ffmpeg/README.md)。普通图片、GIF、字库和独立链接不需要 FFmpeg；已有 `.hma` 可在没有解码器的环境中链接。
+
+资产示例：
+
+```toml
+schema = "hmi.asset/1"
+kind = "video"
+source = "intro.mp4"
+
+[encoding]
+quality = 80
+fps = 4
+
+[clip]
+start_ms = 0
+duration_ms = 1000
+
+[audio]
+mode = "drop"
+```
+
+| 字段 | 当前行为 |
+|---|---|
+| source | 本地原始视频，相对于资产描述文件；实际编码由 FFmpeg 判断，不能仅改后缀冒充。保留源画面尺寸，当前没有缩放参数 |
+| encoding.quality | JPEG 质量，1～100、默认 80；100 仍是 Baseline YUV420 JPEG |
+| encoding.fps | 必填，4、6、8、10、12、14、18、24 中的一项，不高于源帧率；首批要求源帧率÷目标帧率为正整数，例如 24→4／6／8／12／24 |
+| clip.start_ms | 默认 0，以第一幅有效解码画面为起点；须精确落在源帧边界 |
+| clip.duration_ms | 正整数，省略时使用 start 之后的有效画面长度；结束位置须落在源帧边界，时长须包含整数个目标帧。超出范围、非整帧或不能精确表示的边界报错，不补帧、不静默取整 |
+| audio.mode | 默认 if-present，无音轨可编码；当前有音轨且需要保留时报告尚未支持。drop 显式丢弃音轨；require 在没有音轨时报错，有音轨时也要等保留路径接入 |
+| audio.sample_rate／channels | 音轨转换接口已留出，但本批不执行转换；drop 时禁止填写，if-present 且无音轨时报告 audio_applied=false |
+| delivery | 当前只支持默认 embedded，外部视频输出尚未接入 |
+
+首批只处理时间戳精确等间隔的固定帧率视频。变帧率、隔行、源旋转矩阵、非方形像素、HDR、透明画面或中途改变尺寸／格式的输入明确拒绝；不把这些情况擅自当作普通画面处理。输入文件和输出 VIDEO 各不超过 128 MiB，源帧最多 10000 个，单帧 RGBA 不超过 64 MiB、全部解码 RGBA 不超过 128 MiB。当前会解码全部画面核对时序，长视频的流式处理待后续完善。
+
+probe／inspect 的视频信息记录源帧率和帧数、截取起点、输出帧数／时长、源音轨数量和处理策略、源文件摘要及后端指纹。存在音轨时必须由使用者明确决定 drop；工具不会用“暂不支持”作为静默丢弃声音的理由。
+
+VIDEO 帧采用直接 JPEG 包装，与动画帧的 20 字节前缀不同。HMI 中的资源名是 N.v，引用 kind 为 v；视频与图片、动画分别分配 ID。原始 MP4／AVI 仍由源码工程保存，不嵌入 HMI；`.hma` 保存完整运行资源，链接器无需解码原视频。
+
+控件用 `type="video"`，`vid={ref="clip"}` 或 `{id=...}` 引用当前视频列表。x/y/w/h 必填；from 当前固定 0。en 为 0 停止／1 播放／2 暂停，loop 为 0／1，dis 为 10～1000、默认 100，tim 为 u32 初值、默认 0；stim/qty 初始零且运行时只读。事件为 down、up、playend。保留字段 fps 固定为原生值 1，不按资源帧率改写；molloc_s/molloc 保留 64000，不作为源文件大小修改。当前内置型号中仅 X543 支持，四方向分别编码画面并写方向标记。

@@ -77,6 +77,29 @@ pub struct AnimationInfo {
     pub backend: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct VideoInfo {
+    pub width: u16,
+    pub height: u16,
+    pub orientation: u16,
+    pub quality: u8,
+    pub fps: u8,
+    pub frame_count: u32,
+    pub duration_ms: u32,
+    pub source_fps_num: u32,
+    pub source_fps_den: u32,
+    pub source_frames: u32,
+    pub clip_start_ms: u32,
+    pub source_audio_streams: u32,
+    pub audio_mode: String,
+    pub audio_applied: bool,
+    pub codec: String,
+    pub source_sha256: String,
+    pub backend: hmi_core::asset::FfmpegInfo,
+    pub encoder: String,
+}
+
 /// 每种资产只携带自己的描述，不能同时声明为图片和字库。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -84,6 +107,7 @@ pub enum AssetInfo {
     Image { image: ImageInfo },
     Font { font: FontInfo },
     Animation { animation: AnimationInfo },
+    Video { video: VideoInfo },
 }
 impl AssetInfo {
     pub fn image(&self) -> Option<&ImageInfo> {
@@ -97,6 +121,7 @@ impl AssetInfo {
             Self::Image { image } => image.orientation,
             Self::Font { font } => font.orientation,
             Self::Animation { animation } => animation.orientation,
+            Self::Video { video } => video.orientation,
         }
     }
     pub fn kind(&self) -> &'static str {
@@ -104,6 +129,7 @@ impl AssetInfo {
             Self::Image { .. } => "image",
             Self::Font { .. } => "font",
             Self::Animation { .. } => "animation",
+            Self::Video { .. } => "video",
         }
     }
 }
@@ -139,6 +165,29 @@ pub struct AssetObject {
 }
 
 impl AssetObject {
+    pub fn video(info: VideoInfo, bytes: Vec<u8>) -> Result<Self> {
+        let member = Member {
+            role: MemberRole::Runtime,
+            extension: "v".into(),
+            reference_kind: Some(*b"v\0\0\0\0\0\0\0"),
+            offset: 0,
+            length: u32::try_from(bytes.len())
+                .map_err(|_| error("asset_length", "VIDEO 运行资源超过 u32 范围"))?,
+            sha256: sha256(&bytes),
+        };
+        let object = Self {
+            metadata: AssetMetadata {
+                schema: "hmi.asset-object/1".into(),
+                format: "ver21234".into(),
+                producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
+                info: AssetInfo::Video { video: info },
+                members: vec![member],
+            },
+            payload: bytes,
+        };
+        object.validate()?;
+        Ok(object)
+    }
     pub fn animation(info: AnimationInfo, runtime: Vec<u8>, source: Vec<u8>) -> Result<Self> {
         let split = runtime.len();
         let mut payload = runtime;
@@ -271,6 +320,7 @@ impl AssetObject {
             return Err(error("asset_format", "不支持此资产的容器格式"));
         }
         let expected: Vec<_> = match &self.metadata.info {
+            AssetInfo::Video { .. } => vec![(MemberRole::Runtime, "v", Some(*b"v\0\0\0\0\0\0\0"))],
             AssetInfo::Animation { .. } => vec![
                 (MemberRole::Runtime, "gmov", Some(*b"gmov\0\0\0\0")),
                 (MemberRole::Source, "gmovs", None),
@@ -310,6 +360,7 @@ impl AssetObject {
             return Err(error("asset_length", "资产成员未完整覆盖载荷"));
         }
         match &self.metadata.info {
+            AssetInfo::Video { video } => self.validate_video(video),
             AssetInfo::Animation { animation } => self.validate_animation(animation),
             AssetInfo::Image { image } => self.validate_image(image),
             AssetInfo::Font { font } => {
@@ -327,6 +378,52 @@ impl AssetObject {
                 Ok(())
             }
         }
+    }
+    fn validate_video(&self, info: &VideoInfo) -> Result<()> {
+        let video = hmi_format::video::inspect(self.member(0)?)?;
+        if (
+            info.width,
+            info.height,
+            info.orientation,
+            info.quality,
+            info.fps,
+            info.frame_count,
+            info.duration_ms,
+        ) != (
+            video.width,
+            video.height,
+            video.orientation,
+            video.quality,
+            video.fps,
+            video.frames.len() as u32,
+            video.duration_ms,
+        ) || info.source_fps_num == 0
+            || info.source_fps_den == 0
+            || info.audio_applied
+            || !matches!(info.audio_mode.as_str(), "drop" | "if-present")
+            || (info.source_audio_streams > 0 && info.audio_mode != "drop")
+            || !valid_digest(&info.source_sha256)
+            || !valid_digest(&info.backend.fingerprint)
+        {
+            return Err(error(
+                "asset_metadata",
+                "视频描述与运行帧、帧率或音轨策略不一致",
+            ));
+        }
+        let unit = u64::from(info.source_fps_den) * u64::from(info.fps);
+        let source_rate = u64::from(info.source_fps_num);
+        let start = u64::from(info.clip_start_ms) * source_rate;
+        let scale = 1000 * u64::from(info.source_fps_den);
+        if source_rate % unit != 0
+            || start % scale != 0
+            || u64::from(info.duration_ms) * u64::from(info.fps)
+                != u64::from(info.frame_count) * 1000
+            || start / scale + u64::from(info.frame_count) * (source_rate / unit)
+                > u64::from(info.source_frames)
+        {
+            return Err(error("asset_metadata", "视频截取与源帧映射不一致"));
+        }
+        Ok(())
     }
     fn validate_animation(&self, info: &AnimationInfo) -> Result<()> {
         let runtime = hmi_format::gmov::inspect_runtime(self.member(0)?)?;
@@ -495,6 +592,11 @@ impl AssetObject {
         if self.metadata.format != target.format
             || self.metadata.info.orientation() != target.orientation
             || match &self.metadata.info {
+                AssetInfo::Video { .. } => !target
+                    .capabilities
+                    .control_types
+                    .iter()
+                    .any(|c| c == "video"),
                 AssetInfo::Animation { .. } => !target
                     .capabilities
                     .control_types

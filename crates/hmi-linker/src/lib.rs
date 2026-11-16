@@ -1,7 +1,7 @@
 //! 按最终页面顺序解析引用、生成容器并校验输出，不读取页面或脚本源码。
 
 use hmi_analysis::{Context, check_linked_facts};
-use hmi_artifact::asset::{AnimationInfo, AssetInfo, AssetObject, FontInfo, ImageInfo};
+use hmi_artifact::asset::{AnimationInfo, AssetInfo, AssetObject, FontInfo, ImageInfo, VideoInfo};
 use hmi_artifact::{CompiledObject, ObjectKind, RelocationKind};
 use hmi_core::{
     Result, controls,
@@ -33,16 +33,28 @@ pub struct ExternalOutput {
     pub bytes: Vec<u8>,
 }
 
+struct ResourceTables<'a> {
+    images: &'a [(String, ImageInfo)],
+    fonts: &'a [(String, FontInfo)],
+    external: &'a [(String, ImageInfo)],
+    animations: &'a [(String, AnimationInfo)],
+    videos: &'a [(String, VideoInfo)],
+}
+
 /// 检查对象记录、应用控件 ID 重定位，再生成页面头、索引和 CRC。
 fn assemble_page(
     object: &CompiledObject,
     target: &Target,
     page_id: usize,
-    images: &[(String, ImageInfo)],
-    fonts: &[(String, FontInfo)],
-    external: &[(String, ImageInfo)],
-    animations: &[(String, AnimationInfo)],
+    resources: &ResourceTables<'_>,
 ) -> Result<(Vec<u8>, Vec<hmi_analysis::ScriptFacts>)> {
+    let (images, fonts, external, animations, videos) = (
+        resources.images,
+        resources.fonts,
+        resources.external,
+        resources.animations,
+        resources.videos,
+    );
     let layout = object
         .metadata
         .layout
@@ -192,6 +204,17 @@ fn assemble_page(
     let mut values = vec![BTreeMap::new(); parsed.len()];
     for relocation in &object.metadata.relocations {
         match relocation.kind {
+            RelocationKind::VideoId => {
+                let id = resolve_resource(videos, relocation.reference.as_ref().unwrap(), "视频")?;
+                if parsed[relocation.object]
+                    .attribute(&relocation.property)
+                    .is_none_or(|a| a.value != [0, 0])
+                {
+                    return Err(error("object_relocation", "视频 ID 占位值必须为双字节零"));
+                }
+                values[relocation.object]
+                    .insert(relocation.property.clone(), id.to_le_bytes().to_vec());
+            }
             RelocationKind::AnimationId => {
                 let id =
                     resolve_resource(animations, relocation.reference.as_ref().unwrap(), "动画")?;
@@ -439,18 +462,42 @@ fn layout(
             ));
         }
     }
+    let videos = assets
+        .iter()
+        .filter_map(|(key, info)| match info {
+            AssetInfo::Video { video } => Some((key.clone(), video.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    for (key, info) in &videos {
+        if info.orientation != target.orientation
+            || !target
+                .capabilities
+                .control_types
+                .iter()
+                .any(|c| c == "video")
+        {
+            return Err(error(
+                "asset_target",
+                format!("视频资产 {key} 与目标不匹配"),
+            ));
+        }
+    }
     if pages.is_empty() {
         return Err(error("page_count", "工程至少需要一个页面"));
     }
     let resource_count = images
         .len()
         .checked_mul(2)
-        .and_then(|n| n.checked_add(pages.len() + fonts.len() + animations.len() * 2 + 2))
+        .and_then(|n| {
+            n.checked_add(pages.len() + fonts.len() + animations.len() * 2 + videos.len() + 2)
+        })
         .ok_or_else(|| error("resource_count", "资源数量溢出"))?;
     if resource_count > (hmi_format::container::BACKUP_START - 8) / 28
         || images.len() >= 65535
         || fonts.len() > 255
         || animations.len() >= 65535
+        || videos.len() >= 65535
     {
         return Err(error("resource_count", "资源数量超过当前目录容量"));
     }
@@ -515,15 +562,14 @@ fn layout(
         if !names.insert(name) {
             return Err(error("page_name", format!("页面名称 {name} 重复")));
         }
-        let (bytes, facts) = assemble_page(
-            object,
-            target,
-            index,
-            &images,
-            &fonts,
-            &external,
-            &animations,
-        )?;
+        let resources = ResourceTables {
+            images: &images,
+            fonts: &fonts,
+            external: &external,
+            animations: &animations,
+            videos: &videos,
+        };
+        let (bytes, facts) = assemble_page(object, target, index, &resources)?;
         native.push(bytes);
         facts_by_page.push(facts);
     }
@@ -549,6 +595,10 @@ fn layout(
             resource: format!("{id}.gmov"),
         }),
     );
+    references.extend((0..videos.len()).map(|id| hmi_format::project::Reference {
+        kind: "v".into(),
+        resource: format!("{id}.v"),
+    }));
     references.extend((0..pages.len()).map(|id| hmi_format::project::Reference {
         kind: "pa".into(),
         resource: format!("{id}.pa"),

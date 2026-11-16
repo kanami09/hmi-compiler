@@ -65,6 +65,7 @@ fn run(args: &Args) -> Result<CommandResult> {
                                     | hmi_artifact::RelocationKind::FontId
                                     | hmi_artifact::RelocationKind::ExternalPath
                                     | hmi_artifact::RelocationKind::AnimationId
+                                    | hmi_artifact::RelocationKind::VideoId
                             )
                         {
                             properties[&relocation.property] =

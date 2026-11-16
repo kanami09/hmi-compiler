@@ -39,3 +39,43 @@ pub(super) const ANIMATION: Definition = Definition {
     events: &["down", "up", "playend"],
     access: PropertyAccess::readonly(&["stim", "qty", "molloc_s", "molloc"]),
 };
+
+const VIDEO_FIELDS: [Field; 34] = {
+    let mut f = drawable_fields();
+    f[21] = field("from", FieldValue::Property("from"));
+    f[22] = field("vid", FieldValue::Property("vid"));
+    f[23] = field("path", FieldValue::Constant(&[]));
+    f[24] = field("path_m", FieldValue::Constant(&[255, 0]));
+    f[25] = field("en", FieldValue::Property("en"));
+    f[26] = field("loop", FieldValue::Property("loop"));
+    // 原生保存值为 1，含义不等同于 VIDEO 资源帧率，不按编码参数回填。
+    f[27] = field("fps", FieldValue::Constant(&[1]));
+    f[28] = field("dis", FieldValue::Property("dis"));
+    f[29] = field("tim", FieldValue::Property("tim"));
+    f[30] = field("stim", FieldValue::Constant(&[0; 4]));
+    f[31] = field("qty", FieldValue::Constant(&[0; 4]));
+    f[32] = field("molloc_s", FieldValue::Constant(&[0, 250, 0, 0]));
+    f[33] = field("molloc", FieldValue::Constant(&[0, 250, 0, 0]));
+    f
+};
+pub(super) const VIDEO: Definition = Definition {
+    name: "video",
+    code: 3,
+    properties: &[
+        SCOPE,
+        integer("x", Storage::U16, 0, 65535, DefaultValue::Required),
+        integer("y", Storage::U16, 0, 65535, DefaultValue::Required),
+        integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
+        integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
+        integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+        integer("from", Storage::U8, 0, 0, DefaultValue::Integer(0)),
+        integer("vid", Storage::Video, 0, 65534, DefaultValue::Required),
+        integer("en", Storage::U8, 0, 2, DefaultValue::Integer(0)),
+        integer("loop", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+        integer("dis", Storage::U16, 10, 1000, DefaultValue::Integer(100)),
+        integer("tim", Storage::U32, 0, 4294967295, DefaultValue::Integer(0)),
+    ],
+    fields: &VIDEO_FIELDS,
+    events: &["down", "up", "playend"],
+    access: PropertyAccess::readonly(&["fps", "stim", "qty", "molloc_s", "molloc"]),
+};

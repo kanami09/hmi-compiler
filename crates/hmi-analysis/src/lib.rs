@@ -706,11 +706,15 @@ fn check_facts_inner(
         .iter()
         .filter(|r| r.kind == "gmov")
         .count();
+    let videos = project.references.iter().filter(|r| r.kind == "v").count();
     if let Some(page) = page_index.and_then(|index| project.pages.get(index)) {
         for (object_index, object) in page.objects.iter().enumerate() {
             let mut keys = vec![("font", fonts, 255)];
             if object.type_code == 2 && object.integer("from") == Some(0) {
                 keys.push(("vid", animations, 65535));
+            }
+            if object.type_code == 3 && object.integer("from") == Some(0) {
+                keys.push(("vid", videos, 65535));
             }
             let picture_key = match (object.type_code, object.integer("sta")) {
                 (112, _) | (121, Some(1)) => Some("pic"),

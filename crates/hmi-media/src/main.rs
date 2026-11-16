@@ -22,6 +22,8 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// 检查可选 FFmpeg DLL 的版本和 ABI。
+    Backend,
     /// 检查媒体输入及处理参数，不写输出。
     Probe {
         source: PathBuf,
@@ -41,6 +43,10 @@ enum Command {
 }
 fn timing_note(info: &hmi_artifact::asset::AssetInfo) -> String {
     match info {
+        hmi_artifact::asset::AssetInfo::Video { video: v } => format!(
+            " 视频：{} 帧，{}fps，{}ms；源音轨 {} 条，音轨策略 {}。",
+            v.frame_count, v.fps, v.duration_ms, v.source_audio_streams, v.audio_mode
+        ),
         hmi_artifact::asset::AssetInfo::Animation { animation: a } => format!(
             " 动画：{} 帧／{}ms → {} 帧／{}ms。",
             a.source_frames, a.source_duration_ms, a.frame_count, a.duration_ms
@@ -50,6 +56,10 @@ fn timing_note(info: &hmi_artifact::asset::AssetInfo) -> String {
 }
 fn run(args: &Args) -> Result<CommandResult> {
     match &args.command {
+        Command::Backend => Ok(cli::success(
+            serde_json::json!({"directory":hmi_media::ffmpeg::directory()?,"backend":hmi_media::ffmpeg::backend_info()?}),
+            "FFmpeg 后端检查通过。",
+        )),
         Command::Inspect { file } => {
             let asset = AssetObject::read(file)?;
             Ok(cli::success(

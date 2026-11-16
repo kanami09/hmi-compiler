@@ -19,6 +19,8 @@ use std::{
 };
 
 mod animation;
+pub mod ffmpeg;
+mod video;
 
 const MAX_RGBA_BYTES: u64 = 64 * 1024 * 1024;
 pub struct AssetProbe {
@@ -322,6 +324,9 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
 
 /// 探测会完整解码和检查变换，但不生成运行像素、.hma 或其他输出文件。
 pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
+    if asset_kind(path)? == "video" {
+        return video::probe(path, target);
+    }
     if asset_kind(path)? == "animation" {
         return animation::probe(path, target);
     }
@@ -340,6 +345,9 @@ pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
 }
 
 pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
+    if asset_kind(path)? == "video" {
+        return video::encode(path, target);
+    }
     if asset_kind(path)? == "animation" {
         return animation::encode(path, target);
     }
@@ -441,6 +449,7 @@ fn asset_kind(path: &Path) -> Result<&'static str> {
         Some("font") => Ok("font"),
         Some("image") => Ok("image"),
         Some("animation") => Ok("animation"),
+        Some("video") => Ok("video"),
         _ => Err(error(
             "asset_kind",
             "当前媒体编码器支持 image、font 和 animation 资产",

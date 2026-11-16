@@ -277,6 +277,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                     controls::Storage::Image
                         | controls::Storage::Font
                         | controls::Storage::Animation
+                        | controls::Storage::Video
                 ) {
                     let value = properties.get(property.name).ok_or_else(|| {
                         error(
@@ -309,6 +310,8 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                         property: property.name.into(),
                         kind: if font {
                             hmi_artifact::RelocationKind::FontId
+                        } else if matches!(property.storage, controls::Storage::Video) {
+                            hmi_artifact::RelocationKind::VideoId
                         } else if matches!(property.storage, controls::Storage::Animation) {
                             hmi_artifact::RelocationKind::AnimationId
                         } else {
