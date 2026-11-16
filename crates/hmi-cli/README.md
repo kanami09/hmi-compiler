@@ -878,3 +878,11 @@ python examples/prepare_additional_picture_modes_acceptance.py --font path/to/ui
 六类文字控件的透明背景 sta=3 不填充控件背景，保留字体、颜色、边框及其他属性；其下方页面或控件的画面可透出。它不要求 pic／picc 等背景图片；显式声明的非活动引用仍保留并解析。透明背景是控件的显示模式，与源图片是否带透明通道、媒体编码的透明度位数是不同配置，不会隐式生成透明图片。
 
 页面自身 ID0 的图片引用也保存为 ImageId 重定位，复用现有资产表、编码及独立链接。页面注册定义与普通控件分开，不将 page 作为可添加的普通控件，因此普通控件类型数仍为 30。target 数据修订更新后，旧 target.json／页面目标需要从源码重新生成；分发版本号不因此变化。
+
+生成页面背景与透明背景验收工程：
+
+```powershell
+python examples/prepare_page_background_acceptance.py --font path/to/ui.zi
+```
+
+输出位于 `target/acceptance-page-backgrounds/`。PageBgK 为 K035 的图片／单色／无背景三页；Transparent0／Transparent90 为 X543 两个方向的六类文字控件，每页用图片页面背景核对透明显示，并保留非活动图片引用。源图片由代码生成，只读取指定 ZI，无需 FFmpeg 或虚拟 SD。三份分别实际执行6／12／12条独立作业，输出与统一入口相同；已有目录不会覆盖，可用 --output 指定新目录。详细属性和显示预期见输出 README。
