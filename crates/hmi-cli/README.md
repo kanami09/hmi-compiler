@@ -639,3 +639,11 @@ path = "sd0/pictures/logo.xi"
 链接映射中外部资产的 id 为 null，runtime_files 中的 generated=true 表示本次构建包含对应输出；仅填写路径字符串且没有相应资产时为 false。外部文件仍在 HMI 之外，不能仅复制 HMI 就视为完整部署。
 
 统一入口和独立 hmi-link 共用输出流程：写入前检查全部输出与输入的路径冲突，再将所有文件暂存；配套文件和链接映射先写入，最后替换 HMI。暂存失败保留已有文件；发布途中失败会报告已写入的文件，多文件不承诺整体事务。需要整包切换时请输出到新的发布目录。此机制不改变 .data 当前仅记录需求的状态。
+
+生成外部图片验收工程：
+
+```powershell
+python examples/prepare_external_acceptance.py
+```
+
+输出位于 `target/acceptance-external/`，包括 X543 的 0°／90° HMI 和 sd0/ 下的两个 XI 文件，不需要外部素材或字库。请先把两个 XI 复制到上位机的虚拟 SD 根目录，再打开对应 HMI；详细核对项目见输出目录的 README。每份实际执行五条独立作业，比较 HMI、XI 和链接映射；已有输出目录不会覆盖，可用 --output 指定新目录。
