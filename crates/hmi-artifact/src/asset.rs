@@ -1,7 +1,7 @@
 //! `.hma` 自包含媒体目标：兼容约束、成员描述和编码载荷，不引用源文件。
 use hmi_core::{
     Result,
-    asset::{Alpha, Resize},
+    asset::{Alpha, Delivery, Resize},
     error, file,
     model::check_schema,
     sha256,
@@ -14,6 +14,8 @@ const MAGIC: &[u8; 8] = b"HMIASS01";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct ImageInfo {
+    #[serde(default, skip_serializing_if = "Delivery::is_embedded")]
+    pub delivery: Delivery,
     pub width: u16,
     pub height: u16,
     pub storage_width: u16,
@@ -115,15 +117,31 @@ impl AssetObject {
     pub fn image(info: ImageInfo, runtime: Vec<u8>, source: Vec<u8>) -> Result<Self> {
         let mut members = Vec::new();
         let mut payload = Vec::new();
-        for (role, extension, reference_kind, bytes) in [
-            (
+        // 外部图片只携带独立 XI，不占普通图片 ID，也没有内嵌编辑源。
+        let entries = if info.delivery.mode == "external" {
+            vec![(
                 MemberRole::Runtime,
-                "i",
-                Some([b'i', 0, 0, 0, 0, 0, 0, 0]),
-                runtime,
-            ),
-            (MemberRole::Source, "is", None, source),
-        ] {
+                "xi",
+                None,
+                hmi_format::picture::xi::from_runtime(
+                    &runtime,
+                    info.width,
+                    info.height,
+                    info.orientation,
+                )?,
+            )]
+        } else {
+            vec![
+                (
+                    MemberRole::Runtime,
+                    "i",
+                    Some([b'i', 0, 0, 0, 0, 0, 0, 0]),
+                    runtime,
+                ),
+                (MemberRole::Source, "is", None, source),
+            ]
+        };
+        for (role, extension, reference_kind, bytes) in entries {
             members.push(Member {
                 role,
                 extension: extension.into(),
@@ -191,6 +209,9 @@ impl AssetObject {
             return Err(error("asset_format", "不支持此资产的容器格式"));
         }
         let expected: Vec<_> = match &self.metadata.info {
+            AssetInfo::Image { image } if image.delivery.mode == "external" => {
+                vec![(MemberRole::Runtime, "xi", None)]
+            }
             AssetInfo::Image { .. } => vec![
                 (MemberRole::Runtime, "i", Some([b'i', 0, 0, 0, 0, 0, 0, 0])),
                 (MemberRole::Source, "is", None),
@@ -241,6 +262,7 @@ impl AssetObject {
         }
     }
     fn validate_image(&self, info: &ImageInfo) -> Result<()> {
+        info.delivery.validate()?;
         if !matches!(info.codec.as_str(), "rgb565" | "jpeg")
             || info.width == 0
             || info.height == 0
@@ -299,6 +321,35 @@ impl AssetObject {
         {
             return Err(error("asset_metadata", "图片存储尺寸或源摘要无效"));
         }
+        if info.delivery.mode == "external" {
+            if info.codec != "jpeg"
+                || !info
+                    .delivery
+                    .path
+                    .as_deref()
+                    .is_some_and(|p| p.to_ascii_lowercase().ends_with(".xi"))
+            {
+                return Err(error(
+                    "asset_delivery",
+                    "外部图片当前需要 JPEG 编码及 .xi 部署路径",
+                ));
+            }
+            let header = hmi_format::picture::xi::inspect(self.member(0)?)?;
+            if (
+                header.width,
+                header.height,
+                header.orientation,
+                header.has_alpha,
+            ) != (
+                info.width,
+                info.height,
+                info.orientation,
+                info.jpeg.as_ref().unwrap().has_alpha,
+            ) {
+                return Err(error("asset_metadata", "外部 XI 与资产描述不一致"));
+            }
+            return Ok(());
+        }
         if info.codec == "jpeg" {
             hmi_format::picture::jpeg::validate(
                 self.member(0)?,
@@ -329,6 +380,12 @@ impl AssetObject {
             || match &self.metadata.info {
                 AssetInfo::Image { image } => {
                     !target.capabilities.image_codecs.contains(&image.codec)
+                        || (image.delivery.mode == "external"
+                            && !target
+                                .capabilities
+                                .control_types
+                                .iter()
+                                .any(|c| c == "external_picture"))
                 }
                 AssetInfo::Font { font } => {
                     !target.capabilities.font_versions.contains(&font.version)

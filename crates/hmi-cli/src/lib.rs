@@ -349,10 +349,9 @@ pub fn build(
     let mut protected_paths = prepared.inputs.clone();
     protected_paths.extend(prepared.plan_paths(&build_directory));
     let protected: Vec<_> = protected_paths.iter().map(|p| p.as_path()).collect();
-    file::protect_output(&output, &protected)?;
-    file::protect_output(&map, &protected)?;
+    let publication =
+        hmi_linker::publish::Publication::prepare(&linked, &output, Some(&map), &protected)?;
     prepared.save_plan_inner(&build_directory, true, Some(&output), &assets)?;
-    file::write_atomic(&map, &file::json(&linked.map)?, &protected)?;
-    file::write_atomic(&output, &linked.bytes, &protected)?;
+    publication.write()?;
     Ok((output, linked))
 }

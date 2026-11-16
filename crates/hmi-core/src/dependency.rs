@@ -15,6 +15,9 @@ pub struct DataRecordStructure {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum RuntimeFile {
+    ExternalPicture {
+        path: String,
+    },
     DataRecord {
         path: String,
         structure: DataRecordStructure,
@@ -33,13 +36,14 @@ pub struct RuntimeDependency {
 impl RuntimeFile {
     pub fn path(&self) -> &str {
         match self {
+            Self::ExternalPicture { path } => path,
             Self::DataRecord { path, .. } => path,
         }
     }
 
     /// 仅从已编译记录提取依赖，独立链接不需要回读页面源码或访问虚拟 SD。
     pub fn from_control(code: u8, attributes: &[(String, Vec<u8>)]) -> Result<Option<Self>> {
-        if code != 66 {
+        if !matches!(code, 60 | 66) {
             return Ok(None);
         }
         let bytes = |key: &str| -> Result<&[u8]> {
@@ -47,7 +51,7 @@ impl RuntimeFile {
                 .iter()
                 .find(|(name, _)| name == key)
                 .map(|(_, b)| b.as_slice())
-                .ok_or_else(|| error("runtime_dependency", format!("数据记录缺少依赖属性 {key}")))
+                .ok_or_else(|| error("runtime_dependency", format!("控件缺少文件依赖属性 {key}")))
         };
         let integer = |key: &str, width: usize| -> Result<u32> {
             let b = bytes(key)?;
@@ -62,12 +66,19 @@ impl RuntimeFile {
                 .fold(0, |n, (i, b)| n | (u32::from(*b) << (i * 8))))
         };
         let path = std::str::from_utf8(bytes("path")?)
-            .map_err(|_| error("runtime_file_path", "数据记录路径必须是 UTF-8 文本"))?;
+            .map_err(|_| error("runtime_file_path", "运行时文件路径必须是 UTF-8 文本"))?;
+        // 空字符串仅用于外部资产符号的重定位占位，最终链接仍须绑定非空路径。
+        if code == 60 && path.is_empty() {
+            return Ok(None);
+        }
         if path.is_empty() || path.len() > 255 || path.as_bytes().contains(&0) {
             return Err(error(
                 "runtime_file_path",
-                "数据记录路径不能为空、包含 NUL 或超过 255 字节",
+                "运行时文件路径不能为空、包含 NUL 或超过 255 字节",
             ));
+        }
+        if code == 60 {
+            return Ok(Some(Self::ExternalPicture { path: path.into() }));
         }
         let record_bytes = integer("lenth", 4)?;
         let max_records = integer("maxval", 4)?;

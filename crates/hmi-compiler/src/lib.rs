@@ -240,6 +240,38 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
             }
             let mut properties = object.properties.clone();
             for property in definition.properties {
+                if matches!(property.storage, controls::Storage::ExternalPath) {
+                    let value = properties
+                        .get(property.name)
+                        .ok_or_else(|| error("property_required", "必须指定外部图片 path"))?;
+                    if let Some(path) = value.as_str() {
+                        if path.is_empty() {
+                            return Err(error("runtime_file_path", "外部图片路径不能为空"));
+                        }
+                    } else {
+                        let reference: hmi_core::asset::ResourceReference =
+                            value.clone().try_into().map_err(|_| {
+                                error(
+                                    "resource_reference",
+                                    "外部图片 path 必须为字符串或 ref 引用表",
+                                )
+                            })?;
+                        reference.validate()?;
+                        if reference.name.is_none() {
+                            return Err(error(
+                                "resource_reference",
+                                "外部图片路径只接受 ref，不接受 ID 或 none",
+                            ));
+                        }
+                        resources.push(hmi_artifact::Relocation {
+                            object: index + 1,
+                            property: property.name.into(),
+                            kind: hmi_artifact::RelocationKind::ExternalPath,
+                            reference: Some(reference),
+                        });
+                        properties.insert(property.name.into(), "".into());
+                    }
+                }
                 if matches!(
                     property.storage,
                     controls::Storage::Image | controls::Storage::Font

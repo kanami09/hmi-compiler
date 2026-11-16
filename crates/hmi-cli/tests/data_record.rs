@@ -152,12 +152,18 @@ fn dependencies_are_self_contained_and_tampering_is_rejected() {
             1 => changed.metadata.runtime_dependencies[0].object = 0,
             2 => {
                 let RuntimeFile::DataRecord { path, .. } =
-                    &mut changed.metadata.runtime_dependencies[0].file;
+                    &mut changed.metadata.runtime_dependencies[0].file
+                else {
+                    panic!("expected data record")
+                };
                 *path = "sd0/forged.data".into();
             }
             _ => {
                 let RuntimeFile::DataRecord { structure, .. } =
-                    &mut changed.metadata.runtime_dependencies[0].file;
+                    &mut changed.metadata.runtime_dependencies[0].file
+                else {
+                    panic!("expected data record")
+                };
                 structure.record_bytes = 31;
             }
         }

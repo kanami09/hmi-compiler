@@ -15,6 +15,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
+pub mod publish;
 mod runtime;
 
 #[derive(Debug)]
@@ -23,6 +24,13 @@ pub struct Linked {
     pub diagnostics: Vec<Diagnostic>,
     pub map: serde_json::Value,
     pub inputs: Vec<PathBuf>,
+    pub external_files: Vec<ExternalOutput>,
+}
+
+#[derive(Debug)]
+pub struct ExternalOutput {
+    pub path: String,
+    pub bytes: Vec<u8>,
 }
 
 /// 检查对象记录、应用控件 ID 重定位，再生成页面头、索引和 CRC。
@@ -32,6 +40,7 @@ fn assemble_page(
     page_id: usize,
     images: &[(String, ImageInfo)],
     fonts: &[(String, FontInfo)],
+    external: &[(String, ImageInfo)],
 ) -> Result<(Vec<u8>, Vec<hmi_analysis::ScriptFacts>)> {
     let layout = object
         .metadata
@@ -182,6 +191,38 @@ fn assemble_page(
     let mut values = vec![BTreeMap::new(); parsed.len()];
     for relocation in &object.metadata.relocations {
         match relocation.kind {
+            RelocationKind::ExternalPath => {
+                let key = relocation
+                    .reference
+                    .as_ref()
+                    .unwrap()
+                    .name
+                    .as_ref()
+                    .unwrap();
+                let info = external
+                    .iter()
+                    .find(|(name, _)| name == key)
+                    .map(|(_, info)| info)
+                    .ok_or_else(|| {
+                        error(
+                            "resource_symbol",
+                            format!("外部图片资产 {key} 不存在或没有 external 部署方式"),
+                        )
+                    })?;
+                if parsed[relocation.object]
+                    .attribute(&relocation.property)
+                    .is_none_or(|a| !a.value.is_empty())
+                {
+                    return Err(error(
+                        "object_relocation",
+                        "外部图片路径占位值必须为空字符串",
+                    ));
+                }
+                values[relocation.object].insert(
+                    relocation.property.clone(),
+                    info.delivery.path.as_ref().unwrap().as_bytes().to_vec(),
+                );
+            }
             RelocationKind::ObjectId => {
                 let id = u8::try_from(relocation.object)
                     .map_err(|_| error("object_count", "控件 ID 超出 u8 范围"))?;
@@ -315,10 +356,46 @@ fn layout(
     let images = assets
         .iter()
         .filter_map(|(key, info)| match info {
-            AssetInfo::Image { image } => Some((key.clone(), image.clone())),
+            AssetInfo::Image { image } if image.delivery.is_embedded() => {
+                Some((key.clone(), image.clone()))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
+    let external = assets
+        .iter()
+        .filter_map(|(key, info)| match info {
+            AssetInfo::Image { image } if image.delivery.mode == "external" => {
+                Some((key.clone(), image.clone()))
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let mut deployment_paths = Vec::new();
+    for (_, info) in &external {
+        info.delivery.validate()?;
+        if info.codec != "jpeg"
+            || !target
+                .capabilities
+                .control_types
+                .iter()
+                .any(|c| c == "external_picture")
+        {
+            return Err(error("asset_target", "当前目标不支持此外部图片编码路线"));
+        }
+        let path = hmi_core::deployment::key(info.delivery.path.as_ref().unwrap());
+        if deployment_paths.iter().any(|old: &String| {
+            *old == path
+                || old.starts_with(&format!("{path}/"))
+                || path.starts_with(&format!("{old}/"))
+        }) {
+            return Err(error(
+                "deployment_conflict",
+                format!("外部输出路径冲突：{path}"),
+            ));
+        }
+        deployment_paths.push(path);
+    }
     let fonts = assets
         .iter()
         .filter_map(|(key, info)| match info {
@@ -347,7 +424,7 @@ fn layout(
             return Err(error("asset_key", format!("资产符号 {key} 重复")));
         }
     }
-    for (key, info) in &images {
+    for (key, info) in images.iter().chain(&external) {
         if info.width == 0
             || info.height == 0
             || info.orientation != target.orientation
@@ -401,7 +478,7 @@ fn layout(
         if !names.insert(name) {
             return Err(error("page_name", format!("页面名称 {name} 重复")));
         }
-        let (bytes, facts) = assemble_page(object, target, index, &images, &fonts)?;
+        let (bytes, facts) = assemble_page(object, target, index, &images, &fonts, &external)?;
         native.push(bytes);
         facts_by_page.push(facts);
     }
@@ -426,7 +503,7 @@ fn layout(
         resource: format!("{id}.pa"),
     }));
     let context = Context::from_pages(parsed.iter(), references);
-    let (runtime_files, mut diagnostics) = runtime::collect(pages)?;
+    let (runtime_files, mut diagnostics) = runtime::collect(&parsed, &external)?;
     diagnostics.extend(check_linked_facts(
         &context,
         None,
@@ -550,7 +627,21 @@ pub fn link_with_assets(
     let mut next_id = BTreeMap::new();
     let mut references = Vec::new();
     let mut asset_map = Vec::new();
+    let mut external_files = Vec::new();
     for (key, asset) in assets {
+        if let Some(image) = asset.metadata.info.image()
+            && image.delivery.mode == "external"
+        {
+            let path = image.delivery.path.as_ref().unwrap();
+            let bytes = asset.member(0)?.to_vec();
+            asset_map.push(serde_json::json!({"key":key,"kind":"image","id":null,
+                "path":path,"size":bytes.len(),"sha256":hmi_core::sha256(&bytes),"info":asset.metadata.info}));
+            external_files.push(ExternalOutput {
+                path: path.clone(),
+                bytes,
+            });
+            continue;
+        }
         // 数字 ID 按资源类别分配，不能直接使用混合输入列表的序号。
         let kind = asset.metadata.info.kind();
         let id = next_id.entry(kind).or_insert(0usize);
@@ -597,5 +688,6 @@ pub fn link_with_assets(
         diagnostics: layout.diagnostics,
         map,
         inputs: Vec::new(),
+        external_files,
     })
 }

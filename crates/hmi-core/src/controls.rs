@@ -34,6 +34,7 @@ pub enum Storage {
     Lines,
     Image,
     Font,
+    ExternalPath,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -352,6 +353,7 @@ const TIMER_FIELDS: &[Field] = &[
 ];
 
 pub const DEFINITIONS: &[Definition] = &[
+    files::EXTERNAL_PICTURE,
     files::DATA_RECORD,
     files::FILE_BROWSER,
     files::FILE_STREAM,
@@ -468,7 +470,10 @@ fn property_error(code: &str, property: &str, message: impl Into<String>) -> cra
 
 impl Property {
     fn encode(&self, value: &toml::Value) -> Result<Vec<u8>> {
-        if matches!(self.storage, Storage::Text | Storage::Lines) {
+        if matches!(
+            self.storage,
+            Storage::Text | Storage::Lines | Storage::ExternalPath
+        ) {
             let bytes = value
                 .as_str()
                 .filter(|s| !s.contains('\0'))
@@ -517,7 +522,7 @@ impl Property {
             Storage::I16 => (number as i16).to_le_bytes().to_vec(),
             Storage::I32 => (number as i32).to_le_bytes().to_vec(),
             Storage::U32 => (number as u32).to_le_bytes().to_vec(),
-            Storage::Text | Storage::Lines => unreachable!(),
+            Storage::Text | Storage::Lines | Storage::ExternalPath => unreachable!(),
         })
     }
 
@@ -548,7 +553,7 @@ impl Property {
             Storage::U32 => toml::Value::Integer(i64::from(u32::from_le_bytes(
                 bytes.try_into().map_err(|_| invalid())?,
             ))),
-            Storage::Text | Storage::Lines => {
+            Storage::Text | Storage::Lines | Storage::ExternalPath => {
                 toml::Value::String(std::str::from_utf8(bytes).map_err(|_| invalid())?.into())
             }
         })
@@ -634,6 +639,13 @@ impl Definition {
                     ));
                 }
             }
+        }
+        if self.code == 60 && values["path"].len() > 255 {
+            return Err(property_error(
+                "text_capacity",
+                "path",
+                "外部图片路径超过 255 个 UTF-8 字节",
+            ));
         }
         if self.code == 66 {
             for (field, capacity) in [("path", 255), ("format", 256), ("dir", 255)] {

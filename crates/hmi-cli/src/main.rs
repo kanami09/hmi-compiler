@@ -105,7 +105,7 @@ fn run(args: &Args) -> Result<CommandResult> {
             let (output, linked) =
                 hmi_cli::build(&root, output.as_deref(), args.warnings.is_some())?;
             Ok(CommandResult {
-                result: serde_json::json!({"output":output,"output_written":true,"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes)}),
+                result: serde_json::json!({"output":output,"output_written":true,"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes),"external_files":linked.external_files.iter().map(|f| &f.path).collect::<Vec<_>>()}),
                 message: format!("重建完成：{}", output.display()),
                 diagnostics: linked.diagnostics,
             })

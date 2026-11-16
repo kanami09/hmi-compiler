@@ -106,6 +106,29 @@ pub fn toml(value: &impl Serialize) -> Result<Vec<u8>> {
 
 /// 输出通过校验后再替换原文件，禁止输出覆盖任一已声明输入。
 pub fn write_atomic(path: &Path, bytes: &[u8], inputs: &[&Path]) -> Result<()> {
+    stage_atomic(path, bytes, inputs)?.publish(inputs)
+}
+
+/// 多文件输出先全部暂存，任一暂存失败时不替换已有产物。
+pub struct StagedFile {
+    path: PathBuf,
+    temporary: tempfile::NamedTempFile,
+}
+
+impl StagedFile {
+    pub fn publish(self, inputs: &[&Path]) -> Result<()> {
+        protect_output(&self.path, inputs)?;
+        self.temporary.persist(&self.path).map_err(|e| {
+            at_file(
+                error("write_file", format!("无法写入文件：{}", e.error)),
+                &self.path,
+            )
+        })?;
+        Ok(())
+    }
+}
+
+pub fn stage_atomic(path: &Path, bytes: &[u8], inputs: &[&Path]) -> Result<StagedFile> {
     protect_output(path, inputs)?;
     let parent = path
         .parent()
@@ -122,11 +145,8 @@ pub fn write_atomic(path: &Path, bytes: &[u8], inputs: &[&Path]) -> Result<()> {
         .as_file_mut()
         .sync_all()
         .map_err(|e| at_file(e.into(), path))?;
-    temporary.persist(path).map_err(|e| {
-        at_file(
-            error("write_file", format!("无法写入文件：{}", e.error)),
-            path,
-        )
-    })?;
-    Ok(())
+    Ok(StagedFile {
+        path: path.to_path_buf(),
+        temporary,
+    })
 }

@@ -29,6 +29,21 @@ fn compiler_cli_preserves_event_lines_and_cannot_overwrite_sources() {
     variable.properties.insert("val".into(), (-7_i64).into());
     variable.properties.insert("txt".into(), "测试A".into());
     page.objects.push(variable);
+    page.objects.push(hmi_core::model::ObjectFile {
+        name: "exp0".into(),
+        type_name: "external_picture".into(),
+        properties: std::collections::BTreeMap::from([
+            ("x".into(), 0.into()),
+            ("y".into(), 0.into()),
+            ("w".into(), 64.into()),
+            ("h".into(), 48.into()),
+            (
+                "path".into(),
+                serde_json::from_value(serde_json::json!({"ref":"logo"})).unwrap(),
+            ),
+        ]),
+        events: Default::default(),
+    });
     fs::write(&source, file::toml(&page).unwrap()).unwrap();
     fs::write(tmp.path().join("load.s"), "sys0=1\r\n\r\nsys1=2\r\n").unwrap();
     let object = tmp.path().join("page.hmo");
@@ -68,6 +83,10 @@ fn compiler_cli_preserves_event_lines_and_cannot_overwrite_sources() {
     assert_eq!(json["result"]["objects"][1]["properties"]["val"], -7);
     assert_eq!(json["result"]["objects"][1]["properties"]["txt"], "测试A");
     assert_eq!(json["result"]["objects"][1]["id_pending"], true);
+    assert_eq!(
+        json["result"]["objects"][2]["properties"]["path"],
+        serde_json::json!({"ref":"logo"})
+    );
     let before = fs::read(&source).unwrap();
     assert_eq!(run(&source).status.code(), Some(1));
     assert_eq!(fs::read(&source).unwrap(), before);

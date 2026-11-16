@@ -4,6 +4,7 @@ pub mod asset;
 pub mod cli;
 pub mod controls;
 pub mod dependency;
+pub mod deployment;
 pub mod diagnostic;
 pub mod file;
 pub mod model;

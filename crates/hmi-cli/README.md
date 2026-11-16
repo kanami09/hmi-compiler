@@ -1,6 +1,6 @@
 # 新工具链使用说明
 
-当前可从零新建工程，使用下表列出的 26 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持 ZI 字库方向适配、K/T 的 RGB565 图片与 X543 的 JPEG 图片。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，使用下表列出的 27 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持 ZI 字库方向适配、K/T 的 RGB565 图片与 X543 的 JPEG 图片，以及独立 XI 外部图片输出。构建过程不需要已有 HMI 或逆向资料。
 
 当前支持的型号和方向见根目录 `data/profiles/README.md`。其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
@@ -114,6 +114,7 @@ events = { timer = "events/tm0.timer.s" }
 | file_browser（文件浏览器） | x/y/w/h、font、pic1／pic2 引用表必填；可设目录、过滤条件和显示参数；当前仅 X543 | down、up |
 | file_stream（文件流） | 强制私有，当前仅声明未打开状态，无几何属性；当前仅 X543 | 无 |
 | data_record（数据记录） | x/y/w/h、font 引用表、path、lenth、maxval、dez 必填；强制全局，每工程最多八个；当前仅 X543 | down、up |
+| external_picture（外部图片） | x/y/w/h、path 必填；path 可为运行时路径字符串或外部图片资产的 ref；当前仅 X543 | down、up |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -585,7 +586,7 @@ val 默认 4294967295，即原生的未选中状态；val、val_x、val_y 可配
 
 页面目标文件的 `metadata.runtime_dependencies` 保存每个控件的文件需求，包括对象序号、运行时路径、结构参数和是否允许自动创建。链接器从这些声明汇总 `link-map.json` 的 `runtime_files`，并核对声明与目标内的原生记录一致；只持有 `.hmo/.hma` 时也能完成检查。相同初始路径的结构参数不同会报错；结构相同会产生占用冲突警告，因为多个控件不能同时打开同一文件，需自行通过脚本协调。sd0/ 路径的 ASCII 字母按大小写不敏感比较，保存的路径不改写。
 
-当前 `runtime_files[].generated` 为 false，表示这是部署需求，链接器未生成 .data 文件。`structure.record_bytes/max_records/columns` 分别对应 lenth/maxval/dez；`users` 列出使用者的页面、控件、最终 ID 及 create_if_missing。此表只描述源码中的初始绑定，运行脚本后续修改 path 不会自动生成新的依赖。构建不读取虚拟 SD，不嵌入或创建 .data 文件；mode=1 时由原生环境创建，mode=0 时需要用户提供已有文件。配套文件生成仍待格式验证完成后接入。
+数据记录条目的 `runtime_files[].generated` 仍为 false，表示这是部署需求，链接器未生成 .data 文件。`structure.record_bytes/max_records/columns` 分别对应 lenth/maxval/dez；`users` 列出使用者的页面、控件、最终 ID 及 create_if_missing。此表只描述源码中的初始绑定，运行脚本后续修改 path 不会自动生成新的依赖。构建不读取虚拟 SD，不嵌入或创建 .data 文件；mode=1 时由原生环境创建，mode=0 时需要用户提供已有文件。数据记录的配套文件生成仍待格式验证完成后接入。
 
 生成验收工程：
 
@@ -594,3 +595,47 @@ python examples/prepare_data_record_acceptance.py --font path/to/ui.zi
 ```
 
 输出位于 `target/acceptance-data-record/`，包含 Record0／Record1 两份工程，分别使用两列／三列、32／63 字节记录上限和 16／1000 条容量，绑定不同的实验路径。两份均为 X543、0°，每份实际执行 4 条独立作业并比较 HMI 和文件需求映射。脚本不访问虚拟 SD，已有输出目录不会覆盖，可用 --output 指定新目录。
+
+## 外部图片与配套文件输出
+
+外部图片控件在 HMI 中只保存路径，不把图片内容嵌入容器。当前内置型号中仅 X543 开放此控件，支持四个工程方向；默认私有，也可设置 vscope=1。可用已有 JPG／XI 的运行时路径，或引用由工程生成的外部图片资产：
+
+```toml
+[[objects]]
+name = "exp0"
+type = "external_picture"
+properties = { x = 20, y = 20, w = 138, h = 106, path = { ref = "logo" } }
+```
+
+在工程 `[assets].items` 中声明 logo 的资产描述，其内容例如：
+
+```toml
+schema = "hmi.asset/1"
+kind = "image"
+source = "logo.png"
+
+[encoding]
+quality = 96
+alpha = "preserve"
+
+[delivery]
+mode = "external"
+path = "sd0/pictures/logo.xi"
+```
+
+| 字段 | 作用 |
+|---|---|
+| source | 构建机上的原图输入，相对于资产描述文件；支持已有的 BMP／PNG／JPEG 输入及显式 resize |
+| delivery.mode | 默认 embedded；external 表示生成独立文件，不占普通图片 ID，也不生成内嵌 .is |
+| delivery.path | external 时必填，指定屏幕读取的路径；当前输出路线要求 sd0/ 下的 .xi 文件，不能使用绝对路径、反斜杠、.、.. 或非法文件名 |
+| 控件 path | 字符串表示直接使用运行时文件；`{ ref = "logo" }` 则在链接时替换为该资产的 delivery.path。路径引用不接受 id／none |
+
+例如输出 HMI 为 `dist/Panel/Panel.HMI`，同时生成 `dist/Panel/sd0/pictures/logo.xi`。自行指定 `-o` 时，配套文件也跟随 HMI 的父目录输出。用户将 sd0/ 下的文件按相同目录结构复制到 SD 卡或虚拟 SD 后，上位机才能预览或运行外部图片；工具不会自动写入用户的虚拟 SD。
+
+外部编码复用 JPEG Baseline YUV420、四方向旋转和七位透明度流，以 XI 的签名和头部包装。源图片尺寸与控件几何分别配置，不因修改控件宽高而隐式修改共享资产。当前只从常规图片生成 XI；已有 XI/JPG 的 encoded 输入及外部 JPG 原样输出尚未接入。
+
+如果写 `path = "sd0/existing.jpg"`，构建只保存这个字符串并记录需求，不读取构建机同名文件，也不会自动生成或复制该图片。由工程声明的 external 资产即使暂时没有控件引用也会输出；多个控件可以共享一个外部图片资产。两个资产声明相同输出路径会报错，避免互相覆盖。普通图片的 pic 只能引用内嵌图片，外部图片的 path 引用只能指向 external 资产。
+
+链接映射中外部资产的 id 为 null，runtime_files 中的 generated=true 表示本次构建包含对应输出；仅填写路径字符串且没有相应资产时为 false。外部文件仍在 HMI 之外，不能仅复制 HMI 就视为完整部署。
+
+统一入口和独立 hmi-link 共用输出流程：写入前检查全部输出与输入的路径冲突，再将所有文件暂存；配套文件和链接映射先写入，最后替换 HMI。暂存失败保留已有文件；发布途中失败会报告已写入的文件，多文件不承诺整体事务。需要整包切换时请输出到新的发布目录。此机制不改变 .data 当前仅记录需求的状态。

@@ -41,6 +41,7 @@ pub enum RelocationKind {
     ObjectId,
     ImageId,
     FontId,
+    ExternalPath,
 }
 
 /// object 指目标文件内的记录序号，不是预先分配的 HMI 控件 ID。
@@ -255,6 +256,27 @@ impl CompiledObject {
                 ));
             }
             match relocation.kind {
+                RelocationKind::ExternalPath => {
+                    let definition =
+                        hmi_core::controls::by_code(layout.objects[relocation.object].type_code)?;
+                    if !definition.properties.iter().any(|p| {
+                        p.name == relocation.property
+                            && matches!(p.storage, hmi_core::controls::Storage::ExternalPath)
+                    }) {
+                        return Err(error("object_relocation", "外部路径重定位的类型或属性无效"));
+                    }
+                    let reference = relocation
+                        .reference
+                        .as_ref()
+                        .ok_or_else(|| error("object_relocation", "外部路径重定位缺少资产符号"))?;
+                    reference.validate()?;
+                    if reference.name.is_none() {
+                        return Err(error(
+                            "resource_reference",
+                            "外部路径只能使用 ref 资产符号，不能使用 ID 或 none",
+                        ));
+                    }
+                }
                 RelocationKind::ObjectId => {
                     if relocation.property != "id" || relocation.reference.is_some() {
                         return Err(error("object_relocation", "控件 ID 重定位无效"));

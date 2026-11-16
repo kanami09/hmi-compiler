@@ -97,11 +97,26 @@ pub struct Resize {
     pub background: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Delivery {
     pub mode: String,
     pub path: Option<String>,
+}
+impl Delivery {
+    pub fn is_embedded(&self) -> bool {
+        self.mode == "embedded" && self.path.is_none()
+    }
+    pub fn validate(&self) -> Result<()> {
+        match (self.mode.as_str(), self.path.as_deref()) {
+            ("embedded", None) => Ok(()),
+            ("external", Some(path)) => crate::deployment::validate(path),
+            _ => Err(error(
+                "asset_delivery",
+                "delivery.mode 须为 embedded（不带 path）或 external（带 path）",
+            )),
+        }
+    }
 }
 impl Default for Delivery {
     fn default() -> Self {

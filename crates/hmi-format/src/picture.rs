@@ -5,6 +5,7 @@ use hmi_core::{Result, error};
 
 pub mod alpha7;
 pub mod jpeg;
+pub mod xi;
 
 fn header(prefix: [u8; 4], width: u16, height: u16, start: usize, size: usize) -> Result<Vec<u8>> {
     if width == 0 || height == 0 {

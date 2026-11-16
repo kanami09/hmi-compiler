@@ -1,6 +1,30 @@
 //! 数据记录、文件浏览器与文件流的原生布局，不访问本机文件系统。
 use super::*;
 
+const EXTERNAL_FIELDS: [Field; 23] = {
+    let mut f = drawable_fields();
+    f[21] = field("path", FieldValue::Property("path"));
+    f[22] = field("path_m", FieldValue::Constant(&[255, 0]));
+    f
+};
+
+pub(super) const EXTERNAL_PICTURE: Definition = Definition {
+    name: "external_picture",
+    code: 60,
+    properties: &[
+        SCOPE,
+        integer("x", Storage::U16, 0, 65535, DefaultValue::Required),
+        integer("y", Storage::U16, 0, 65535, DefaultValue::Required),
+        integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
+        integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
+        integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+        integer("path", Storage::ExternalPath, 0, 0, DefaultValue::Required),
+    ],
+    fields: &EXTERNAL_FIELDS,
+    events: &["down", "up"],
+    access: PropertyAccess::DEFAULT,
+};
+
 const BROWSER_PROPERTIES: &[Property] = &[
     integer("vscope", Storage::U8, 0, 1, DefaultValue::Integer(0)),
     integer("x", Storage::U16, 0, 65535, DefaultValue::Required),

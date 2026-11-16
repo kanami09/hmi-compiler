@@ -98,10 +98,23 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
     if codec == "jpeg" && !(1..=100).contains(&quality) {
         return Err(error("image_quality", "JPEG quality 必须为 1～100"));
     }
-    if config.delivery.mode != "embedded" || config.delivery.path.is_some() {
+    config.delivery.validate()?;
+    if config.delivery.mode == "external"
+        && (codec != "jpeg"
+            || !target
+                .capabilities
+                .control_types
+                .iter()
+                .any(|c| c == "external_picture")
+            || !config
+                .delivery
+                .path
+                .as_deref()
+                .is_some_and(|p| p.to_ascii_lowercase().ends_with(".xi")))
+    {
         return Err(error(
             "asset_delivery",
-            "当前图片编码仅支持内嵌资源，不接受外部路径",
+            "外部图片当前需要支持外部图片控件的型号、JPEG 编码及 .xi 部署路径",
         ));
     }
     if config.encoding.alpha == Alpha::Preserve && config.encoding.background.is_some() {
@@ -281,6 +294,7 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
         "image-rs/0.25.10-rgb565/1"
     };
     let info = ImageInfo {
+        delivery: config.delivery,
         width,
         height,
         storage_width,

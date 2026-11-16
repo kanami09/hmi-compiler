@@ -2,7 +2,6 @@ use clap::Parser;
 use hmi_core::{
     Result,
     cli::{self, CommandResult},
-    file,
 };
 use std::{path::PathBuf, process::ExitCode};
 
@@ -28,19 +27,11 @@ fn run(args: &Args) -> Result<CommandResult> {
         hmi_linker::from_manifest(&args.source, args.deny_warnings || args.warnings.is_some())?;
     let inputs: Vec<_> = linked.inputs.iter().map(|p| p.as_path()).collect();
     if let Some(output) = &args.output {
-        if let Some(map) = &args.map {
-            if std::path::absolute(map)? == std::path::absolute(output)? {
-                return Err(hmi_core::error(
-                    "output_path",
-                    "HMI 与链接映射不能使用同一输出路径",
-                ));
-            }
-            file::write_atomic(map, &file::json(&linked.map)?, &inputs)?;
-        }
-        file::write_atomic(output, &linked.bytes, &inputs)?;
+        hmi_linker::publish::Publication::prepare(&linked, output, args.map.as_deref(), &inputs)?
+            .write()?;
     }
     Ok(CommandResult {
-        result: serde_json::json!({"output":args.output,"output_written":args.output.is_some(),"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes),"map":linked.map}),
+        result: serde_json::json!({"output":args.output,"output_written":args.output.is_some(),"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes),"map":linked.map,"external_files":linked.external_files.iter().map(|f| &f.path).collect::<Vec<_>>()}),
         message: if args.check {
             "链接检查通过。".into()
         } else {
