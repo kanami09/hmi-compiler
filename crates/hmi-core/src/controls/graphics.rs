@@ -126,6 +126,7 @@ const QR_PROPERTIES: [Property; 11] = {
         min: 0,
         max: 0,
         default: DefaultValue::Required,
+        image_rule: None,
     };
     p[10] = integer("txt_maxl", Storage::U16, 0, 192, DefaultValue::Integer(16));
     p

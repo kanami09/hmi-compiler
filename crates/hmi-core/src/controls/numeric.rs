@@ -9,6 +9,7 @@ const fn properties(xfloat: bool) -> [Property; 21] {
         p[i] = TEXT_PROPERTIES[i];
         i += 1;
     }
+    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
     p[7] = integer("style", Storage::U8, 0, 4, DefaultValue::Integer(0));
     p[15] = integer(
         "val",
@@ -41,6 +42,8 @@ const XFLOAT_PROPERTIES: [Property; 21] = properties(true);
 
 const fn fields(xfloat: bool) -> [Field; 39] {
     let mut f = TEXT_FIELDS;
+    f[28] = field("picc", FieldValue::Constant(&[255, 255]));
+    f[29] = field("pic", FieldValue::Constant(&[255, 255]));
     // 前 33 项完全同序，包括未启用的图片字段。保留 lenth 的原生拼写。
     f[33] = field("val", FieldValue::Property("val"));
     f[34] = if xfloat {

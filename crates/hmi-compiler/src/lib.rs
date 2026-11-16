@@ -280,22 +280,30 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                         | controls::Storage::Video
                         | controls::Storage::Audio
                 ) {
-                    let value = properties.get(property.name).ok_or_else(|| {
-                        error(
-                            "property_required",
-                            format!("必须指定资源属性 {}", property.name),
-                        )
-                    })?;
-                    let reference: hmi_core::asset::ResourceReference =
+                    let reference: hmi_core::asset::ResourceReference = if let Some(value) =
+                        properties.get(property.name)
+                    {
                         value.clone().try_into().map_err(|_| {
                             error(
                                 "resource_reference",
                                 format!("属性 {} 必须使用 ref、id 或 none 的引用表", property.name),
                             )
-                        })?;
+                        })?
+                    } else if property.allows_none() {
+                        hmi_core::asset::ResourceReference {
+                            name: None,
+                            id: None,
+                            none: Some(true),
+                        }
+                    } else {
+                        return Err(error(
+                            "property_required",
+                            format!("必须指定资源属性 {}", property.name),
+                        ));
+                    };
                     reference.validate()?;
                     let font = matches!(property.storage, controls::Storage::Font);
-                    if reference.none == Some(true)
+                    if (reference.none == Some(true) && !property.allows_none())
                         || reference
                             .id
                             .is_some_and(|id| id >= if font { 255 } else { 65535 })
@@ -305,7 +313,14 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                             "资源属性必须引用有效的媒体 ID，不能使用空资源",
                         ));
                     }
-                    properties.insert(property.name.into(), 0_i64.into());
+                    properties.insert(
+                        property.name.into(),
+                        if reference.none == Some(true) {
+                            65535_i64.into()
+                        } else {
+                            0_i64.into()
+                        },
+                    );
                     resources.push(hmi_artifact::Relocation {
                         object: index + 1,
                         property: property.name.into(),

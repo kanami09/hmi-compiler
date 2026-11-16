@@ -285,6 +285,16 @@ fn assemble_page(
             RelocationKind::ImageId => {
                 let reference = relocation.reference.as_ref().unwrap();
                 let current = &parsed[relocation.object];
+                if reference.none == Some(true) {
+                    if current
+                        .attribute(&relocation.property)
+                        .is_none_or(|a| a.value != [255, 255])
+                    {
+                        return Err(error("object_relocation", "空图片必须使用 65535 占位值"));
+                    }
+                    values[relocation.object].insert(relocation.property.clone(), vec![255, 255]);
+                    continue;
+                }
                 let id = resolve_resource(images, reference, "图片").map_err(
                     |error| -> hmi_core::Error {
                         let mut diagnostic = error.as_diagnostic().cloned().unwrap_or_else(|| {
@@ -303,7 +313,19 @@ fn assemble_page(
                 {
                     return Err(error("object_relocation", "图片资源 ID 占位值必须为零"));
                 }
-                if current.type_code == 113 {
+                let definition = controls::by_code(current.type_code)?;
+                let property = definition
+                    .properties
+                    .iter()
+                    .find(|p| p.name == relocation.property)
+                    .unwrap();
+                let attributes = current
+                    .attributes
+                    .iter()
+                    .map(|a| (a.name.clone(), a.value.clone()))
+                    .collect::<Vec<_>>();
+                if property.image_rule.is_some_and(|r| r.crop) && property.image_active(&attributes)
+                {
                     let info = &images[usize::from(id)].1;
                     if info.width != target.canvas.width || info.height != target.canvas.height {
                         return Err(error(

@@ -314,7 +314,12 @@ impl CompiledObject {
                         .as_ref()
                         .ok_or_else(|| error("object_relocation", "资源重定位缺少引用"))?;
                     reference.validate()?;
-                    if reference.none == Some(true)
+                    let optional = relocation.kind == RelocationKind::ImageId
+                        && definition
+                            .properties
+                            .iter()
+                            .any(|p| p.name == relocation.property && p.allows_none());
+                    if (reference.none == Some(true) && !optional)
                         || reference
                             .id
                             .is_some_and(|id| id >= if font { 255 } else { 65535 })

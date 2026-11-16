@@ -55,6 +55,14 @@ pub struct Property {
     pub min: i64,
     pub max: i64,
     pub default: DefaultValue,
+    /// 图片启用条件与裁切规则；其他属性为 None。
+    pub image_rule: Option<ImageRule>,
+}
+
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct ImageRule {
+    pub active_when: Option<(&'static str, u8)>,
+    pub crop: bool,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -120,10 +128,30 @@ const fn integer(
         min,
         max,
         default,
+        image_rule: None,
     }
 }
 const fn field(name: &'static str, value: FieldValue) -> Field {
     Field { name, value }
+}
+
+const fn background_image(
+    name: &'static str,
+    mode: &'static str,
+    value: u8,
+    crop: bool,
+) -> Property {
+    Property {
+        name,
+        storage: Storage::Image,
+        min: 0,
+        max: 65535,
+        default: DefaultValue::Integer(65535),
+        image_rule: Some(ImageRule {
+            active_when: Some((mode, value)),
+            crop,
+        }),
+    }
 }
 
 const SCOPE: Property = integer("vscope", Storage::U8, 0, 1, DefaultValue::Integer(0));
@@ -144,6 +172,7 @@ const VARIABLE_PROPERTIES: &[Property] = &[
         min: 0,
         max: 0,
         default: DefaultValue::Text("newtxt"),
+        image_rule: None,
     },
     integer(
         "txt_maxl",
@@ -177,9 +206,16 @@ const fn image_properties(name: &'static str) -> [Property; 7] {
     properties
 }
 const PICTURE_PROPERTIES: &[Property] = &image_properties("pic");
-const CROP_PROPERTIES: &[Property] = &image_properties("picc");
+const CROP_PROPERTIES: &[Property] = &{
+    let mut p = image_properties("picc");
+    p[6].image_rule = Some(ImageRule {
+        active_when: None,
+        crop: true,
+    });
+    p
+};
 
-/// 单色文本和按钮保留全部原生字段；当前不开放图片背景或透明背景。
+/// 文本和按钮保留全部原生字段，按最终模式判断必需的图片。
 const fn text_properties<const N: usize>(button: bool) -> [Property; N] {
     let mut p = [SCOPE; N];
     let mut i = 0;
@@ -187,7 +223,7 @@ const fn text_properties<const N: usize>(button: bool) -> [Property; N] {
         p[i] = HOTSPOT_PROPERTIES[i];
         i += 1;
     }
-    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+    p[6] = integer("sta", Storage::U8, 0, 2, DefaultValue::Integer(1));
     p[7] = integer(
         "style",
         Storage::U8,
@@ -214,6 +250,7 @@ const fn text_properties<const N: usize>(button: bool) -> [Property; N] {
         min: 0,
         max: 0,
         default: DefaultValue::Required,
+        image_rule: None,
     };
     p[16] = integer(
         "txt_maxl",
@@ -229,13 +266,19 @@ const fn text_properties<const N: usize>(button: bool) -> [Property; N] {
         p[20] = integer("bco2", Storage::U16, 0, 65535, DefaultValue::Integer(1024));
         p[21] = integer("pco2", Storage::U16, 0, 65535, DefaultValue::Integer(65535));
         p[22] = integer("val", Storage::U8, 0, 1, DefaultValue::Integer(0));
+        p[23] = background_image("pic", "sta", 2, false);
+        p[24] = background_image("pic2", "sta", 2, false);
+        p[25] = background_image("picc", "sta", 0, true);
+        p[26] = background_image("picc2", "sta", 0, true);
     } else {
         p[20] = integer("pw", Storage::U8, 0, 1, DefaultValue::Integer(0));
+        p[21] = background_image("pic", "sta", 2, false);
+        p[22] = background_image("picc", "sta", 0, true);
     }
     p
 }
-const TEXT_PROPERTIES: [Property; 21] = text_properties(false);
-const BUTTON_PROPERTIES: [Property; 23] = text_properties(true);
+const TEXT_PROPERTIES: [Property; 23] = text_properties(false);
+const BUTTON_PROPERTIES: [Property; 27] = text_properties(true);
 
 const HOTSPOT_FIELDS: &[Field] = &[
     field("type", FieldValue::Type),
@@ -304,8 +347,8 @@ const TEXT_FIELDS: [Field; 39] = {
     fields[25] = field("borderw", FieldValue::Property("borderw"));
     fields[26] = field("font", FieldValue::Property("font"));
     fields[27] = field("bco", FieldValue::Property("bco"));
-    fields[28] = field("picc", FieldValue::Constant(&[255, 255]));
-    fields[29] = field("pic", FieldValue::Constant(&[255, 255]));
+    fields[28] = field("picc", FieldValue::Property("picc"));
+    fields[29] = field("pic", FieldValue::Property("pic"));
     fields[30] = field("pco", FieldValue::Property("pco"));
     fields[31] = field("xcen", FieldValue::Property("xcen"));
     fields[32] = field("ycen", FieldValue::Property("ycen"));
@@ -325,11 +368,11 @@ const BUTTON_FIELDS: [Field; 42] = {
     fields[23] = field("borderc", FieldValue::Property("borderc"));
     fields[24] = field("borderw", FieldValue::Property("borderw"));
     fields[25] = field("font", FieldValue::Property("font"));
-    fields[26] = field("pic", FieldValue::Constant(&[255, 255]));
-    fields[27] = field("picc", FieldValue::Constant(&[255, 255]));
+    fields[26] = field("pic", FieldValue::Property("pic"));
+    fields[27] = field("picc", FieldValue::Property("picc"));
     fields[28] = field("bco", FieldValue::Property("bco"));
-    fields[29] = field("pic2", FieldValue::Constant(&[255, 255]));
-    fields[30] = field("picc2", FieldValue::Constant(&[255, 255]));
+    fields[29] = field("pic2", FieldValue::Property("pic2"));
+    fields[30] = field("picc2", FieldValue::Property("picc2"));
     fields[31] = field("bco2", FieldValue::Property("bco2"));
     fields[32] = field("pco", FieldValue::Property("pco"));
     fields[33] = field("pco2", FieldValue::Property("pco2"));
@@ -476,6 +519,19 @@ fn property_error(code: &str, property: &str, message: impl Into<String>) -> cra
 }
 
 impl Property {
+    pub fn allows_none(&self) -> bool {
+        matches!(self.storage, Storage::Image)
+            && matches!(self.default, DefaultValue::Integer(65535))
+    }
+    pub fn image_active(&self, attributes: &[(String, Vec<u8>)]) -> bool {
+        self.image_rule
+            .and_then(|r| r.active_when)
+            .is_none_or(|(field, value)| {
+                attributes
+                    .iter()
+                    .any(|(k, v)| k == field && v.as_slice() == [value])
+            })
+    }
     fn encode(&self, value: &toml::Value) -> Result<Vec<u8>> {
         if matches!(
             self.storage,
@@ -703,13 +759,6 @@ impl Definition {
             }
         }
         if self.code == 1 {
-            if values["psta"] == [1] {
-                return Err(property_error(
-                    "property_mode",
-                    "psta",
-                    "当前滑块支持单色游标，图片游标尚未接入",
-                ));
-            }
             let min = u16::from_le_bytes(values["minval"].as_slice().try_into().unwrap());
             let max = u16::from_le_bytes(values["maxval"].as_slice().try_into().unwrap());
             if min > max {
@@ -741,7 +790,8 @@ impl Definition {
             })?;
             Ok(end.to_le_bytes().to_vec())
         };
-        self.fields
+        let attributes = self
+            .fields
             .iter()
             .map(|field| {
                 let value = match field.value {
@@ -755,7 +805,22 @@ impl Definition {
                 };
                 Ok((field.name.into(), value))
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        for property in self.properties {
+            if matches!(property.storage, Storage::Image)
+                && property.image_active(&attributes)
+                && attributes
+                    .iter()
+                    .any(|(k, v)| k == property.name && v == &[255, 255])
+            {
+                return Err(property_error(
+                    "property_required",
+                    property.name,
+                    format!("当前 {} 模式必须指定图片属性 {}", self.name, property.name),
+                ));
+            }
+        }
+        Ok(attributes)
     }
 
     /// 链接前复查原始属性布局及约束，ID 仍必须为零占位值。

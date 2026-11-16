@@ -1,15 +1,15 @@
 //! 单色交互控件的存储配方；运行行为仍由控件和用户脚本决定。
 use super::*;
 
-const SLIDER_PROPERTIES: [Property; 19] = {
-    let mut p = [SCOPE; 19];
+const SLIDER_PROPERTIES: [Property; 24] = {
+    let mut p = [SCOPE; 24];
     let mut i = 0;
     while i < 6 {
         p[i] = HOTSPOT_PROPERTIES[i];
         i += 1;
     }
     p[6] = integer("mode", Storage::U8, 0, 1, DefaultValue::Integer(0));
-    p[7] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+    p[7] = integer("sta", Storage::U8, 0, 2, DefaultValue::Integer(1));
     // 共同存储范围；各型号当前接入的游标模式由目标配置进一步约束。
     p[8] = integer("psta", Storage::U8, 0, 2, DefaultValue::Integer(0));
     p[9] = integer("wid", Storage::U8, 0, 255, DefaultValue::Integer(255));
@@ -22,6 +22,11 @@ const SLIDER_PROPERTIES: [Property; 19] = {
     p[16] = integer("maxval", Storage::U16, 0, 65535, DefaultValue::Integer(100));
     p[17] = integer("minval", Storage::U16, 0, 65535, DefaultValue::Integer(0));
     p[18] = integer("ch", Storage::U8, 0, 100, DefaultValue::Integer(25));
+    p[19] = background_image("pic", "sta", 2, false);
+    p[20] = background_image("pic1", "sta", 2, false);
+    p[21] = background_image("picc", "sta", 0, true);
+    p[22] = background_image("picc1", "sta", 0, true);
+    p[23] = background_image("pic2", "psta", 1, false);
     p
 };
 const SLIDER_FIELDS: [Field; 39] = {
@@ -32,13 +37,13 @@ const SLIDER_FIELDS: [Field; 39] = {
     f[24] = field("wid", FieldValue::Property("wid"));
     f[25] = field("hig", FieldValue::Property("hig"));
     f[26] = field("dis", FieldValue::Property("dis"));
-    f[27] = field("pic", FieldValue::Constant(&[255, 255]));
-    f[28] = field("picc", FieldValue::Constant(&[255, 255]));
+    f[27] = field("pic", FieldValue::Property("pic"));
+    f[28] = field("picc", FieldValue::Property("picc"));
     f[29] = field("bco", FieldValue::Property("bco"));
-    f[30] = field("pic1", FieldValue::Constant(&[255, 255]));
-    f[31] = field("picc1", FieldValue::Constant(&[255, 255]));
+    f[30] = field("pic1", FieldValue::Property("pic1"));
+    f[31] = field("picc1", FieldValue::Property("picc1"));
     f[32] = field("bco1", FieldValue::Property("bco1"));
-    f[33] = field("pic2", FieldValue::Constant(&[255, 255]));
+    f[33] = field("pic2", FieldValue::Property("pic2"));
     f[34] = field("pco", FieldValue::Property("pco"));
     f[35] = field("val", FieldValue::Property("val"));
     f[36] = field("maxval", FieldValue::Property("maxval"));
@@ -48,16 +53,30 @@ const SLIDER_FIELDS: [Field; 39] = {
 };
 
 const DUAL_PROPERTIES: [Property; 23] = {
-    let mut p = BUTTON_PROPERTIES;
+    let mut p = [SCOPE; 23];
+    let mut i = 0;
+    while i < 23 {
+        p[i] = BUTTON_PROPERTIES[i];
+        i += 1;
+    }
+    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
     p[7] = integer("style", Storage::U8, 0, 4, DefaultValue::Integer(4));
     p
+};
+const DUAL_FIELDS: [Field; 42] = {
+    let mut f = BUTTON_FIELDS;
+    f[26] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[27] = field("picc", FieldValue::Constant(&[255, 255]));
+    f[29] = field("pic2", FieldValue::Constant(&[255, 255]));
+    f[30] = field("picc2", FieldValue::Constant(&[255, 255]));
+    f
 };
 // 两种按钮布局相同，val 的运行语义不同；不生成额外状态切换脚本。
 pub(super) const DUAL_STATE_BUTTON: Definition = Definition {
     name: "dual_state_button",
     code: 53,
     properties: &DUAL_PROPERTIES,
-    fields: &BUTTON_FIELDS,
+    fields: &DUAL_FIELDS,
     events: &["down", "up"],
     access: PropertyAccess::DEFAULT,
 };
@@ -69,6 +88,7 @@ const SCROLL_PROPERTIES: [Property; 24] = {
         p[i] = TEXT_PROPERTIES[i];
         i += 1;
     }
+    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
     p[7] = integer("style", Storage::U8, 0, 4, DefaultValue::Integer(0));
     p[13] = integer("xcen", Storage::U8, 0, 2, DefaultValue::Integer(0));
     p[16] = integer(
@@ -91,6 +111,8 @@ const SCROLL_FIELDS: [Field; 46] = {
         f[i] = TEXT_FIELDS[i];
         i += 1;
     }
+    f[28] = field("picc", FieldValue::Constant(&[255, 255]));
+    f[29] = field("pic", FieldValue::Constant(&[255, 255]));
     f[33] = field("dir", FieldValue::Property("dir"));
     f[34] = field("dis", FieldValue::Property("dis"));
     f[35] = field("tim", FieldValue::Property("tim"));

@@ -38,20 +38,22 @@ const fn selection_fields<const N: usize>(checkbox: bool) -> [Field; N] {
 const CHECKBOX_FIELDS: [Field; 27] = selection_fields(true);
 const RADIO_FIELDS: [Field; 24] = selection_fields(false);
 
-const PROGRESS_PROPERTIES: [Property; 12] = {
-    let mut p = [SCOPE; 12];
+const PROGRESS_PROPERTIES: [Property; 14] = {
+    let mut p = [SCOPE; 14];
     let mut i = 0;
     while i < 6 {
         p[i] = HOTSPOT_PROPERTIES[i];
         i += 1;
     }
     // 此类型 sta=0 才是单色，不能套用文本的 sta=1。
-    p[6] = integer("sta", Storage::U8, 0, 0, DefaultValue::Integer(0));
+    p[6] = integer("sta", Storage::U8, 0, 1, DefaultValue::Integer(0));
     p[7] = integer("dez", Storage::U8, 0, 1, DefaultValue::Integer(0));
     p[8] = integer("val", Storage::U8, 0, 100, DefaultValue::Integer(0));
     p[9] = integer("dis", Storage::U8, 0, 100, DefaultValue::Integer(25));
     p[10] = integer("bco", Storage::U16, 0, 65535, DefaultValue::Integer(50712));
     p[11] = integer("pco", Storage::U16, 0, 65535, DefaultValue::Integer(1024));
+    p[12] = background_image("bpic", "sta", 1, false);
+    p[13] = background_image("ppic", "sta", 1, false);
     p
 };
 const PROGRESS_FIELDS: [Field; 29] = {
@@ -61,9 +63,9 @@ const PROGRESS_FIELDS: [Field; 29] = {
     f[23] = field("val", FieldValue::Property("val"));
     f[24] = field("dis", FieldValue::Property("dis"));
     f[25] = field("bco", FieldValue::Property("bco"));
-    f[26] = field("bpic", FieldValue::Constant(&[255, 255]));
+    f[26] = field("bpic", FieldValue::Property("bpic"));
     f[27] = field("pco", FieldValue::Property("pco"));
-    f[28] = field("ppic", FieldValue::Constant(&[255, 255]));
+    f[28] = field("ppic", FieldValue::Property("ppic"));
     f
 };
 
