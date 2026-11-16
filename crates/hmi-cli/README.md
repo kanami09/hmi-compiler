@@ -807,3 +807,11 @@ hmic 的 name 缺省采用源文件名，不带扩展名；已有 name 和其他
 控件用 `type="audio"`、`vid={ref="tone"}` 或当前音频列表的 `{id=...}`。音频与图片、动画、视频分别编号，资源名 N.wav、引用 kind 为 wav；视频内的音轨不占独立音频 ID。当前仅对已有音频证据的 X543 开放，不据此表示全部 X 系列型号都有扬声器。
 
 音频是特殊控件栏中的非可视控件，不接受 x/y/w/h、字体或图片。vscope 默认 0，可设 0／1；from 固定 0，en 为 0 停止／1 播放／2 暂停，loop 为 0／1，dis 为 10～1000、默认 100，tim 默认 0。stim/qty 运行时只读，初始零，不从文件回填。保留 fps=1、molloc_s/molloc=64000；只有 playend 事件，无 down/up。当前不根据全局作用域承诺跨页播放行为，实际播放、声道听感和音画同步需在模拟器或硬件单独验收。
+
+生成音频与有声视频验收工程：
+
+```powershell
+python examples/prepare_audio_acceptance.py --ffmpeg-dir path/to/ffmpeg/bin
+```
+
+输出位于 `target/acceptance-audio/`，包含 Audio0／Audio90 两份工程，各有原参数 PCM 音频、重采样截取音频和有声视频三页。素材由标准库生成，不读取已有 HMI 或内部资源；每份实际执行八条独立作业比较 HMI。资源全部内嵌，打开验收 HMI 无需配置 FFmpeg 或虚拟 SD；重建包含转换的源码才需要 DLL。已有输出目录不会覆盖，可用 --output 指定新目录。

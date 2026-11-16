@@ -3,6 +3,7 @@ import argparse
 from datetime import date
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -15,16 +16,20 @@ def chunk(tag, body):
     return tag + struct.pack("<I", len(body)) + body + (b"\0" if len(body) % 2 else b"")
 
 
-def avi():
+def avi(audio=False):
     width, height, fps, count = 160, 80, 4, 4
     stride = (width * 3 + 3) & ~3
     size = stride * height
-    avih = struct.pack("<14I", 250000, size * fps, 0, 16, count, 0, 1, size, width, height, 0, 0, 0, 0)
+    avih = struct.pack("<14I", 250000, size * fps, 0, 16, count, 0, 2 if audio else 1, size, width, height, 0, 0, 0, 0)
     strh = b"vids" + bytes(4) + struct.pack("<10I", 0, 0, 0, 1, fps, 0, count, size, 0xffffffff, 0) + struct.pack("<4h", 0, 0, width, height)
     strf = struct.pack("<IiiHH6I", 40, width, height, 1, 24, 0, size, 0, 0, 0, 0)
     hdrl = b"hdrl" + chunk(b"avih", avih) + chunk(b"LIST", b"strl" + chunk(b"strh", strh) + chunk(b"strf", strf))
+    if audio:
+        audio_header = b"auds" + bytes(4) + struct.pack("<10I", 0, 0, 0, 1, 8000, 0, 8000, 16000, 0xffffffff, 2) + bytes(8)
+        audio_format = struct.pack("<HHIIHH", 1, 1, 8000, 16000, 2, 16)
+        hdrl += chunk(b"LIST", b"strl" + chunk(b"strh", audio_header) + chunk(b"strf", audio_format))
     movi, index = bytearray(), bytearray()
-    for color in [(220, 40, 20), (30, 210, 60), (30, 70, 230), (220, 190, 20)]:
+    for frame, color in enumerate([(220, 40, 20), (30, 210, 60), (30, 70, 230), (220, 190, 20)]):
         pixels = bytearray()
         for y in range(height - 1, -1, -1):
             for x in range(width):
@@ -33,6 +38,10 @@ def avi():
             pixels.extend(bytes(stride - width * 3))
         index.extend(b"00db" + struct.pack("<III", 16, 4 + len(movi), len(pixels)))
         movi.extend(chunk(b"00db", pixels))
+        if audio:
+            pcm = b"".join(struct.pack("<h", round(1500 * math.sin(2 * math.pi * 440 * i / 8000))) for i in range(frame * 2000, (frame + 1) * 2000))
+            index.extend(b"01wb" + struct.pack("<III", 0, 4 + len(movi), len(pcm)))
+            movi.extend(chunk(b"01wb", pcm))
     return chunk(b"RIFF", b"AVI " + chunk(b"LIST", hdrl) + chunk(b"LIST", b"movi" + movi) + chunk(b"idx1", index))
 
 
