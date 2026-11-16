@@ -900,3 +900,11 @@ python examples/prepare_graphics_modes_acceptance.py
 
 
 五类 X 系列控件共用 ImageRule：sta=2 使用 pic，sta=0 使用全屏 picc；sta=1／3 不要求背景图片，显式声明的非活动引用仍保留和解析。背景模式不改写选项、当前值、文本缓存、文件浏览器图标、数据文件结构或运行时依赖。选中项、表头、弹出列表、边框等仍按各自属性及原生行为绘制，透明背景不代表这些部分的颜色也被清除。文件浏览器的 pic1／pic2 与背景 pic／picc 是不同用途的图片引用，前两者在任何模式下仍必填。
+
+批量生成五类控件的四种背景验收工程：
+
+```powershell
+python examples/prepare_x_backgrounds_acceptance.py --font path/to/ui.zi
+```
+
+输出位于 `target/acceptance-x-backgrounds/`，共两份 HMI、20 页，每页一个控件。XModes0 为 X543 0°，前五页图片、后五页单色；XModes90 为90°，前五页切图、后五页透明，并反转图片ID。每组依次为下拉框、选择文本、滑动文本、文件浏览器、数据记录，核对后每份编译一次即可。背景图片和图标均由代码生成，只读取指定ZI；无需FFmpeg、虚拟SD或预置.data。每份实际执行18条独立作业，输出与统一入口相同；已有目录不会覆盖，可用 --output 指定新目录。完整页面清单、图片ID和显示预期见输出 README。

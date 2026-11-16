@@ -1,6 +1,8 @@
 # 媒体编码器
 
-当前支持 BMP、PNG、JPG 输入，生成 K/T 的 RGB565 图片或 X543 的 JPEG 图片；X543 可保留七位透明度，四个内置配置均支持 UTF-8 ZI v6 字库。动画、视频、音频、外部文件及原生载荷复用尚未接入。
+当前支持 BMP、PNG、JPG 图片、UTF-8 ZI v6 字库、GIF 动画、WAV 音频及受支持的视频输入。图片生成 K/T 的 RGB565 或 X543 的 JPEG，X543 可保留七位透明度；动画、视频和音频生成内嵌资源，图片还可生成外部 XI 文件。视频和部分音频转换使用 FFmpeg DLL，GIF 和原参数 PCM16 WAV 不需要 DLL。
+
+直接接收已编码文件（encoded）、导入的原生资产包（native）以及按原始附件复用编码尚未接入。完整媒体描述和视频／音频参数见 [工具链使用说明](../hmi-cli/README.md)。
 
 ```powershell
 hmi-media probe image.asset.toml --target target.json
@@ -28,7 +30,7 @@ height = 48
 mode = "stretch"
 ```
 
-source 相对于描述文件所在目录。codec 可省略，或设为 auto，由目标选择 K/T 的 rgb565、X543 的 jpeg；也可显式指定该目标支持的编码。RGB565 不接受 quality 参数；JPEG quality 为 1～100、默认 80。delivery 默认 embedded，目前不支持 external。
+source 相对于描述文件所在目录。codec 可省略，或设为 auto，由目标选择 K/T 的 rgb565、X543 的 jpeg；也可显式指定该目标支持的编码。RGB565 不接受 quality 参数；JPEG quality 为 1～100、默认 80。delivery 默认 embedded；X543 的图片可选择 external，并指定以 .xi 结尾的运行时路径。其他媒体目前只支持内嵌资源。
 
 alpha 默认 preserve：X543 保留变换后图像的透明度，RGB565 遇到透明像素仍报错。需要去透明时设置 flatten，并指定 #RRGGBB 背景色。resize 默认不启用，启用时宽高必须同时给出：stretch 拉伸；contain 保持比例并居中填充，且须提供 #RRGGBBAA 背景。填充背景与主体的透明度都按 alpha 策略处理。
 
