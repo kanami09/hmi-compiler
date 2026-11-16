@@ -1,4 +1,4 @@
-//! X 系列单色交互控件；选项、当前值和原生缓存分别保存。
+//! X 系列交互控件；选项、当前值和原生缓存分别保存。
 use super::*;
 
 const SWITCH_PROPERTIES: &[Property] = &[
@@ -53,7 +53,9 @@ const COMBO_BOX_PROPERTIES: &[Property] = &[
     integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
-    integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1)),
+    integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1)),
+    background_image("pic", "sta", 2, false),
+    background_image("picc", "sta", 0, true),
     integer("style", Storage::U8, 0, 4, DefaultValue::Integer(0)),
     integer("borderc", Storage::U16, 0, 65535, DefaultValue::Integer(0)),
     integer("borderw", Storage::U8, 0, 255, DefaultValue::Integer(2)),
@@ -100,8 +102,8 @@ const COMBO_BOX_FIELDS: [Field; 55] = {
     f[24] = field("borderw", FieldValue::Property("borderw"));
     f[25] = field("font", FieldValue::Property("font"));
     f[26] = field("bco", FieldValue::Property("bco"));
-    f[27] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[28] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[27] = field("picc", FieldValue::Property("picc"));
+    f[28] = field("pic", FieldValue::Property("pic"));
     f[29] = field("pco", FieldValue::Property("pco"));
     f[30] = field("xcen", FieldValue::Property("xcen"));
     f[31] = field("ycen", FieldValue::Property("ycen"));
@@ -147,7 +149,9 @@ const TEXT_SELECT_PROPERTIES: &[Property] = &[
     integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
-    integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1)),
+    integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1)),
+    background_image("pic", "sta", 2, false),
+    background_image("picc", "sta", 0, true),
     integer("style", Storage::U8, 0, 1, DefaultValue::Integer(0)),
     integer("borderc", Storage::U16, 0, 65535, DefaultValue::Integer(0)),
     integer("borderw", Storage::U8, 0, 255, DefaultValue::Integer(2)),
@@ -173,8 +177,8 @@ const TEXT_SELECT_FIELDS: [Field; 41] = {
     f[24] = field("borderw", FieldValue::Property("borderw"));
     f[25] = field("font", FieldValue::Property("font"));
     f[26] = field("bco", FieldValue::Property("bco"));
-    f[27] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[28] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[27] = field("picc", FieldValue::Property("picc"));
+    f[28] = field("pic", FieldValue::Property("pic"));
     f[29] = field("pco", FieldValue::Property("pco"));
     f[30] = field("pco2", FieldValue::Property("pco2"));
     f[31] = field("spax", FieldValue::Property("spax"));
@@ -207,7 +211,9 @@ const SLIDING_TEXT_PROPERTIES: &[Property] = &[
     integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
-    integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1)),
+    integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1)),
+    background_image("pic", "sta", 2, false),
+    background_image("picc", "sta", 0, true),
     integer("style", Storage::U8, 0, 4, DefaultValue::Integer(0)),
     integer("borderc", Storage::U16, 0, 65535, DefaultValue::Integer(0)),
     integer("borderw", Storage::U8, 0, 255, DefaultValue::Integer(2)),
@@ -240,8 +246,8 @@ const SLIDING_TEXT_FIELDS: [Field; 44] = {
     f[25] = field("borderw", FieldValue::Property("borderw"));
     f[26] = field("font", FieldValue::Property("font"));
     f[27] = field("bco", FieldValue::Property("bco"));
-    f[28] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[29] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[28] = field("picc", FieldValue::Property("picc"));
+    f[29] = field("pic", FieldValue::Property("pic"));
     f[30] = field("pco", FieldValue::Property("pco"));
     f[31] = field("xcen", FieldValue::Property("xcen"));
     f[32] = field("leftshow", FieldValue::Constant(&[0]));

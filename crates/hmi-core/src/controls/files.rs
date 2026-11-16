@@ -32,7 +32,9 @@ const BROWSER_PROPERTIES: &[Property] = &[
     integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
-    integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1)),
+    integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1)),
+    background_image("pic", "sta", 2, false),
+    background_image("picc", "sta", 0, true),
     integer("style", Storage::U8, 0, 4, DefaultValue::Integer(2)),
     integer("borderc", Storage::U16, 0, 65535, DefaultValue::Integer(0)),
     integer("borderw", Storage::U8, 0, 255, DefaultValue::Integer(2)),
@@ -70,8 +72,8 @@ const BROWSER_FIELDS: [Field; 58] = {
     f[24] = field("borderw", FieldValue::Property("borderw"));
     f[25] = field("font", FieldValue::Property("font"));
     f[26] = field("bco", FieldValue::Property("bco"));
-    f[27] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[28] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[27] = field("picc", FieldValue::Property("picc"));
+    f[28] = field("pic", FieldValue::Property("pic"));
     f[29] = field("pco", FieldValue::Property("pco"));
     f[30] = field("pco2", FieldValue::Property("pco2"));
     f[31] = field("bco2", FieldValue::Property("bco2"));
@@ -164,7 +166,9 @@ const RECORD_PROPERTIES: &[Property] = &[
     integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
     integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
-    integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1)),
+    integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1)),
+    background_image("pic", "sta", 2, false),
+    background_image("picc", "sta", 0, true),
     integer("style", Storage::U8, 0, 4, DefaultValue::Integer(2)),
     integer("borderc", Storage::U16, 0, 65535, DefaultValue::Integer(0)),
     integer("borderw", Storage::U8, 0, 255, DefaultValue::Integer(2)),
@@ -230,8 +234,8 @@ const RECORD_FIELDS: [Field; 72] = {
     f[24] = field("borderw", FieldValue::Property("borderw"));
     f[25] = field("font", FieldValue::Property("font"));
     f[26] = field("bco", FieldValue::Property("bco"));
-    f[27] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[28] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[27] = field("picc", FieldValue::Property("picc"));
+    f[28] = field("pic", FieldValue::Property("pic"));
     f[29] = field("pco", FieldValue::Property("pco"));
     f[30] = field("xcen", FieldValue::Property("xcen"));
     f[31] = field("init", FieldValue::Constant(&[0]));

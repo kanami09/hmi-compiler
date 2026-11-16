@@ -212,7 +212,7 @@ fn source_validation_checks_utf8_capacity_and_preserves_old_output() {
     fs::write(&output, b"previous").unwrap();
     for (key, value) in [
         ("vscope", 0),
-        ("sta", 0),
+        ("sta", 4),
         ("lenth", 256),
         ("lenth", -1),
         ("maxval", -1),

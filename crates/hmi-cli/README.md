@@ -481,7 +481,7 @@ properties = { x = 20, y = 20, w = 440, h = 232, font = { ref = "ui" }, txt = "A
 
 状态开关的 val 为 0／1，dez 为 0 横向／1 竖向，默认均为 0；txt 默认为空，可以使用如 0/1 的两段标签，txt_maxl 默认 24、允许 0～24。dis 为 0～100、默认 100。状态 0 的 bco/pco 默认 50712／65535，状态 1 的 bco2/pco2 默认 1024／65535；文字色 pco1 默认 0。颜色均为 RGB565 的 0～65535。
 
-下拉框、选择文本和滑动文本当前仅支持单色背景 sta=1、默认白底黑字，边框默认颜色 0、宽度 2；下拉框／滑动文本的 style 为 0～4，选择文本为 0～1，默认均为 0。
+下拉框、选择文本和滑动文本支持 sta=0 切图、1 单色、2 图片、3 透明，默认单色白底黑字，边框默认颜色 0、宽度 2；下拉框／滑动文本的 style 为 0～4，选择文本为 0～1，默认均为 0。
 
 | 下拉框属性 | 默认值与范围 |
 |---|---|
@@ -543,7 +543,7 @@ type = "file_stream"
 | left、ch | 进度条显示 0～2、默认 1；滑动惯性 0～32、默认 8 |
 | dis、spax、spay | 文件名行数、横向／纵向间距，0～255，默认 3／24／8 |
 
-浏览器当前只支持单色 sta=1，默认白底黑字、style=2，style 可设 0～4；borderc/borderw 默认 0／2。选中背景 bco2=31、字体 pco2=65535，颜色范围均为 0～65535；xcen 默认 1、范围 0～2。vscope 默认 0，可设 0／1，但 txt 只能在所属页读取，全局作用域不会解除这一限制。
+浏览器支持 sta=0 切图、1 单色、2 图片、3 透明，默认 sta=1、白底黑字、style=2，style 可设 0～4；borderc/borderw 默认 0／2。选中背景 bco2=31、字体 pco2=65535，颜色范围均为 0～65535；xcen 默认 1、范围 0～2。vscope 默认 0，可设 0／1，但 txt 只能在所属页读取，全局作用域不会解除这一限制。
 
 dir 是屏幕的目录路径，不是构建机路径；构建时不会枚举、创建或清空 SD 目录，也不把 filter 当作本机文件匹配条件。txt、qty、最大滚动值和缓存保留原生初始状态，由运行环境更新，不伪造文件名或数量。val 的初始四字节为 FF FF FF FF，本批不开放源文件中的初始赋值，运行脚本可按控件规则设置；自定义文件图标 vvs2 当前保持为空。
 
@@ -571,7 +571,7 @@ type = "data_record"
 properties = { x = 20, y = 20, w = 440, h = 232, font = { ref = "ui" }, path = "sd0/records.data", lenth = 32, maxval = 16, dez = 2, format = "200^200", dir = "T^V" }
 ```
 
-数据记录在当前内置型号中仅对 X543 开放，vscope 固定为 1。源码编译检查单页数量，链接检查整个工程的总数，最多八个。当前只支持单色背景 sta=1，原生记录包含全部 72 个属性；方法分派、初始化字段和非零保留字段按创建配方生成，不开放为用户数值。
+数据记录在当前内置型号中仅对 X543 开放，vscope 固定为 1。源码编译检查单页数量，链接检查整个工程的总数，最多八个。背景支持 sta=0 切图、1 单色、2 图片、3 透明，默认 1；原生记录包含全部 72 个属性；方法分派、初始化字段和非零保留字段按创建配方生成，不开放为用户数值。
 
 | 文件与结构属性 | 含义和范围 |
 |---|---|
@@ -823,13 +823,14 @@ python examples/prepare_audio_acceptance.py --ffmpeg-dir path/to/ffmpeg/bin
 
 ## 图片背景与图片游标
 
-当前接入页面背景，以及文本、普通按钮、滑块、进度条、数字、虚拟浮点数、双态按钮、滚动文本、指针、波形的图片模式，以及二维码的中心 LOGO。其他类型维持各自现有范围，不因共用字段布局自动放开。
+当前接入页面背景，以及文本、普通按钮、滑块、进度条、数字、虚拟浮点数、双态按钮、滚动文本、指针、波形的图片模式，以及二维码的中心 LOGO；X 系列下拉框、选择文本、滑动文本、文件浏览器和数据记录也支持图片／切图／透明背景。其他类型维持各自现有范围，不因共用字段布局自动放开。
 
 | 控件 | 模式与必需图片 |
 |---|---|
 | page（页面自身） | sta=0 无背景、1 单色、2 全屏图片；sta=2 时 pic 必填，图片逻辑尺寸须与页面相同 |
 | text／number／xfloat／scrolling_text | sta=2 时 pic 必填；sta=0 时 picc 必填；sta=1 单色；X 系列另支持 sta=3 透明 |
 | button／dual_state_button | sta=2 时 pic／pic2 分别为普通／按下图片；sta=0 时 picc／picc2 为两种状态切图；sta=1 单色；X 系列另支持 sta=3 透明 |
+| combo_box／text_select／sliding_text／file_browser／data_record | sta=2 时 pic 必填；sta=0 时 picc 必填；sta=1 单色、3 透明；五类控件当前仅在 X543 开放 |
 | gauge／waveform | sta=2 时 pic 必填；sta=0 时 picc 必填；sta=1 单色、3 透明；指针透明仅 X 系列，波形当前按通用范围 |
 | qrcode | sta=1 时 pic 为必填 LOGO；sta=0 不显示 LOGO，pic 可省略或保留 |
 | slider | sta=2 时 pic／pic1 为背景／前景；sta=0 时 picc／picc1 为两项切图；sta=1 单色。独立的 psta=1 使用 pic2 游标图片 |
@@ -896,3 +897,6 @@ python examples/prepare_graphics_modes_acceptance.py
 ```
 
 输出位于 `target/acceptance-graphics-modes/`，包括 K035 的 GraphicPic／GraphicCrop／GraphicColor 和 X543 90° 的 GraphicX90。每份 gauge／wave／qrcode 三页：前三份验证图片、切图、切回单色及关闭 LOGO 后保留引用；最后一份验证透明背景和图片 ID 重排。GraphicPic／GraphicCrop／GraphicX90 显示中心 LOGO，GraphicColor 关闭 LOGO 但保留 pic。所有图片均由代码生成，无需字库、已有 HMI、FFmpeg 或虚拟 SD；每份实际执行9条独立作业比较 HMI，已有目录不会覆盖。显示预期和详细属性见输出 README，动态曲线和扫码不属于本批验收内容。
+
+
+五类 X 系列控件共用 ImageRule：sta=2 使用 pic，sta=0 使用全屏 picc；sta=1／3 不要求背景图片，显式声明的非活动引用仍保留和解析。背景模式不改写选项、当前值、文本缓存、文件浏览器图标、数据文件结构或运行时依赖。选中项、表头、弹出列表、边框等仍按各自属性及原生行为绘制，透明背景不代表这些部分的颜色也被清除。文件浏览器的 pic1／pic2 与背景 pic／picc 是不同用途的图片引用，前两者在任何模式下仍必填。
