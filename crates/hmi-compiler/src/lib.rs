@@ -53,45 +53,6 @@ pub fn compile_program(path: &Path, target: &Target) -> Result<Compilation> {
     })
 }
 
-/// 按原生创建顺序建立页面自身对象；此 ID 始终为 0，不是工程页面 ID。
-fn page_attributes(target: &Target, name: &str, bco: u16) -> Vec<(String, Vec<u8>)> {
-    let (w, h) = (target.canvas.width, target.canvas.height);
-    let attrs: Vec<(&str, Vec<u8>)> = vec![
-        ("type", vec![121]),
-        ("id", vec![0]),
-        ("objname", name.as_bytes().to_vec()),
-        ("vscope", vec![0]),
-        ("drag", vec![0]),
-        ("sendkey", vec![0]),
-        ("aph", vec![127]),
-        ("movex", 0u16.to_le_bytes().to_vec()),
-        ("movey", 0u16.to_le_bytes().to_vec()),
-        ("x", 0u16.to_le_bytes().to_vec()),
-        ("y", 0u16.to_le_bytes().to_vec()),
-        ("w", w.to_le_bytes().to_vec()),
-        ("h", h.to_le_bytes().to_vec()),
-        ("endx", (w - 1).to_le_bytes().to_vec()),
-        ("endy", (h - 1).to_le_bytes().to_vec()),
-        ("effect", vec![0]),
-        ("first", vec![0]),
-        ("time", 300u16.to_le_bytes().to_vec()),
-        ("lockobj", vec![0]),
-        ("groupid0", 0u32.to_le_bytes().to_vec()),
-        ("groupid1", 0u32.to_le_bytes().to_vec()),
-        ("up", vec![255]),
-        ("down", vec![255]),
-        ("left", vec![255]),
-        ("right", vec![255]),
-        ("sta", vec![1]),
-        ("bco", bco.to_le_bytes().to_vec()),
-        ("pic", u16::MAX.to_le_bytes().to_vec()),
-    ];
-    attrs
-        .into_iter()
-        .map(|(name, bytes)| (name.into(), bytes))
-        .collect()
-}
-
 pub fn compile_page(path: &Path, target: &Target) -> Result<Compilation> {
     compile_page_inner(path, target).map_err(|e| file::at_file(e, path))
 }
@@ -151,6 +112,115 @@ fn at_object(error: hmi_core::Error, page: &str, name: &str, index: usize) -> hm
     diagnostic.into()
 }
 
+/// 页面自身使用 owner=0，普通控件使用最终页内序号，共用资源占位和重定位规则。
+fn bind_resources(
+    definition: &controls::Definition,
+    properties: &mut hmi_core::model::Properties,
+    owner: usize,
+    resources: &mut Vec<hmi_artifact::Relocation>,
+) -> Result<()> {
+    for property in definition.properties {
+        if matches!(property.storage, controls::Storage::ExternalPath) {
+            let value = properties
+                .get(property.name)
+                .ok_or_else(|| error("property_required", "必须指定外部图片 path"))?;
+            if let Some(path) = value.as_str() {
+                if path.is_empty() {
+                    return Err(error("runtime_file_path", "外部图片路径不能为空"));
+                }
+            } else {
+                let reference: hmi_core::asset::ResourceReference =
+                    value.clone().try_into().map_err(|_| {
+                        error(
+                            "resource_reference",
+                            "外部图片 path 必须为字符串或 ref 引用表",
+                        )
+                    })?;
+                reference.validate()?;
+                if reference.name.is_none() {
+                    return Err(error(
+                        "resource_reference",
+                        "外部图片路径只接受 ref，不接受 ID 或 none",
+                    ));
+                }
+                resources.push(hmi_artifact::Relocation {
+                    object: owner,
+                    property: property.name.into(),
+                    kind: hmi_artifact::RelocationKind::ExternalPath,
+                    reference: Some(reference),
+                });
+                properties.insert(property.name.into(), "".into());
+            }
+        }
+        if matches!(
+            property.storage,
+            controls::Storage::Image
+                | controls::Storage::Font
+                | controls::Storage::Animation
+                | controls::Storage::Video
+                | controls::Storage::Audio
+        ) {
+            let reference: hmi_core::asset::ResourceReference =
+                if let Some(value) = properties.get(property.name) {
+                    value.clone().try_into().map_err(|_| {
+                        error(
+                            "resource_reference",
+                            format!("属性 {} 必须使用 ref、id 或 none 的引用表", property.name),
+                        )
+                    })?
+                } else if property.allows_none() {
+                    hmi_core::asset::ResourceReference {
+                        name: None,
+                        id: None,
+                        none: Some(true),
+                    }
+                } else {
+                    return Err(error(
+                        "property_required",
+                        format!("必须指定资源属性 {}", property.name),
+                    ));
+                };
+            reference.validate()?;
+            let font = matches!(property.storage, controls::Storage::Font);
+            if (reference.none == Some(true) && !property.allows_none())
+                || reference
+                    .id
+                    .is_some_and(|id| id >= if font { 255 } else { 65535 })
+            {
+                return Err(error(
+                    "resource_reference",
+                    "资源属性必须引用有效的媒体 ID，不能使用空资源",
+                ));
+            }
+            properties.insert(
+                property.name.into(),
+                if reference.none == Some(true) {
+                    65535_i64.into()
+                } else {
+                    0_i64.into()
+                },
+            );
+            resources.push(hmi_artifact::Relocation {
+                object: owner,
+                property: property.name.into(),
+                kind: if font {
+                    hmi_artifact::RelocationKind::FontId
+                } else if matches!(property.storage, controls::Storage::Audio) {
+                    hmi_artifact::RelocationKind::AudioId
+                } else if matches!(property.storage, controls::Storage::Video) {
+                    hmi_artifact::RelocationKind::VideoId
+                } else if matches!(property.storage, controls::Storage::Animation) {
+                    hmi_artifact::RelocationKind::AnimationId
+                } else {
+                    hmi_artifact::RelocationKind::ImageId
+                },
+                reference: Some(reference),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
     target.validate()?;
     let page: PageSource = file::read_toml(path)?;
@@ -188,26 +258,21 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
             ));
         }
     }
-    let mut bco = u16::MAX;
-    for (name, value) in &page.properties {
-        match (name.as_str(), value.as_integer()) {
-            ("sta", Some(1)) => {}
-            ("bco", Some(n)) if (0..=65535).contains(&n) => bco = n as u16,
-            ("sta", _) => {
-                return Err(error(
-                    "page_background",
-                    "当前阶段页面 sta 仅支持 1（单色背景）",
-                ));
-            }
-            ("bco", _) => return Err(error("property_range", "页面 bco 必须为 0～65535 的整数")),
-            _ => {
-                return Err(error(
-                    "page_property",
-                    format!("当前阶段不支持页面属性 {name}"),
-                ));
-            }
+    for property in page.properties.keys() {
+        if !matches!(property.as_str(), "sta" | "bco" | "pic") {
+            return Err(error(
+                "page_property",
+                format!("不支持页面属性 {property}；几何由目标固定"),
+            ));
         }
     }
+    let mut page_properties = page.properties.clone();
+    // 页面几何只取目标画布，源码不能覆盖；背景图片在链接时核对同一逻辑尺寸。
+    page_properties.insert("w".into(), i64::from(target.canvas.width).into());
+    page_properties.insert("h".into(), i64::from(target.canvas.height).into());
+    let mut resources = Vec::new();
+    bind_resources(&controls::PAGE, &mut page_properties, 0, &mut resources)?;
+    let attributes = controls::PAGE.attributes(&page.name, &page_properties)?;
     let directory = path.parent().unwrap_or(Path::new("."));
     let mut inputs = vec![path.to_path_buf()];
     let mut facts = Vec::new();
@@ -219,12 +284,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
         &mut inputs,
         &mut facts,
     )?;
-    let mut records = vec![(
-        121,
-        page.name.clone(),
-        write::object(&page_attributes(target, &page.name, bco), &events)?,
-    )];
-    let mut resources = Vec::new();
+    let mut records = vec![(121, page.name.clone(), write::object(&attributes, &events)?)];
     for (index, object) in page.objects.iter().enumerate() {
         let compiled = (|| {
             let definition = controls::by_name(&object.type_name)?;
@@ -239,106 +299,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                 ));
             }
             let mut properties = object.properties.clone();
-            for property in definition.properties {
-                if matches!(property.storage, controls::Storage::ExternalPath) {
-                    let value = properties
-                        .get(property.name)
-                        .ok_or_else(|| error("property_required", "必须指定外部图片 path"))?;
-                    if let Some(path) = value.as_str() {
-                        if path.is_empty() {
-                            return Err(error("runtime_file_path", "外部图片路径不能为空"));
-                        }
-                    } else {
-                        let reference: hmi_core::asset::ResourceReference =
-                            value.clone().try_into().map_err(|_| {
-                                error(
-                                    "resource_reference",
-                                    "外部图片 path 必须为字符串或 ref 引用表",
-                                )
-                            })?;
-                        reference.validate()?;
-                        if reference.name.is_none() {
-                            return Err(error(
-                                "resource_reference",
-                                "外部图片路径只接受 ref，不接受 ID 或 none",
-                            ));
-                        }
-                        resources.push(hmi_artifact::Relocation {
-                            object: index + 1,
-                            property: property.name.into(),
-                            kind: hmi_artifact::RelocationKind::ExternalPath,
-                            reference: Some(reference),
-                        });
-                        properties.insert(property.name.into(), "".into());
-                    }
-                }
-                if matches!(
-                    property.storage,
-                    controls::Storage::Image
-                        | controls::Storage::Font
-                        | controls::Storage::Animation
-                        | controls::Storage::Video
-                        | controls::Storage::Audio
-                ) {
-                    let reference: hmi_core::asset::ResourceReference = if let Some(value) =
-                        properties.get(property.name)
-                    {
-                        value.clone().try_into().map_err(|_| {
-                            error(
-                                "resource_reference",
-                                format!("属性 {} 必须使用 ref、id 或 none 的引用表", property.name),
-                            )
-                        })?
-                    } else if property.allows_none() {
-                        hmi_core::asset::ResourceReference {
-                            name: None,
-                            id: None,
-                            none: Some(true),
-                        }
-                    } else {
-                        return Err(error(
-                            "property_required",
-                            format!("必须指定资源属性 {}", property.name),
-                        ));
-                    };
-                    reference.validate()?;
-                    let font = matches!(property.storage, controls::Storage::Font);
-                    if (reference.none == Some(true) && !property.allows_none())
-                        || reference
-                            .id
-                            .is_some_and(|id| id >= if font { 255 } else { 65535 })
-                    {
-                        return Err(error(
-                            "resource_reference",
-                            "资源属性必须引用有效的媒体 ID，不能使用空资源",
-                        ));
-                    }
-                    properties.insert(
-                        property.name.into(),
-                        if reference.none == Some(true) {
-                            65535_i64.into()
-                        } else {
-                            0_i64.into()
-                        },
-                    );
-                    resources.push(hmi_artifact::Relocation {
-                        object: index + 1,
-                        property: property.name.into(),
-                        kind: if font {
-                            hmi_artifact::RelocationKind::FontId
-                        } else if matches!(property.storage, controls::Storage::Audio) {
-                            hmi_artifact::RelocationKind::AudioId
-                        } else if matches!(property.storage, controls::Storage::Video) {
-                            hmi_artifact::RelocationKind::VideoId
-                        } else if matches!(property.storage, controls::Storage::Animation) {
-                            hmi_artifact::RelocationKind::AnimationId
-                        } else {
-                            hmi_artifact::RelocationKind::ImageId
-                        },
-                        reference: Some(reference),
-                    });
-                }
-            }
+            bind_resources(definition, &mut properties, index + 1, &mut resources)?;
             let attributes = definition.attributes(&object.name, &properties)?;
             target.check_control_properties(definition.code, &attributes)?;
             let events = compile_events(

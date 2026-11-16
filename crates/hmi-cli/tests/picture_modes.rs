@@ -326,7 +326,7 @@ fn optional_image_relocations_cannot_be_removed_or_forged() {
         .metadata
         .relocations
         .iter_mut()
-        .find(|r| r.property == "pic")
+        .find(|r| r.object == 1 && r.property == "pic")
         .unwrap()
         .reference = Some(hmi_core::asset::ResourceReference {
         name: None,
@@ -340,7 +340,7 @@ fn optional_image_relocations_cannot_be_removed_or_forged() {
 }
 
 #[test]
-fn transparent_mode_is_not_enabled_implicitly_for_other_controls() {
+fn known_k_series_constraints_reject_transparent_mode() {
     let tmp = setup();
     for kind in ["number", "xfloat", "dual_state_button", "scrolling_text"] {
         let mut o = additional_widget(kind, 0);
@@ -353,7 +353,7 @@ fn transparent_mode_is_not_enabled_implicitly_for_other_controls() {
                 .as_diagnostic()
                 .unwrap()
                 .code,
-            "property_range",
+            "control_capability",
             "{kind}"
         );
     }

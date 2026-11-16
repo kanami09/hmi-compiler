@@ -284,7 +284,12 @@ mod tests {
     #[test]
     fn defaults_are_unrestricted_and_profile_rules_override_series_by_property() {
         let defaults = resolve("t0", "TJC4832T035_011").unwrap();
-        assert!(defaults.property_constraints.is_empty());
+        assert!(
+            defaults
+                .property_constraints
+                .iter()
+                .all(|r| r.control != "slider")
+        );
         let mut data: RuleSet = serde_json::from_str(DATA).unwrap();
         let replacement = ControlPropertyConstraint {
             control: "slider".into(),
@@ -302,9 +307,25 @@ mod tests {
         );
         data.validate().unwrap();
         let merged = data.resolve("k0", "TJC4832K035_011");
-        assert_eq!(merged, vec![replacement, extra]);
-        assert_eq!(data.resolve("t0", "TJC3224T028_011"), vec![]);
-        assert_eq!(data.resolve("k0", "other").len(), 1);
+        assert_eq!(
+            merged
+                .into_iter()
+                .filter(|r| r.control == "slider")
+                .collect::<Vec<_>>(),
+            vec![replacement, extra]
+        );
+        assert!(
+            data.resolve("t0", "TJC3224T028_011")
+                .iter()
+                .all(|r| r.control != "slider")
+        );
+        assert_eq!(
+            data.resolve("k0", "other")
+                .iter()
+                .filter(|r| r.control == "slider")
+                .count(),
+            1
+        );
     }
 
     #[test]

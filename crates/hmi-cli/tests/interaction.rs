@@ -219,7 +219,8 @@ fn slider_cursor_modes_follow_the_target_in_both_compilation_and_linking() {
                 p.target
                     .capabilities
                     .control_property_constraints
-                    .is_empty()
+                    .iter()
+                    .all(|r| r.control != "slider" || r.property != "psta")
             );
             assert_eq!(link(tmp.path()).objects[1].integer("psta"), Some(2));
         } else {
@@ -346,7 +347,13 @@ fn touch_capture_is_singleton_and_linker_checks_target_records_again() {
             (5, "tc0".into(), raw.to_vec()),
             (5, "tc1".into(), second),
         ],
-        vec![],
+        compiled
+            .metadata
+            .relocations
+            .iter()
+            .filter(|r| r.object == 0)
+            .cloned()
+            .collect(),
     )
     .unwrap();
     assert_eq!(

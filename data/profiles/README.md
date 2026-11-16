@@ -25,7 +25,7 @@ K/T 三组配置已接入 RGB565 图片，X543 已接入 JPEG 与七位透明度
 
 通用范围和默认值由控件注册表定义。`control-constraints.json` 只记录已经确认的系列／型号例外；没有条目时沿用通用范围。配置只涉及已经实现的普通整数属性，可表达连续范围和离散枚举，不会启用尚未实现的编码路线或控件模式。
 
-当前文件中的 K0 规则如下：
+下面仅列出 K0 的滑块游标规则，完整配置另包含文字控件的透明背景限制：
 
 ```json
 {
@@ -56,3 +56,5 @@ K/T 三组配置已接入 RGB565 图片，X543 已接入 JPEG 与七位透明度
 同一配置文件的 control_support 表记录已确认的控件系列限制。series 和 profiles 的键及覆盖顺序与属性约束相同，条目为 `{"control":"switch","supported":false}`；单独型号可以覆盖系列的同名控件状态。
 
 没有条目时默认允许该已接入类型，具体是否具备媒体后端仍按工具实现能力检查。当前根据官方说明，在 t0／k0 中禁用 switch、combo_box、text_select、sliding_text、file_browser、file_stream、data_record、external_picture、animation、video、audio；X543 按默认开放。这些状态展开到 target 的 control_types，源码编译和独立链接共用最终列表。未注册类型、同一作用域的重复声明或未知系列／型号会报错。
+
+text、button、number、xfloat、dual_state_button、scrolling_text 的通用 sta 范围为 0～3；官方说明将 3（透明背景）限定为 X 系列，因此 t0／k0 对这六类控件配置 0～2 范围。与滑块游标一样，这些差异由同一约束接口合并及检查，编译器和链接器无需分别维护型号分支。页面背景单独使用 0 无背景／1 单色／2 图片，不套用上述文字控件规则。

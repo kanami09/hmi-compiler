@@ -4,6 +4,9 @@ use crate::{Result, error, target::TargetConfig};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+/// 页面和控件共用的可编辑属性表。
+pub type Properties = BTreeMap<String, toml::Value>;
+
 /// 单个控件的可编辑内容；不保存重命名历史或另一个对象身份。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]

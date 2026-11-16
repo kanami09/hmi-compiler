@@ -9,7 +9,7 @@ const fn properties(xfloat: bool) -> [Property; 23] {
         p[i] = TEXT_PROPERTIES[i];
         i += 1;
     }
-    p[6] = integer("sta", Storage::U8, 0, 2, DefaultValue::Integer(1));
+    p[6] = integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1));
     p[7] = integer("style", Storage::U8, 0, 4, DefaultValue::Integer(0));
     p[15] = integer(
         "val",

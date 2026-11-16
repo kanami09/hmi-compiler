@@ -107,7 +107,6 @@ fn assemble_page(
                 ("endy", u32::from(target.canvas.height) - 1),
             ];
             if current.attributes.len() != 28
-                || current.integer("sta") != Some(1)
                 || dimensions.iter().any(|(key, value)| {
                     current.integer(key) != Some(*value)
                         || current.attribute(key).is_none_or(|a| a.value.len() != 2)
@@ -115,9 +114,10 @@ fn assemble_page(
             {
                 return Err(error(
                     "page_object",
-                    format!("页面 {name} 的自身对象与目标几何或单色背景布局不一致"),
+                    format!("页面 {name} 的自身对象与目标几何或属性布局不一致"),
                 ));
             }
+            controls::PAGE.validate_record(&current.name, &attributes)?;
             controls::PAGE_EVENTS
         } else {
             let definition = controls::by_code(current.type_code)?;
@@ -313,7 +313,7 @@ fn assemble_page(
                 {
                     return Err(error("object_relocation", "图片资源 ID 占位值必须为零"));
                 }
-                let definition = controls::by_code(current.type_code)?;
+                let definition = controls::record_definition(current.type_code)?;
                 let property = definition
                     .properties
                     .iter()

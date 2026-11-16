@@ -46,7 +46,7 @@ fn run(args: &Args) -> Result<CommandResult> {
                 for (index, record) in layout.objects.iter().enumerate() {
                     let parsed = hmi_format::page::Object::parse(object.record(index)?)?;
                     let mut properties = if index == 0 {
-                        serde_json::json!({"w":parsed.integer("w"),"h":parsed.integer("h"),"sta":parsed.integer("sta"),"bco":parsed.integer("bco")})
+                        serde_json::json!({"w":parsed.integer("w"),"h":parsed.integer("h"),"sta":parsed.integer("sta"),"bco":parsed.integer("bco"),"pic":parsed.integer("pic")})
                     } else {
                         let definition = hmi_core::controls::by_code(parsed.type_code)?;
                         let attributes = parsed

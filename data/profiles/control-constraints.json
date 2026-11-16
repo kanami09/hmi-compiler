@@ -10,6 +10,116 @@
           "min": 0,
           "max": 1
         }
+      },
+      {
+        "control": "text",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "button",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "number",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "xfloat",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "dual_state_button",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "scrolling_text",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      }
+    ],
+    "t0": [
+      {
+        "control": "text",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "button",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "number",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "xfloat",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "dual_state_button",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "scrolling_text",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
       }
     ]
   },

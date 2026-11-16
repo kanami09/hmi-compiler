@@ -18,6 +18,8 @@ mod graphics;
 mod indicators;
 mod interaction;
 mod media;
+mod page;
+pub use page::PAGE;
 mod numeric;
 mod x_interaction;
 pub use files::DATA_RECORD_LIMIT;
@@ -223,7 +225,7 @@ const fn text_properties<const N: usize>(button: bool) -> [Property; N] {
         p[i] = HOTSPOT_PROPERTIES[i];
         i += 1;
     }
-    p[6] = integer("sta", Storage::U8, 0, 2, DefaultValue::Integer(1));
+    p[6] = integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1));
     p[7] = integer(
         "style",
         Storage::U8,
@@ -504,9 +506,18 @@ pub fn by_code(code: u8) -> Result<&'static Definition> {
         .ok_or_else(|| error("control_type", format!("当前尚未接入控件类型码 {code}")))
 }
 
+/// 页面自身对象参与资源绑定，但不进入普通控件创建列表。
+pub fn record_definition(code: u8) -> Result<&'static Definition> {
+    if code == 121 {
+        Ok(&PAGE)
+    } else {
+        by_code(code)
+    }
+}
+
 /// 注册表变化必须使旧目标配置失效，即使文件格式版本没有变化。
 pub fn fingerprint() -> String {
-    sha256(&serde_json::to_vec(DEFINITIONS).expect("静态控件定义可以序列化"))
+    sha256(&serde_json::to_vec(&(DEFINITIONS, &PAGE)).expect("静态控件定义可以序列化"))
 }
 
 fn property_error(code: &str, property: &str, message: impl Into<String>) -> crate::Error {

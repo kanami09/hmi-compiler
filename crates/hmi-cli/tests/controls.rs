@@ -212,6 +212,7 @@ fn linker_assigns_ids_and_keeps_event_owners_after_reordering() {
             .metadata
             .relocations
             .iter()
+            .filter(|r| r.kind == hmi_artifact::RelocationKind::ObjectId)
             .map(|r| r.object)
             .collect::<Vec<_>>(),
         [1, 2, 3]

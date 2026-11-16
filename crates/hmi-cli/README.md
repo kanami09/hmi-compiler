@@ -45,7 +45,7 @@ sources = ["pages/page0/page.toml"]
 items = []
 ```
 
-页面源码声明名称、单色背景和事件脚本：
+页面源码声明名称、背景和事件脚本：
 
 ```toml
 schema = "hmi.page/1"
@@ -60,6 +60,10 @@ load = "events/load.s"
 ```
 
 事件路径相对于页面目录。当前事件槽包括 load、loadend、down、up、unload；每个引用文件都必须存在。未引用的事件为空，代码中间的空行会保留。页面名称暂使用 1～16 字节的字母、数字、下划线，以字母或下划线开头。
+
+页面背景 sta=0 为无背景、1 为单色、2 为图片，默认 1；bco 是 RGB565 颜色，默认 65535。图片模式必须提供 `pic = { ref = "background" }`，资源必须与当前方向的页面逻辑尺寸完全相同。页面背景的 sta 数值与普通文字控件不同。无背景模式不主动绘制背景，实际显示取决于运行时已有画面。x/y 固定为 0，w/h 取目标画布，不能在页面源码中覆盖；页面不支持 sta=3。
+
+pic 的引用、空值和非活动字段保留规则与下文图片背景一致。例如 `properties = { sta = 1, bco = 2016, pic = { ref = "background" } }` 显示绿色单色背景，同时保留图片配置。未写 pic 时为原生空值 65535，不会默认引用图片 ID0。
 
 页面 ID 来自 sources 数组的顺序，页面自身对象的 ID 始终为 0。页面重排不会自动改写脚本，引用按最终页面名称和 ID 检查。当前静态分析检查已支持的引用形式，不代替 USART HMI 的完整脚本编译。
 
@@ -93,16 +97,16 @@ events = { timer = "events/tm0.timer.s" }
 | timer（定时器） | tim 默认 400，范围为 50～65534 毫秒；en 默认 1；vscope 默认 0 | timer |
 | picture（图片） | x/y/w/h 必填；pic 为图片引用表；vscope、sendkey 默认 0 | down、up |
 | crop（切图） | x/y/w/h 必填；picc 须引用与当前页面同尺寸的全屏图片，取图区域不得越界；vscope、sendkey 默认 0 | down、up |
-| text（文本） | x/y/w/h、font 引用表、txt 必填；sta 为 0／1／2；style 为 0 平面或 1 边框 | down、up |
-| button（按钮） | x/y/w/h、font 引用表、txt 必填；sta 为 0／1／2；style 为 1 边框或 4 3D_Auto，默认 4 | down、up |
-| number（数字） | x/y/w/h、font 引用表必填；val 为 i32；sta 为0／1／2，显示位数使用原生字段 lenth | down、up |
-| xfloat（虚拟浮点数） | x/y/w/h、font 引用表必填；val 为 i32，vvs0/vvs1 控制整数位／小数位；当前 sta=1 | down、up |
+| text（文本） | x/y/w/h、font 引用表、txt 必填；sta 为 0～3，3 仅 X 系列；style 为 0 平面或 1 边框 | down、up |
+| button（按钮） | x/y/w/h、font 引用表、txt 必填；sta 为 0～3，3 仅 X 系列；style 为 1 边框或 4 3D_Auto，默认 4 | down、up |
+| number（数字） | x/y/w/h、font 引用表必填；val 为 i32；sta 为 0～3，3 仅 X 系列；显示位数使用原生字段 lenth | down、up |
+| xfloat（虚拟浮点数） | x/y/w/h、font 引用表必填；val 为 i32，vvs0/vvs1 控制整数位／小数位；sta 为 0～3，3 仅 X 系列 | down、up |
 | checkbox（复选框） | x/y/w/h 必填；val 为 0／1，可设颜色、style 和边框 | down、up |
 | radio（单选框） | x/y/w/h 必填；val 为 0／1，可设颜色；互斥逻辑由脚本实现 | down、up |
-| progress_bar（进度条） | x/y/w/h 必填；val 为 0～100；当前 sta=0；dez 为方向字段 | down、up |
+| progress_bar（进度条） | x/y/w/h 必填；val 为 0～100；sta=0 单色、1 图片；dez 为方向字段 | down、up |
 | slider（滑块） | x/y/w/h 必填；val/minval/maxval 为 u16；背景支持单色／图片／切图，游标支持单色／图片 | down、up、slide |
-| dual_state_button（双态按钮） | x/y/w/h、font 引用表、txt 必填；val 为 0／1，sta 为0／1／2 | down、up |
-| scrolling_text（滚动文本） | x/y/w/h、font 引用表、txt 必填；可设滚动方向、幅度、周期和使能，sta 为0／1／2 | down、up |
+| dual_state_button（双态按钮） | x/y/w/h、font 引用表、txt 必填；val 为 0／1；sta 为 0～3，3 仅 X 系列 | down、up |
+| scrolling_text（滚动文本） | x/y/w/h、font 引用表、txt 必填；可设滚动方向、幅度、周期和使能；sta 为 0～3，3 仅 X 系列 | down、up |
 | touch_cap（触摸捕捉） | 仅 vscope 可设置；每页最多一个，无几何属性；val 为只读捕捉结果 | down、up |
 | gauge（指针） | x/y/w/h 必填；val 为 0～360，尖长／尾长为有符号整数；当前 sta=1 | down、up |
 | waveform（波形） | x/y/w/h 必填；ch 为 1～4，支持方向、网格、通道颜色和缩放；当前 sta=1 | down、up |
@@ -246,7 +250,7 @@ font 必须使用 `{ ref = "..." }` 或 `{ id = ... }`。ref 引用当前资产�
 
 文本和按钮都检查 txt_maxl 的 UTF-8 字节容量，默认 10。例如“测试A”占 7 字节，需要容量至少为 7。工具目前不检查每个字符是否存在字形，UTF-8 字库也可能只含少量字符；请按字库覆盖范围设置文字。
 
-文本和普通按钮当前支持 sta=0 切图、1 单色、2 图片；文本 style 默认 0，按钮默认 4。完整原生字段始终保留，隐藏字段不会因为模式变化被删除。图片字段和模式要求见后文“图片背景与图片游标”。
+文本和普通按钮当前支持 sta=0 切图、1 单色、2 图片，X 系列另支持 3 透明；文本 style 默认 0，按钮默认 4。完整原生字段始终保留，隐藏字段不会因为模式变化被删除。图片字段和模式要求见后文“图片背景与图片游标”。
 
 | 公共属性 | 默认值与范围 |
 |---|---|
@@ -306,7 +310,7 @@ properties = { x = 20, y = 100, w = 280, h = 40, val = 40 }
 | number | lenth：0～15，默认 0 表示自动位数。官方说明称为 length，本工程格式保留 HMI 的实际拼写 lenth，不接受 length 别名。format：0 数字、1 货币、2 Hex，默认 0 |
 | xfloat | vvs0：0～10，默认 0 表示整数位自动；vvs1：0～8，默认 2，设为 0 表示无小数 |
 
-两类支持 sta=0 切图、1 单色、2 图片；style 为 0～4，默认 0。支持与文本相同的颜色、边框、对齐及字间距属性，但没有 txt、txt_maxl 或 pw。isbr 默认 1。pic／picc 使用同一套条件图片引用规则，非活动值仍保留在原生记录中。
+两类支持 sta=0 切图、1 单色、2 图片，X 系列另支持 3 透明；style 为 0～4，默认 0。支持与文本相同的颜色、边框、对齐及字间距属性，但没有 txt、txt_maxl 或 pw。isbr 默认 1。pic／picc 使用同一套条件图片引用规则，非活动值仍保留在原生记录中。
 
 复选框和单选框的 val 默认 0，可设 0／1，表示未选中／选中；默认白底 bco=65535、前景 pco=1024。复选框另有 style（0～4，默认 2）、borderc（默认 0）和 borderw（默认 2）。单选框没有这些边框／风格字段，也不会自动生成互斥脚本；如果需要互斥，应在事件中显式设置其他单选框的 val。
 
@@ -348,9 +352,9 @@ type = "touch_cap"
 events = { up = "events/tc0.up.s" }
 ```
 
-四类均支持 vscope，默认 0。滑块、双态按钮、滚动文本还支持 sendkey，默认 0。滑块已接入图片／切图背景和图片游标；双态按钮及滚动文本也已接入图片／切图背景。本批不开放透明背景，原生记录保留完整字段。
+四类均支持 vscope，默认 0。滑块、双态按钮、滚动文本还支持 sendkey，默认 0。滑块已接入图片／切图背景和图片游标；双态按钮及滚动文本也已接入图片／切图背景。双态按钮和滚动文本在 X 系列另支持透明背景，原生记录保留完整字段。
 
-滑块的 mode 为 0 横向／1 竖向，默认 0；sta 当前为 1。val 默认为 0，minval/maxval 默认 0/100，三者范围均为 0～65535，且 minval 不能大于 maxval。官方说明中的 minval/maxval 只在滑动时限制 val，不能据此拒绝范围外的显式初始值，工具不会自动夹紧 val。
+滑块的 mode 为 0 横向／1 竖向，默认 0；sta 为 0 切图、1 单色、2 图片，默认 1。val 默认为 0，minval/maxval 默认 0/100，三者范围均为 0～65535，且 minval 不能大于 maxval。官方说明中的 minval/maxval 只在滑动时限制 val，不能据此拒绝范围外的显式初始值，工具不会自动夹紧 val。
 
 | 滑块属性 | 默认值与范围 |
 |---|---|
@@ -819,12 +823,13 @@ python examples/prepare_audio_acceptance.py --ffmpeg-dir path/to/ffmpeg/bin
 
 ## 图片背景与图片游标
 
-当前接入文本、普通按钮、滑块、进度条、数字、虚拟浮点数、双态按钮、滚动文本的图片模式。其他类型维持各自现有范围，不因共用字段布局自动放开。
+当前接入页面背景，以及文本、普通按钮、滑块、进度条、数字、虚拟浮点数、双态按钮、滚动文本的图片模式。其他类型维持各自现有范围，不因共用字段布局自动放开。
 
 | 控件 | 模式与必需图片 |
 |---|---|
-| text／number／xfloat／scrolling_text | sta=2 时 pic 必填；sta=0 时 picc 必填；sta=1 单色 |
-| button／dual_state_button | sta=2 时 pic／pic2 分别为普通／按下图片；sta=0 时 picc／picc2 为两种状态切图；sta=1 单色 |
+| page（页面自身） | sta=0 无背景、1 单色、2 全屏图片；sta=2 时 pic 必填，图片逻辑尺寸须与页面相同 |
+| text／number／xfloat／scrolling_text | sta=2 时 pic 必填；sta=0 时 picc 必填；sta=1 单色；X 系列另支持 sta=3 透明 |
+| button／dual_state_button | sta=2 时 pic／pic2 分别为普通／按下图片；sta=0 时 picc／picc2 为两种状态切图；sta=1 单色；X 系列另支持 sta=3 透明 |
 | slider | sta=2 时 pic／pic1 为背景／前景；sta=0 时 picc／picc1 为两项切图；sta=1 单色。独立的 psta=1 使用 pic2 游标图片 |
 | progress_bar | sta=0 单色，sta=1 使用 bpic 背景与 ppic 前景；此类型的 sta 数值与文本等不同 |
 
@@ -846,7 +851,7 @@ properties = { x = 20, y = 40, w = 280, h = 40, sta = 1, psta = 1, pic2 = { ref 
 
 切回单色不会清空已声明的 pic／picc 等值；非活动引用也按最终资产表解析，删掉被引用的资产仍会报错。工具不跟踪“上一次模式”的历史，源码显式写出的最终属性就是当前配置。需要清除非活动字段时，可在源码省略它或写 none，而不是假定切换模式会帮你删除。
 
-只有当前启用的切图字段要求与该方向页面的逻辑画布同尺寸，控件裁切区域必须在全图范围内。隐藏的切图引用保留，不对它套用当前未启用模式的几何要求。source 图片大小与控件几何分别处理，不因控件尺寸自动缩放或重编码共享图片；需要改变资源尺寸时在资产描述中显式 resize。
+页面图片背景和当前启用的切图字段要求与该方向页面的逻辑画布同尺寸，控件裁切区域必须在全图范围内。隐藏的切图引用保留，不对它套用当前未启用模式的几何要求。source 图片大小与控件几何分别处理，不因控件尺寸自动缩放或重编码共享图片；需要改变资源尺寸时在资产描述中显式 resize。
 
 滑块图片游标保留 wid/hig 的既有语义，默认 255 自动；K0 的 psta 范围仍为0／1，其他未记录例外的型号沿用通用0／1／2。切换到图片模式不擅自改游标尺寸、style、颜色、val 或事件脚本。
 
@@ -861,10 +866,15 @@ python examples/prepare_picture_modes_acceptance.py --font path/to/ui.zi
 输出位于 `target/acceptance-picture-modes/`，包括 K035 的图片／切图／单色保留三份工程和 X543 的90°图片工程，每份四页。源图片由代码生成，只需提供独立字库；无需 FFmpeg 或虚拟 SD。每份实际执行13条独立作业比较 HMI，已有目录不会覆盖，可用 --output 指定新目录。详细属性与显示预期见输出 README。
 
 
-数字、虚拟浮点数、双态按钮和滚动文本沿用相同的 ImageRule，不另建图片ID或编码路线。它们的原生记录分别仍为39／39／42／46项：仅按模式和显式引用设置图片字段，不因换背景改写 val、lenth/format、vvs0/vvs1、txt_maxl、滚动参数或事件。数字的 val 保持有符号i32，图片模式不会把它变成文本；双态按钮 val=1 时使用其第二状态图片。当前仍不开放 sta=3 透明背景。
+数字、虚拟浮点数、双态按钮和滚动文本沿用相同的 ImageRule，不另建图片ID或编码路线。它们的原生记录分别仍为39／39／42／46项：仅按模式和显式引用设置图片字段，不因换背景改写 val、lenth/format、vvs0/vvs1、txt_maxl、滚动参数或事件。数字的 val 保持有符号i32，图片模式不会把它变成文本；双态按钮 val=1 时使用其第二状态图片。这四类与文本、普通按钮的 sta=3 透明背景仅对 X 系列开放，T0／K0 按已确认的系列规则限制为 0～2。
 
 ```powershell
 python examples/prepare_additional_picture_modes_acceptance.py --font path/to/ui.zi
 ```
 
 此脚本复用上一批生成器，输出在 `target/acceptance-picture-modes-more/`，含 MorePic／MoreCrop／MoreColor／MoreX90 四份工程，每份 number／xfloat／dual／scroll 四页。前三份为 K035 的图片／切图／单色保留，最后一份为 X543 90° JPEG 和 ID 重排，双态按钮初值为 1。每份实际执行10条独立作业；只读取指定 ZI，图片均由代码生成，已有目录不会覆盖。
+
+
+六类文字控件的透明背景 sta=3 不填充控件背景，保留字体、颜色、边框及其他属性；其下方页面或控件的画面可透出。它不要求 pic／picc 等背景图片；显式声明的非活动引用仍保留并解析。透明背景是控件的显示模式，与源图片是否带透明通道、媒体编码的透明度位数是不同配置，不会隐式生成透明图片。
+
+页面自身 ID0 的图片引用也保存为 ImageId 重定位，复用现有资产表、编码及独立链接。页面注册定义与普通控件分开，不将 page 作为可添加的普通控件，因此普通控件类型数仍为 30。target 数据修订更新后，旧 target.json／页面目标需要从源码重新生成；分发版本号不因此变化。

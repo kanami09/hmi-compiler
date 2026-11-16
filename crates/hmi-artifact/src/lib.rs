@@ -148,7 +148,7 @@ impl CompiledObject {
     fn record_dependencies(&self) -> Result<Vec<RuntimeDependency>> {
         let mut dependencies = Vec::new();
         if let Some(layout) = &self.metadata.layout {
-            for (index, record) in layout.objects.iter().enumerate().skip(1) {
+            for (index, record) in layout.objects.iter().enumerate() {
                 let object = hmi_format::page::Object::parse(self.record(index)?)?;
                 let attributes = object
                     .attributes
@@ -249,7 +249,7 @@ impl CompiledObject {
         }
         let mut relocated = std::collections::BTreeSet::new();
         for relocation in &self.metadata.relocations {
-            if relocation.object == 0
+            if (relocation.object == 0 && relocation.kind != RelocationKind::ImageId)
                 || relocation.object >= layout.objects.len()
                 || !relocated.insert((relocation.object, relocation.property.as_str()))
             {
@@ -260,8 +260,9 @@ impl CompiledObject {
             }
             match relocation.kind {
                 RelocationKind::ExternalPath => {
-                    let definition =
-                        hmi_core::controls::by_code(layout.objects[relocation.object].type_code)?;
+                    let definition = hmi_core::controls::record_definition(
+                        layout.objects[relocation.object].type_code,
+                    )?;
                     if !definition.properties.iter().any(|p| {
                         p.name == relocation.property
                             && matches!(p.storage, hmi_core::controls::Storage::ExternalPath)
@@ -291,8 +292,9 @@ impl CompiledObject {
                 | RelocationKind::VideoId
                 | RelocationKind::AudioId => {
                     let font = relocation.kind == RelocationKind::FontId;
-                    let definition =
-                        hmi_core::controls::by_code(layout.objects[relocation.object].type_code)?;
+                    let definition = hmi_core::controls::record_definition(
+                        layout.objects[relocation.object].type_code,
+                    )?;
                     if !definition.properties.iter().any(|p| {
                         p.name == relocation.property
                             && if font {
@@ -332,11 +334,11 @@ impl CompiledObject {
                 }
             }
         }
-        for (index, record) in layout.objects.iter().enumerate().skip(1) {
-            if !relocated.contains(&(index, "id")) {
+        for (index, record) in layout.objects.iter().enumerate() {
+            if index > 0 && !relocated.contains(&(index, "id")) {
                 return Err(error("object_relocation", "普通控件缺少 ID 重定位"));
             }
-            for property in hmi_core::controls::by_code(record.type_code)?.properties {
+            for property in hmi_core::controls::record_definition(record.type_code)?.properties {
                 if matches!(
                     property.storage,
                     hmi_core::controls::Storage::Image
