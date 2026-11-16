@@ -340,16 +340,201 @@ fn optional_image_relocations_cannot_be_removed_or_forged() {
 }
 
 #[test]
-fn other_controls_keep_their_previous_mode_and_layout_limits() {
+fn transparent_mode_is_not_enabled_implicitly_for_other_controls() {
     let tmp = setup();
     for kind in ["number", "xfloat", "dual_state_button", "scrolling_text"] {
-        let mut o = widget("button", 0);
-        o.type_name = kind.into();
-        o.properties
-            .retain(|k, _| !["pic", "pic2"].contains(&k.as_str()));
-        o.properties.insert("sta".into(), 2.into());
-        save(tmp.path(), "button", o, false);
-        assert!(hmi_cli::prepare(tmp.path()).is_err(), "{kind}");
+        let mut o = additional_widget(kind, 0);
+        o.properties.insert("sta".into(), 3.into());
+        save_additional(tmp.path(), o);
+        assert_eq!(
+            hmi_cli::prepare(tmp.path())
+                .err()
+                .unwrap()
+                .as_diagnostic()
+                .unwrap()
+                .code,
+            "property_range",
+            "{kind}"
+        );
+    }
+}
+
+fn additional_widget(kind: &str, state: u8) -> ObjectFile {
+    let mut o = ObjectFile {
+        name: "w0".into(),
+        type_name: kind.into(),
+        properties: BTreeMap::from([
+            ("x".into(), 10.into()),
+            ("y".into(), 10.into()),
+            ("w".into(), 280.into()),
+            ("h".into(), 100.into()),
+            ("font".into(), reference("ui")),
+            ("sta".into(), [2_i64, 0, 1][state as usize].into()),
+            ("pic".into(), reference("panel")),
+            ("picc".into(), reference("full")),
+        ]),
+        events: BTreeMap::new(),
+    };
+    if matches!(kind, "number" | "xfloat") {
+        o.properties.insert("val".into(), (-12345).into());
+    } else {
+        o.properties.insert("txt".into(), "ABC".into());
+    }
+    if kind == "dual_state_button" {
+        o.properties.insert("val".into(), 1.into());
+        o.properties.insert("pic2".into(), reference("pressed"));
+        o.properties.insert("picc2".into(), reference("full"));
+    }
+    o
+}
+fn save_additional(root: &Path, o: ObjectFile) {
+    let mut page = hmi_page_compiler::empty_page("page0");
+    page.objects.push(o);
+    fs::write(
+        root.join("pages/page0/page.toml"),
+        file::toml(&page).unwrap(),
+    )
+    .unwrap();
+}
+
+#[test]
+fn additional_picture_modes_only_change_the_mode_and_keep_numeric_fields() {
+    let tmp = setup();
+    for kind in ["number", "xfloat", "dual_state_button", "scrolling_text"] {
+        let mut previous: Option<hmi_format::page::Object> = None;
+        for state in 0..3 {
+            save_additional(tmp.path(), additional_widget(kind, state));
+            let p = hmi_cli::prepare(tmp.path()).unwrap();
+            p.check(true).unwrap();
+            let parsed =
+                Project::parse(&Container::parse(p.link(true).unwrap().bytes).unwrap()).unwrap();
+            let o = &parsed.pages[0].1.objects[1];
+            assert_eq!(o.integer("pic"), Some(1));
+            assert_eq!(o.integer("picc"), Some(0));
+            if matches!(kind, "number" | "xfloat") {
+                assert_eq!(
+                    i32::from_le_bytes(
+                        o.attribute("val")
+                            .unwrap()
+                            .value
+                            .as_slice()
+                            .try_into()
+                            .unwrap()
+                    ),
+                    -12345
+                );
+                assert!(o.attribute("txt").is_none());
+            }
+            if let Some(old) = &previous {
+                assert_eq!(
+                    old.rebuild(
+                        &BTreeMap::from([("sta".into(), vec![[2, 0, 1][state as usize]])]),
+                        &BTreeMap::new()
+                    )
+                    .unwrap(),
+                    o.raw
+                );
+            }
+            previous = Some(hmi_format::page::Object::parse(&o.raw).unwrap());
+        }
+    }
+}
+
+#[test]
+fn additional_active_requirements_and_hidden_references_use_the_common_rules() {
+    let tmp = setup();
+    let output = tmp.path().join("old.HMI");
+    fs::write(&output, b"previous").unwrap();
+    for kind in ["number", "xfloat", "dual_state_button", "scrolling_text"] {
+        let mut o = additional_widget(kind, 0);
+        o.properties.insert("pic".into(), none());
+        save_additional(tmp.path(), o);
+        assert_eq!(
+            hmi_cli::build(tmp.path(), Some(&output), true)
+                .err()
+                .unwrap()
+                .as_diagnostic()
+                .unwrap()
+                .code,
+            "property_required"
+        );
+        assert_eq!(fs::read(&output).unwrap(), b"previous");
+        let mut o = additional_widget(kind, 1);
+        o.properties.insert("picc".into(), reference("cursor"));
+        save_additional(tmp.path(), o);
+        assert_eq!(
+            hmi_cli::prepare(tmp.path())
+                .unwrap()
+                .check(true)
+                .unwrap_err()
+                .as_diagnostic()
+                .unwrap()
+                .code,
+            "crop_image"
+        );
+        let mut o = additional_widget(kind, 2);
+        o.properties.insert("picc".into(), reference("cursor"));
+        save_additional(tmp.path(), o);
+        hmi_cli::prepare(tmp.path()).unwrap().check(true).unwrap();
+    }
+    let mut o = additional_widget("dual_state_button", 0);
+    o.properties.insert("pic2".into(), none());
+    save_additional(tmp.path(), o);
+    assert!(hmi_cli::prepare(tmp.path()).is_err());
+}
+
+#[test]
+fn additional_references_follow_final_ids_and_link_without_source() {
+    let tmp = setup();
+    save_additional(tmp.path(), additional_widget("dual_state_button", 2));
+    let path = tmp.path().join("hmi.toml");
+    let mut c: ProjectSource = file::read_toml(&path).unwrap();
+    c.assets.items.swap(1, 2);
+    fs::write(&path, file::toml(&c).unwrap()).unwrap();
+    let p = hmi_cli::prepare(tmp.path()).unwrap();
+    let expected = p.link(true).unwrap().bytes;
+    let parsed = Project::parse(&Container::parse(expected.clone()).unwrap()).unwrap();
+    assert_eq!(parsed.pages[0].1.objects[1].integer("pic"), Some(2));
+    assert_eq!(parsed.pages[0].1.objects[1].integer("pic2"), Some(1));
+    let moved = tempfile::tempdir().unwrap();
+    p.save_plan(moved.path(), true, None).unwrap();
+    tmp.close().unwrap();
+    assert_eq!(
+        hmi_linker::from_manifest(&moved.path().join("link.toml"), true)
+            .unwrap()
+            .bytes,
+        expected
+    );
+}
+
+#[test]
+fn additional_modes_support_all_known_model_directions() {
+    let tmp = setup();
+    let path = tmp.path().join("hmi.toml");
+    let mut config: ProjectSource = file::read_toml(&path).unwrap();
+    for profile in hmi_core::target::PROFILES {
+        for direction in [0, 90, 180, 270] {
+            config.target.profile = (*profile).into();
+            config.target.orientation = direction;
+            fs::write(&path, file::toml(&config).unwrap()).unwrap();
+            let t = hmi_core::target::Target::resolve(&config.target).unwrap();
+            fs::write(
+                tmp.path().join("assets/full.bmp"),
+                bmp(u32::from(t.canvas.width), u32::from(t.canvas.height)),
+            )
+            .unwrap();
+            for kind in ["number", "xfloat", "dual_state_button", "scrolling_text"] {
+                let mut o = additional_widget(kind, 1);
+                o.properties
+                    .insert("w".into(), (i64::from(t.canvas.width) - 20).into());
+                save_additional(tmp.path(), o);
+                let p = hmi_cli::prepare(tmp.path()).unwrap();
+                p.check(true).unwrap();
+                if kind == "scrolling_text" {
+                    p.link(true).unwrap();
+                }
+            }
+        }
     }
 }
 

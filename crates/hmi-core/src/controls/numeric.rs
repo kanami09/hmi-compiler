@@ -1,15 +1,15 @@
 //! 数字与虚拟浮点数共享字形和对齐字段，各自保留原生格式字段。
 use super::*;
 
-const fn properties(xfloat: bool) -> [Property; 21] {
-    let mut p = [SCOPE; 21];
+const fn properties(xfloat: bool) -> [Property; 23] {
+    let mut p = [SCOPE; 23];
     let mut i = 0;
-    // 到 ycen 为止与单色文本相同；官方属性说明允许五种 style。
+    // 到 ycen 为止与文本相同；数值格式字段与文本容量分别保留。
     while i < 15 {
         p[i] = TEXT_PROPERTIES[i];
         i += 1;
     }
-    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+    p[6] = integer("sta", Storage::U8, 0, 2, DefaultValue::Integer(1));
     p[7] = integer("style", Storage::U8, 0, 4, DefaultValue::Integer(0));
     p[15] = integer(
         "val",
@@ -35,15 +35,15 @@ const fn properties(xfloat: bool) -> [Property; 21] {
     p[18] = integer("isbr", Storage::U8, 0, 1, DefaultValue::Integer(1));
     p[19] = integer("spax", Storage::U8, 0, 255, DefaultValue::Integer(0));
     p[20] = integer("spay", Storage::U8, 0, 255, DefaultValue::Integer(0));
+    p[21] = background_image("pic", "sta", 2, false);
+    p[22] = background_image("picc", "sta", 0, true);
     p
 }
-const NUMBER_PROPERTIES: [Property; 21] = properties(false);
-const XFLOAT_PROPERTIES: [Property; 21] = properties(true);
+const NUMBER_PROPERTIES: [Property; 23] = properties(false);
+const XFLOAT_PROPERTIES: [Property; 23] = properties(true);
 
 const fn fields(xfloat: bool) -> [Field; 39] {
     let mut f = TEXT_FIELDS;
-    f[28] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[29] = field("pic", FieldValue::Constant(&[255, 255]));
     // 前 33 项完全同序，包括未启用的图片字段。保留 lenth 的原生拼写。
     f[33] = field("val", FieldValue::Property("val"));
     f[34] = if xfloat {

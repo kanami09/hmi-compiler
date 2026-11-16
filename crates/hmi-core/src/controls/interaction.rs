@@ -1,4 +1,4 @@
-//! 单色交互控件的存储配方；运行行为仍由控件和用户脚本决定。
+//! 交互控件的存储配方；运行行为仍由控件和用户脚本决定。
 use super::*;
 
 const SLIDER_PROPERTIES: [Property; 24] = {
@@ -52,43 +52,29 @@ const SLIDER_FIELDS: [Field; 39] = {
     f
 };
 
-const DUAL_PROPERTIES: [Property; 23] = {
-    let mut p = [SCOPE; 23];
-    let mut i = 0;
-    while i < 23 {
-        p[i] = BUTTON_PROPERTIES[i];
-        i += 1;
-    }
-    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+const DUAL_PROPERTIES: [Property; 27] = {
+    let mut p = BUTTON_PROPERTIES;
     p[7] = integer("style", Storage::U8, 0, 4, DefaultValue::Integer(4));
     p
-};
-const DUAL_FIELDS: [Field; 42] = {
-    let mut f = BUTTON_FIELDS;
-    f[26] = field("pic", FieldValue::Constant(&[255, 255]));
-    f[27] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[29] = field("pic2", FieldValue::Constant(&[255, 255]));
-    f[30] = field("picc2", FieldValue::Constant(&[255, 255]));
-    f
 };
 // 两种按钮布局相同，val 的运行语义不同；不生成额外状态切换脚本。
 pub(super) const DUAL_STATE_BUTTON: Definition = Definition {
     name: "dual_state_button",
     code: 53,
     properties: &DUAL_PROPERTIES,
-    fields: &DUAL_FIELDS,
+    fields: &BUTTON_FIELDS,
     events: &["down", "up"],
     access: PropertyAccess::DEFAULT,
 };
 
-const SCROLL_PROPERTIES: [Property; 24] = {
-    let mut p = [SCOPE; 24];
+const SCROLL_PROPERTIES: [Property; 26] = {
+    let mut p = [SCOPE; 26];
     let mut i = 0;
     while i < 20 {
         p[i] = TEXT_PROPERTIES[i];
         i += 1;
     }
-    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+    p[6] = integer("sta", Storage::U8, 0, 2, DefaultValue::Integer(1));
     p[7] = integer("style", Storage::U8, 0, 4, DefaultValue::Integer(0));
     p[13] = integer("xcen", Storage::U8, 0, 2, DefaultValue::Integer(0));
     p[16] = integer(
@@ -102,6 +88,8 @@ const SCROLL_PROPERTIES: [Property; 24] = {
     p[21] = integer("dis", Storage::U8, 2, 50, DefaultValue::Integer(4));
     p[22] = integer("tim", Storage::U16, 80, 65534, DefaultValue::Integer(80));
     p[23] = integer("en", Storage::U8, 0, 1, DefaultValue::Integer(1));
+    p[24] = background_image("pic", "sta", 2, false);
+    p[25] = background_image("picc", "sta", 0, true);
     p
 };
 const SCROLL_FIELDS: [Field; 46] = {
@@ -111,8 +99,6 @@ const SCROLL_FIELDS: [Field; 46] = {
         f[i] = TEXT_FIELDS[i];
         i += 1;
     }
-    f[28] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[29] = field("pic", FieldValue::Constant(&[255, 255]));
     f[33] = field("dir", FieldValue::Property("dir"));
     f[34] = field("dis", FieldValue::Property("dis"));
     f[35] = field("tim", FieldValue::Property("tim"));
