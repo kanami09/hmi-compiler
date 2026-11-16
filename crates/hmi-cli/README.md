@@ -701,3 +701,11 @@ vid 必须为动画的 `{ ref = "..." }` 或最终动画列表的 `{ id = ... }`
 | stim、qty | 运行时总时长／总帧数，只读；文件中初始化为 0，不从资产信息预先回填 |
 
 事件槽为 down、up、playend。原生保留字段按创建配方写入，不作为用户可编辑数值；属性只读检查、作用域和事件归属沿用共同规则。当前 GIF 解码使用 Rust 图像库，无需 FFmpeg 或原厂转换工具；视频／音频后端仍另行接入。支持范围为最多 1000 个源帧、源文件不超过 64 MiB，单帧解码 RGBA 不超过 64 MiB、保留帧 RGBA 总量及运行资源各不超过 128 MiB；纯文本 GIF 扩展当前明确拒绝。
+
+生成动画验收工程：
+
+```powershell
+python examples/prepare_animation_acceptance.py
+```
+
+输出位于 `target/acceptance-animation/`，包括 X543 的 Animation0／Animation90 两份工程，每份有不透明／透明动画两页。GIF 由代码生成，不需要外部素材或字库；资源全部内嵌，无需部署到虚拟 SD。两份有意重排动画资产并使用不同 loop 值，每份实际执行七条独立作业比较 HMI。已有输出目录不会覆盖，可用 --output 指定新目录，详细核对项目见输出目录的 README。
