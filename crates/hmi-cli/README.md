@@ -759,3 +759,11 @@ probe／inspect 的视频信息记录源帧率和帧数、截取起点、输出�
 VIDEO 帧采用直接 JPEG 包装，与动画帧的 20 字节前缀不同。HMI 中的资源名是 N.v，引用 kind 为 v；视频与图片、动画分别分配 ID。原始 MP4／AVI 仍由源码工程保存，不嵌入 HMI；`.hma` 保存完整运行资源，链接器无需解码原视频。
 
 控件用 `type="video"`，`vid={ref="clip"}` 或 `{id=...}` 引用当前视频列表。x/y/w/h 必填；from 当前固定 0。en 为 0 停止／1 播放／2 暂停，loop 为 0／1，dis 为 10～1000、默认 100，tim 为 u32 初值、默认 0；stim/qty 初始零且运行时只读。事件为 down、up、playend。保留字段 fps 固定为原生值 1，不按资源帧率改写；molloc_s/molloc 保留 64000，不作为源文件大小修改。当前内置型号中仅 X543 支持，四方向分别编码画面并写方向标记。
+
+生成无声视频验收工程：
+
+```powershell
+python examples/prepare_video_acceptance.py --ffmpeg-dir path/to/ffmpeg/bin
+```
+
+输出位于 `target/acceptance-video/`，包含 Video0／Video90 两份 X543 工程，各有完整片段和截取片段两页。原始 AVI 由代码生成，4fps、四帧、1000ms；截取从 250ms 开始、长 500ms。每份实际执行六条独立作业，比较 HMI 和链接映射。资源全部内嵌，打开验收 HMI 不需要配置本工具的 FFmpeg；重新构建源码才需要。已有输出目录不会覆盖，可用 --output 指定新目录。
