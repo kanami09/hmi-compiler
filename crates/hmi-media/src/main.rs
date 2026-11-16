@@ -12,7 +12,7 @@ use std::{path::PathBuf, process::ExitCode};
 #[command(
     name = "hmi-media",
     version,
-    about = "编码 HMI 媒体资产，支持图片、ZI 字库和 GIF 动画"
+    about = "处理 HMI 图片、字库、动画、视频和音频资产"
 )]
 struct Args {
     #[arg(long, global = true)]
@@ -75,7 +75,9 @@ fn run(args: &Args) -> Result<CommandResult> {
             let target: Target = file::read_json(target)?;
             let probe = hmi_media::probe(source, &target)?;
             let message = format!("媒体输入检查通过。{}", timing_note(&probe.info));
-            Ok(cli::success(serde_json::json!(probe.info), message))
+            let mut value = serde_json::json!(probe.info);
+            value["input_action"] = probe.action.into();
+            Ok(cli::success(value, message))
         }
         Command::Encode {
             source,
@@ -93,8 +95,18 @@ fn run(args: &Args) -> Result<CommandResult> {
             encoded.object.write(output, &inputs)?;
             let note = timing_note(&encoded.object.metadata.info);
             Ok(cli::success(
-                serde_json::json!({"output":output,"asset":encoded.object.metadata.info}),
-                format!("媒体编码完成：{}{}", output.display(), note),
+                serde_json::json!({"output":output,"asset":encoded.object.metadata.info,"input_action":encoded.action}),
+                format!(
+                    "{}：{}{}",
+                    match encoded.action {
+                        "original" => "原始编码已复用",
+                        "native" => "原生资产包已保留",
+                        "encoded" => "编码文件已封装",
+                        _ => "媒体编码完成",
+                    },
+                    output.display(),
+                    note
+                ),
             ))
         }
     }

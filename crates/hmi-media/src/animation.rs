@@ -153,6 +153,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
 pub(super) fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
     Ok(AssetProbe {
+        action: "source",
         info: AssetInfo::Animation { animation: p.info },
         inputs: p.inputs,
     })
@@ -200,6 +201,7 @@ pub(super) fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
     )?;
     let source = gmov::write_source(&p.gif)?;
     Ok(EncodingResult {
+        action: "source",
         object: AssetObject::animation(p.info, runtime, source)?,
         inputs: p.inputs,
     })

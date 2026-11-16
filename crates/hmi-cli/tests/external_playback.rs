@@ -105,11 +105,11 @@ fn assets(root: &Path, t: &Target) -> Vec<(String, AssetObject)> {
                         audio: None,
                         codec: "fixture".into(),
                         source_sha256: "0".repeat(64),
-                        backend: FfmpegInfo {
+                        backend: Some(FfmpegInfo {
                             version: "fixture".into(),
                             libraries: BTreeMap::new(),
                             fingerprint: "0".repeat(64),
-                        },
+                        }),
                         encoder: "fixture".into(),
                     },
                     hmi_format::video::write(64, 48, t.orientation, 80, 4, &vec![frame.clone(); 4])

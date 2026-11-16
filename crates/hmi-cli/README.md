@@ -639,7 +639,7 @@ path = "sd0/pictures/logo.xi"
 
 例如输出 HMI 为 `dist/Panel/Panel.HMI`，同时生成 `dist/Panel/sd0/pictures/logo.xi`。自行指定 `-o` 时，配套文件也跟随 HMI 的父目录输出。用户将 sd0/ 下的文件按相同目录结构复制到 SD 卡或虚拟 SD 后，上位机才能预览或运行外部图片；工具不会自动写入用户的虚拟 SD。
 
-外部编码复用 JPEG Baseline YUV420、四方向旋转和七位透明度流，以 XI 的签名和头部包装。源图片尺寸与控件几何分别配置，不因修改控件宽高而隐式修改共享资产。当前只从常规图片生成 XI；已有 XI/JPG 的 encoded 输入及外部 JPG 原样输出尚未接入。
+外部编码复用 JPEG Baseline YUV420、四方向旋转和七位透明度流，以 XI 的签名和头部包装。源图片尺寸与控件几何分别配置，不因修改控件宽高而隐式修改共享资产。当前可从常规图片生成 XI，也可直接封装受支持的 XI；普通 JPG 的 encoded 原样输出尚未接入。
 
 如果写 `path = "sd0/existing.jpg"`，构建只保存这个字符串并记录需求，不读取构建机同名文件，也不会自动生成或复制该图片。由工程声明的 external 资产即使暂时没有控件引用也会输出；多个控件可以共享一个外部图片资产。两个资产声明相同输出路径会报错，避免互相覆盖。普通图片的 pic 只能引用内嵌图片，外部图片的 path 引用只能指向 external 资产。
 
@@ -949,3 +949,51 @@ python examples/prepare_external_playback_acceptance.py --ffmpeg-dir path/to/ffm
 ```
 
 输出在 `target/acceptance-external-playback/`，MediaOut0／MediaOut90 为 X543 的0°／90°工程，每份9页，合计18个组合。每份均包含三类内部播放、外部播放保留vid、直接路径且不提供vid；每份实际执行17条独立作业比较HMI和三个配套文件。所有输入素材由代码生成，无需已有HMI或字库；生成视频需要FFmpeg，打开验收文件无需本工具后端。先将输出sd0/中的ext0／ext90目录复制到上位机虚拟SD根目录，再核对各页并分别编译一次；完整路径及预期见输出README。脚本不自动修改虚拟SD，已有输出目录也不会覆盖。
+
+
+## 已编码文件、原生资产包与原始编码复用
+
+五类资产都可以通过 input 指定入口。省略时仍为 source；`source` 路径相对于当前资产描述文件。source 是需要处理的原始输入，original 只用于有条件复用，不能在 source 丢失时充当替代品。
+
+| 输入方式 | 权威输入与行为 |
+|---|---|
+| source | 图片、ZI、GIF、受支持视频、WAV；按描述中的参数编码或转换 |
+| encoded | 已知编码文件；校验签名、结构和目标兼容性后保留运行字节或重新封装，不重新压缩 |
+| native | 本工具支持的.hma资产包；校验成员及摘要后保留包内资源，不要求原图或FFmpeg |
+| source加original | source仍必需；摘要、有效请求记录和目标兼容性都一致时复用附件，否则按source重新处理 |
+
+encoded当前支持JPEG分支的XI、已匹配目标方向的ZI、VIDEO、已格式化的PCM16 WAV，以及仅供external部署的运行GMOV。XI可作为内嵌图片或外部XI：内嵌时不伪造.is编辑源；XI没有可靠的原始质量参数，因此jpeg.quality记为null。VIDEO可保留音轨，backend记为null表示本次没有调用FFmpeg。encoded ZI不自动旋转，需要方向转换时使用source输入。
+
+运行GMOV与编辑源不是同一种文件。encoded运行GMOV当前要求delivery.external，HMA只保存运行成员；内嵌动画仍使用GIF的source入口，或含运行资源及编辑源的native包。不能把缺少编辑源的运行文件默认为完整的可编辑动画工程。encoded输入不接受encoding、resize、clip、audio或original等处理参数，即使填写的数值与当前内容相同也不隐式重新编码。
+
+```toml
+schema = "hmi.asset/1"
+kind = "image"
+input = "encoded"
+source = "logo.xi"
+```
+
+```toml
+schema = "hmi.asset/1"
+kind = "video"
+input = "native"
+source = "../.preserve/movie.hma"
+```
+
+native只接收当前可识别的资产包及编码变体，并核对类别、格式、方向和型号；不能用这个字段绕过目标限制。缺省保留包内内嵌／外部方式；允许为外部包显式改delivery.path，载荷和成员不变。native不切换内嵌／外部方式，若需要重新封装请使用相应source或encoded入口。包内有预览或编辑源，也不会因此被当作另一份隐式输入。
+
+```toml
+schema = "hmi.asset/1"
+kind = "image"
+source = "logo.png"
+original = "../.preserve/logo.hma"
+[encoding]
+codec = "jpeg"
+quality = 80
+```
+
+original适用于五类source资产。新的source编码结果在HMA中记录source_request，保存规范化请求及格式／编码／方向条件，不保存本机源路径、资产符号或整个页面目标摘要。改文件名但内容和请求不变可以继续复用；修改源内容、相关参数或目标条件时重新处理。图片codec=auto按目标展开，JPEG缺省质量按80比较；音频不把屏幕方向作为复用条件。编码后端的版本变化本身不会强制替换已确认的原始编码，也不会把复用结果描述为由新后端重新编码。
+
+original附件必须存在且有效，类别也必须一致；源文件丢失或附件损坏会报错，不读取隐藏缓存回退。旧包没有source_request时，无法据此证明请求一致，改走正常source处理。original是显式依赖，复用结果的输入仍包含描述、source和附件三项；重新编码时也保留附件依赖。视频参数未变时可以不加载FFmpeg直接复用；发生变化而需要重新编码时，仍须提供可用后端。
+
+hmi-media probe/encode的JSON结果增加input_action：source表示实际处理源文件，encoded表示封装编码文件，native表示保留原生包，original表示复用原始编码。普通命令行也会使用对应文案。HMA中的图片质量和视频后端允许为null，以表示输入中无法可靠恢复该信息或本次未使用该后端，不用猜测值填充。

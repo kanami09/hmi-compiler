@@ -128,6 +128,7 @@ fn prepare(path: &Path, target: &Target) -> Result<(AudioInfo, Vec<u8>, Vec<Path
 pub(super) fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
     let (info, _, inputs) = prepare(path, target).map_err(|e| file::at_file(e, path))?;
     Ok(AssetProbe {
+        action: "source",
         info: AssetInfo::Audio { audio: info },
         inputs,
     })
@@ -135,6 +136,7 @@ pub(super) fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
 pub(super) fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
     let (info, bytes, inputs) = prepare(path, target).map_err(|e| file::at_file(e, path))?;
     Ok(EncodingResult {
+        action: "source",
         object: AssetObject::audio(info, bytes)?,
         inputs,
     })

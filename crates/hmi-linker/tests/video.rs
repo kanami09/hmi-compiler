@@ -47,11 +47,11 @@ fn asset() -> AssetObject {
             audio: None,
             codec: "rawvideo".into(),
             source_sha256: "0".repeat(64),
-            backend: FfmpegInfo {
+            backend: Some(FfmpegInfo {
                 version: "fixture".into(),
                 libraries: BTreeMap::new(),
                 fingerprint: "0".repeat(64),
-            },
+            }),
             encoder: "fixture".into(),
         },
         hmi_format::video::write(320, 160, 0, 80, 4, &vec![frame; 4]).unwrap(),

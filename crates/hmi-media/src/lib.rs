@@ -1,4 +1,4 @@
-//! 常规图片编码与 ZI 字库方向适配。链接器只需消费输出的媒体目标。
+//! 媒体输入处理、常规编码与资产包复用。链接器只消费自包含的媒体目标。
 
 use hmi_artifact::asset::{AssetInfo, AssetObject, FontInfo, ImageInfo, JpegInfo};
 use hmi_core::{
@@ -19,16 +19,20 @@ use std::{
 };
 
 mod animation;
+mod input;
+pub use input::{encode, probe};
 mod audio;
 pub mod ffmpeg;
 mod video;
 
 const MAX_RGBA_BYTES: u64 = 64 * 1024 * 1024;
 pub struct AssetProbe {
+    pub action: &'static str,
     pub info: AssetInfo,
     pub inputs: Vec<PathBuf>,
 }
 pub struct EncodingResult {
+    pub action: &'static str,
     pub object: AssetObject,
     pub inputs: Vec<PathBuf>,
 }
@@ -72,7 +76,7 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
     target.validate()?;
     let config: ImageSource = file::read_toml(path)?;
     check_schema(&config.schema, "hmi.asset/1")?;
-    if config.kind != "image" || config.input != "source" || config.original.is_some() {
+    if config.kind != "image" || config.input != "source" {
         return Err(error(
             "asset_input",
             "当前编码器支持 image 的 source 输入，尚未接入编码文件和原始载荷复用",
@@ -277,7 +281,7 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
             hmi_format::picture::jpeg::padded_dimensions(width, height)?;
         dimensions(u32::from(padded_width), u32::from(padded_height))?;
         Some(JpegInfo {
-            quality,
+            quality: Some(quality),
             padded_width,
             padded_height,
             sampling: "yuv420".into(),
@@ -324,45 +328,48 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
 }
 
 /// 探测会完整解码和检查变换，但不生成运行像素、.hma 或其他输出文件。
-pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
-    if asset_kind(path)? == "audio" {
+fn probe_source(path: &Path, target: &Target, kind: &str) -> Result<AssetProbe> {
+    if kind == "audio" {
         return audio::probe(path, target);
     }
-    if asset_kind(path)? == "video" {
+    if kind == "video" {
         return video::probe(path, target);
     }
-    if asset_kind(path)? == "animation" {
+    if kind == "animation" {
         return animation::probe(path, target);
     }
-    if asset_kind(path)? == "font" {
+    if kind == "font" {
         let (info, _, inputs) = prepare_font(path, target).map_err(|e| file::at_file(e, path))?;
         return Ok(AssetProbe {
+            action: "source",
             info: AssetInfo::Font { font: info },
             inputs,
         });
     }
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
     Ok(AssetProbe {
+        action: "source",
         info: AssetInfo::Image { image: p.info },
         inputs: p.inputs,
     })
 }
 
-pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
-    if asset_kind(path)? == "audio" {
+fn encode_source(path: &Path, target: &Target, kind: &str) -> Result<EncodingResult> {
+    if kind == "audio" {
         return audio::encode(path, target);
     }
-    if asset_kind(path)? == "video" {
+    if kind == "video" {
         return video::encode(path, target);
     }
-    if asset_kind(path)? == "animation" {
+    if kind == "animation" {
         return animation::encode(path, target);
     }
-    if asset_kind(path)? == "font" {
+    if kind == "font" {
         let (info, bytes, inputs) =
             prepare_font(path, target).map_err(|e| file::at_file(e, path))?;
         let output = hmi_format::font::adapt(&bytes, target.orientation)?;
         return Ok(EncodingResult {
+            action: "source",
             object: AssetObject::font(info, output)?,
             inputs,
         });
@@ -373,7 +380,7 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
             &p.pixels,
             (settings.padded_width, settings.padded_height),
             p.info.orientation,
-            settings.quality,
+            settings.quality.expect("source 图片已确定质量"),
             settings.has_alpha,
         )?;
         let runtime = hmi_format::picture::jpeg::runtime_with_alpha(
@@ -390,6 +397,7 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
             &p.source,
         )?;
         return Ok(EncodingResult {
+            action: "source",
             object: AssetObject::image(p.info, runtime, source)?,
             inputs: p.inputs,
         });
@@ -445,24 +453,10 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
         p.info.orientation,
     )?;
     Ok(EncodingResult {
+        action: "source",
         object: AssetObject::image(p.info, runtime, source)?,
         inputs: p.inputs,
     })
-}
-
-fn asset_kind(path: &Path) -> Result<&'static str> {
-    let value: toml::Value = file::read_toml(path)?;
-    match value.get("kind").and_then(toml::Value::as_str) {
-        Some("font") => Ok("font"),
-        Some("image") => Ok("image"),
-        Some("animation") => Ok("animation"),
-        Some("video") => Ok("video"),
-        Some("audio") => Ok("audio"),
-        _ => Err(error(
-            "asset_kind",
-            "当前媒体编码器支持 image、font 和 animation 资产",
-        )),
-    }
 }
 
 fn prepare_font(path: &Path, target: &Target) -> Result<(FontInfo, Vec<u8>, Vec<PathBuf>)> {

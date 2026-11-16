@@ -40,6 +40,7 @@ fn setup() -> tempfile::TempDir {
         kind: "animation".into(),
         input: "source".into(),
         source: "input.gif".into(),
+        original: None,
         encoding: AnimationEncoding::default(),
         delivery: Delivery::default(),
     };

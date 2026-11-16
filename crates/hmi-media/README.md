@@ -2,7 +2,7 @@
 
 当前支持 BMP、PNG、JPG 图片、UTF-8 ZI v6 字库、GIF 动画、WAV 音频及受支持的视频输入。图片生成 K/T 的 RGB565 或 X543 的 JPEG，X543 可保留七位透明度；动画、视频和音频可生成内嵌资源或外部 GMOV／VIDEO／WAV 文件，图片还可生成外部 XI 文件。视频和部分音频转换使用 FFmpeg DLL，GIF 和原参数 PCM16 WAV 不需要 DLL。
 
-直接接收已编码文件（encoded）、导入的原生资产包（native）以及按原始附件复用编码尚未接入。完整媒体描述和视频／音频参数见 [工具链使用说明](../hmi-cli/README.md)。
+现已支持已知XI／ZI／VIDEO／格式化WAV及外部运行GMOV的encoded输入、五类native资产包，以及source加original附件的条件复用。完整媒体描述和视频／音频参数见 [工具链使用说明](../hmi-cli/README.md)。
 
 ```powershell
 hmi-media probe image.asset.toml --target target.json
@@ -10,7 +10,7 @@ hmi-media encode image.asset.toml --target target.json -o image.hma
 hmi-media inspect image.hma
 ```
 
-输入格式根据文件签名识别，不能通过改后缀转换格式。probe 完整解码并检查处理参数，但不生成运行像素或输出文件。当前解码后的 RGBA 数据最多为 64 MiB。
+输入格式根据文件签名识别，不能通过改后缀转换格式。source的probe完整解码并检查处理参数；encoded/native检查已有包装、成员摘要和目标兼容性，original命中时检查源摘要及请求记录，不重新解码。probe不写输出文件。当前解码后的 RGBA 数据最多为 64 MiB。
 
 ## 描述文件
 
@@ -64,7 +64,7 @@ background = "#FFFFFF"
 | width、height | resize 后的逻辑尺寸，控制图片列表和几何检查 |
 | jpeg.padded_width、padded_height | 旋转前补齐画布的尺寸 |
 | storage_width、storage_height | 补齐并旋转后的实际 JPEG 帧尺寸 |
-| jpeg.quality、sampling | 实际质量值及固定采样 yuv420 |
+| jpeg.quality、sampling | source的实际质量值（encoded XI未知时为null）及固定采样 yuv420 |
 
 运行资源为图片头、帧前缀、JPEG 和可选七位透明度流。补齐后超出 u16 或 64 MiB RGBA 限制会报错。probe 检查输入、变换和尺寸，不执行运行数据编码；链接器检查包装、JPEG 标记、透明流像素数及编辑源结构，实际图像解码由媒体模块测试和上位机完成。
 
@@ -100,3 +100,5 @@ source 相对于描述文件。输入须为 UTF-8 ZI v6，支持灰度 RLE 字�
 无需配置字库方向。编码器检查内部方向，自动适配工程的 0°、90°、180° 或 270°；同方向保留原字节，需要转换时旋转字形矩阵、重新压缩并重建索引，不改写源 ZI。probe 检查全部索引和压缩流，不生成转换后的文件。字库不接受 quality、alpha、resize 等图片参数。
 
 字库 .hma 只有一个运行成员 `.zi`，无需图片的 `.is` 编辑源。图片和字体分别分配 ID，按清单中各自的相对顺序编号，未引用的显式资源仍保留。链接器不需要原 ZI 或描述文件。完整解析受 64 MiB 输入、128 MiB 解码总像素数限制。
+
+输入模式、原生包保留边界和原始附件复用条件见[工具链媒体输入说明](../hmi-cli/README.md#已编码文件原生资产包与原始编码复用)。encoded/native不接受重新编码参数；输入签名与结构仍须匹配，不能靠改后缀转换格式。

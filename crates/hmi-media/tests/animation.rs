@@ -34,6 +34,7 @@ fn config(root: &Path, gif: &[u8], encoding: AnimationEncoding) -> std::path::Pa
             kind: "animation".into(),
             input: "source".into(),
             source: "input.gif".into(),
+            original: None,
             encoding,
             delivery: Delivery::default(),
         })

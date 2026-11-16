@@ -256,7 +256,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
         audio: track,
         codec: decoded.codec,
         source_sha256: sha256(&bytes),
-        backend: decoded.backend,
+        backend: Some(decoded.backend),
         encoder: "jpeg-encoder/0.6.1-video/1".into(),
     };
     let mut inputs = vec![path.into(), input];
@@ -273,6 +273,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
 pub(super) fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
     Ok(AssetProbe {
+        action: "source",
         info: AssetInfo::Video { video: p.info },
         inputs: p.inputs,
     })
@@ -305,6 +306,7 @@ pub(super) fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
         p.audio.as_deref(),
     )?;
     Ok(EncodingResult {
+        action: "source",
         object: AssetObject::video(p.info, bytes)?,
         inputs: p.inputs,
     })

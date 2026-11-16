@@ -179,6 +179,7 @@ pub struct FontSource {
     #[serde(default = "source_mode")]
     pub input: String,
     pub source: String,
+    pub original: Option<String>,
     #[serde(default)]
     pub delivery: Delivery,
 }
@@ -220,6 +221,7 @@ pub struct AnimationSource {
     #[serde(default = "source_mode")]
     pub input: String,
     pub source: String,
+    pub original: Option<String>,
     #[serde(default)]
     pub encoding: AnimationEncoding,
     #[serde(default)]
@@ -271,6 +273,7 @@ pub struct VideoSource {
     #[serde(default = "source_mode")]
     pub input: String,
     pub source: String,
+    pub original: Option<String>,
     pub encoding: VideoEncoding,
     #[serde(default)]
     pub clip: Clip,
@@ -316,6 +319,7 @@ pub struct AudioSource {
     #[serde(default = "source_mode")]
     pub input: String,
     pub source: String,
+    pub original: Option<String>,
     #[serde(default)]
     pub encoding: AudioEncoding,
     #[serde(default)]

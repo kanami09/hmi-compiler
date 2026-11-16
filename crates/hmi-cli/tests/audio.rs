@@ -35,6 +35,7 @@ fn setup() -> tempfile::TempDir {
         kind: "audio".into(),
         input: "source".into(),
         source: "input.wav".into(),
+        original: None,
         encoding: AudioEncoding::default(),
         clip: Clip::default(),
         delivery: Delivery::default(),

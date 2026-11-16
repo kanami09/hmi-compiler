@@ -32,6 +32,7 @@ fn config() -> VideoSource {
         kind: "video".into(),
         input: "source".into(),
         source: "源视频.avi".into(),
+        original: None,
         encoding: VideoEncoding {
             quality: 80,
             fps: 4,

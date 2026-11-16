@@ -35,7 +35,7 @@ pub struct ImageInfo {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct JpegInfo {
-    pub quality: u8,
+    pub quality: Option<u8>,
     pub padded_width: u16,
     pub padded_height: u16,
     pub sampling: String,
@@ -100,7 +100,7 @@ pub struct VideoInfo {
     pub audio_applied: bool,
     pub codec: String,
     pub source_sha256: String,
-    pub backend: hmi_core::asset::FfmpegInfo,
+    pub backend: Option<hmi_core::asset::FfmpegInfo>,
     pub encoder: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioTrackInfo>,
@@ -172,6 +172,15 @@ impl AssetInfo {
             _ => None,
         }
     }
+    pub fn source_sha256(&self) -> &str {
+        match self {
+            Self::Audio { audio } => &audio.source_sha256,
+            Self::Image { image } => &image.source_sha256,
+            Self::Font { font } => &font.source_sha256,
+            Self::Animation { animation } => &animation.source_sha256,
+            Self::Video { video } => &video.source_sha256,
+        }
+    }
     pub fn orientation(&self) -> u16 {
         match self {
             Self::Audio { .. } => 0,
@@ -207,6 +216,14 @@ pub struct Member {
     pub length: u32,
     pub sha256: String,
 }
+/// 可复用原始编码所依据的有效请求；不记录本机路径或资产符号名。
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SourceRequest {
+    pub schema: String,
+    pub settings: serde_json::Value,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AssetMetadata {
     pub schema: String,
@@ -215,6 +232,8 @@ pub struct AssetMetadata {
     #[serde(flatten)]
     pub info: AssetInfo,
     pub members: Vec<Member>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_request: Option<SourceRequest>,
 }
 #[derive(Clone, Debug)]
 pub struct AssetObject {
@@ -235,6 +254,7 @@ impl AssetObject {
         };
         let object = Self {
             metadata: AssetMetadata {
+                source_request: None,
                 schema: "hmi.asset-object/1".into(),
                 format: "ver21234".into(),
                 producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
@@ -258,6 +278,7 @@ impl AssetObject {
         };
         let object = Self {
             metadata: AssetMetadata {
+                source_request: None,
                 schema: "hmi.asset-object/1".into(),
                 format: "ver21234".into(),
                 producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
@@ -293,8 +314,13 @@ impl AssetObject {
                 sha256: sha256(&source),
             },
         ];
+        let mut members = members;
+        if source.is_empty() && info.timing == "preserved" && !info.delivery.is_embedded() {
+            members.pop();
+        }
         let object = Self {
             metadata: AssetMetadata {
+                source_request: None,
                 schema: "hmi.asset-object/1".into(),
                 format: "ver21234".into(),
                 producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
@@ -322,6 +348,8 @@ impl AssetObject {
                     info.orientation,
                 )?,
             )]
+        } else if info.editor_source_format == "none" {
+            vec![(MemberRole::Runtime, "i", Some(*b"i\0\0\0\0\0\0\0"), runtime)]
         } else {
             vec![
                 (
@@ -348,6 +376,7 @@ impl AssetObject {
         }
         let asset = Self {
             metadata: AssetMetadata {
+                source_request: None,
                 schema: "hmi.asset-object/1".into(),
                 format: "ver21234".into(),
                 producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
@@ -371,6 +400,7 @@ impl AssetObject {
         };
         let asset = Self {
             metadata: AssetMetadata {
+                source_request: None,
                 schema: "hmi.asset-object/1".into(),
                 format: "ver21234".into(),
                 producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
@@ -404,6 +434,14 @@ impl AssetObject {
             delivery.validate_for(self.metadata.info.kind())?;
         }
         let embedded = !self.metadata.info.is_external();
+        if self
+            .metadata
+            .source_request
+            .as_ref()
+            .is_some_and(|r| r.schema != "hmi.source-request/1" || !r.settings.is_object())
+        {
+            return Err(error("asset_metadata", "原始编码请求记录无效"));
+        }
         let expected: Vec<_> = match &self.metadata.info {
             AssetInfo::Audio { .. } => vec![(
                 MemberRole::Runtime,
@@ -415,6 +453,11 @@ impl AssetObject {
                 "v",
                 embedded.then_some(*b"v\0\0\0\0\0\0\0"),
             )],
+            AssetInfo::Animation { animation }
+                if animation.timing == "preserved" && animation.delivery.mode == "external" =>
+            {
+                vec![(MemberRole::Runtime, "gmov", None)]
+            }
             AssetInfo::Animation { .. } => vec![
                 (
                     MemberRole::Runtime,
@@ -425,6 +468,9 @@ impl AssetObject {
             ],
             AssetInfo::Image { image } if image.delivery.mode == "external" => {
                 vec![(MemberRole::Runtime, "xi", None)]
+            }
+            AssetInfo::Image { image } if image.editor_source_format == "none" => {
+                vec![(MemberRole::Runtime, "i", Some(*b"i\0\0\0\0\0\0\0"))]
             }
             AssetInfo::Image { .. } => vec![
                 (MemberRole::Runtime, "i", Some([b'i', 0, 0, 0, 0, 0, 0, 0])),
@@ -523,7 +569,10 @@ impl AssetObject {
             || ((info.source_audio_streams > 0 && info.audio_mode != "drop") != info.audio_applied)
             || (info.audio_mode == "require" && info.source_audio_streams == 0)
             || !valid_digest(&info.source_sha256)
-            || !valid_digest(&info.backend.fingerprint)
+            || info
+                .backend
+                .as_ref()
+                .is_some_and(|b| !valid_digest(&b.fingerprint))
         {
             return Err(error(
                 "asset_metadata",
@@ -577,6 +626,40 @@ impl AssetObject {
     }
     fn validate_animation(&self, info: &AnimationInfo) -> Result<()> {
         let runtime = hmi_format::gmov::inspect_runtime(self.member(0)?)?;
+        if info.timing == "preserved" {
+            let delays = runtime
+                .frames
+                .iter()
+                .map(|f| f.delay_ms)
+                .collect::<Vec<_>>();
+            if !info.delivery.is_embedded()
+                && (
+                    info.width,
+                    info.height,
+                    info.orientation,
+                    info.quality,
+                    info.frame_count,
+                    info.duration_ms,
+                ) == (
+                    runtime.width,
+                    runtime.height,
+                    runtime.orientation,
+                    runtime.quality,
+                    runtime.frames.len() as u32,
+                    runtime.duration_ms,
+                )
+                && info.source_frames == info.frame_count
+                && info.source_duration_ms == info.duration_ms
+                && info.delays_ms == delays
+                && info.frame_indices == (0..info.frame_count).collect::<Vec<_>>()
+                && info.source_sha256 == sha256(self.member(0)?)
+                && info.has_alpha == runtime.frames.iter().any(|f| f.alpha_offset != 0)
+                && (info.alpha == Alpha::Preserve) == runtime.alpha_enabled
+            {
+                return Ok(());
+            }
+            return Err(error("asset_metadata", "保留运行GMOV的描述与载荷不一致"));
+        }
         let source = hmi_format::gmov::inspect_source(self.member(1)?)?;
         let indices = &info.frame_indices;
         let expected = hmi_format::gmov::normalize_timing(&source.delays);
@@ -630,7 +713,7 @@ impl AssetObject {
         if !matches!(info.codec.as_str(), "rgb565" | "jpeg")
             || info.width == 0
             || info.height == 0
-            || !matches!(info.editor_source_format.as_str(), "bmp" | "png")
+            || !matches!(info.editor_source_format.as_str(), "bmp" | "png" | "none")
             || !matches!(info.orientation, 0 | 90 | 180 | 270)
         {
             return Err(error(
@@ -657,7 +740,7 @@ impl AssetObject {
                     .jpeg
                     .as_ref()
                     .ok_or_else(|| error("asset_metadata", "JPEG 目标缺少编码参数"))?;
-                if !(1..=100).contains(&settings.quality)
+                if settings.quality.is_some_and(|q| !(1..=100).contains(&q))
                     || settings.sampling != "yuv420"
                     || (settings.padded_width, settings.padded_height)
                         != hmi_format::picture::jpeg::padded_dimensions(info.width, info.height)?
@@ -665,7 +748,8 @@ impl AssetObject {
                     return Err(error("asset_metadata", "JPEG 质量、补齐尺寸或采样格式无效"));
                 }
                 if settings.has_alpha
-                    && (info.editor_source_format != "png" || info.alpha != Alpha::Preserve)
+                    && (!matches!(info.editor_source_format.as_str(), "png" | "none")
+                        || info.alpha != Alpha::Preserve)
                 {
                     return Err(error(
                         "asset_metadata",
@@ -711,6 +795,18 @@ impl AssetObject {
                 info.jpeg.as_ref().unwrap().has_alpha,
             ) {
                 return Err(error("asset_metadata", "外部 XI 与资产描述不一致"));
+            }
+            return Ok(());
+        }
+        if info.codec == "jpeg" && info.editor_source_format == "none" {
+            let parts = hmi_format::picture::jpeg::parts(
+                self.member(0)?,
+                info.width,
+                info.height,
+                info.orientation,
+            )?;
+            if parts.alpha.is_some() != info.jpeg.as_ref().unwrap().has_alpha {
+                return Err(error("asset_metadata", "图片透明度描述不一致"));
             }
             return Ok(());
         }

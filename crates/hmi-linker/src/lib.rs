@@ -586,8 +586,14 @@ fn layout(
         return Err(error("page_count", "工程至少需要一个页面"));
     }
     let resource_count = images
-        .len()
-        .checked_mul(2)
+        .iter()
+        .try_fold(0usize, |n, (_, image)| {
+            n.checked_add(if image.editor_source_format == "none" {
+                1
+            } else {
+                2
+            })
+        })
         .and_then(|n| {
             n.checked_add(
                 pages.len() + fonts.len() + animations.len() * 2 + videos.len() + audios.len() + 2,

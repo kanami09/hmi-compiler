@@ -63,7 +63,7 @@ fn padded_rotations_decode_to_expected_colors_and_keep_original_editor_source() 
         let info = asset.metadata.info.image().unwrap();
         assert_eq!((info.width, info.height), (61, 35));
         assert_eq!(info.codec, "jpeg");
-        assert_eq!(info.jpeg.as_ref().unwrap().quality, 80);
+        assert_eq!(info.jpeg.as_ref().unwrap().quality, Some(80));
         assert_eq!(
             (
                 info.jpeg.as_ref().unwrap().padded_width,
@@ -132,7 +132,7 @@ fn quality_is_explicit_baseline_420_even_at_100_and_target_metadata_is_checked()
                 .as_ref()
                 .unwrap()
                 .quality,
-            quality
+            Some(quality)
         );
         assert_eq!(
             hmi_format::picture::jpeg::dimensions(&asset.member(0).unwrap()[44..]).unwrap(),
