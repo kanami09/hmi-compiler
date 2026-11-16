@@ -28,8 +28,12 @@ pub struct Prepared {
 }
 pub struct AssetInput {
     pub key: String,
-    pub source: PathBuf,
+    pub source: AssetOrigin,
     pub probe: hmi_media::AssetProbe,
+}
+pub enum AssetOrigin {
+    File(PathBuf),
+    Builtin(hmi_core::builtin::BuiltinImage),
 }
 
 /// 显式目录直接使用；未指定时向上查找工程清单。
@@ -119,7 +123,7 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         inputs.extend(probe.inputs.iter().cloned());
         assets.push(AssetInput {
             key: asset.key.clone(),
-            source,
+            source: AssetOrigin::File(source),
             probe,
         });
     }
@@ -133,6 +137,21 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         let compilation = compile_page(&path, &target)?;
         inputs.extend(compilation.inputs.iter().cloned());
         pages.push(compilation);
+    }
+    // 显式资产顺序决定原有ID；内置依赖在编译后收集，以固定顺序追加并共享。
+    let needed = pages
+        .iter()
+        .flat_map(|p| p.object.implicit_images())
+        .collect::<std::collections::BTreeSet<_>>();
+    for builtin in hmi_core::builtin::BuiltinImage::ALL
+        .into_iter()
+        .filter(|b| needed.contains(b))
+    {
+        assets.push(AssetInput {
+            key: builtin.key().into(),
+            source: AssetOrigin::Builtin(builtin),
+            probe: hmi_media::builtin::probe(builtin, &target)?,
+        });
     }
     Ok(Prepared {
         root,
@@ -150,7 +169,10 @@ impl Prepared {
         self.assets
             .iter()
             .map(|asset| {
-                let encoded = hmi_media::encode(&asset.source, &self.target)?;
+                let encoded = match &asset.source {
+                    AssetOrigin::File(path) => hmi_media::encode(path, &self.target)?,
+                    AssetOrigin::Builtin(id) => hmi_media::builtin::encode(*id, &self.target)?,
+                };
                 if encoded.object.metadata.info != asset.probe.info
                     || encoded.inputs != asset.probe.inputs
                 {
@@ -296,7 +318,10 @@ impl Prepared {
         }
         for (id, asset) in self.assets.iter().enumerate() {
             let output = directory.join(format!("assets/a{id:05}.hma"));
-            jobs.push(serde_json::json!({"command":"hmi-media","args":["encode",asset.source,"--target",target,"-o",output]}));
+            jobs.push(match &asset.source {
+                AssetOrigin::File(source)=>serde_json::json!({"command":"hmi-media","args":["encode",source,"--target",target,"-o",output]}),
+                AssetOrigin::Builtin(id)=>serde_json::json!({"command":"hmi-media","args":["builtin",id.id(),"--target",target,"-o",output]}),
+            });
             if write_objects {
                 assets[id].1.write(&output, &protected)?;
             }

@@ -120,6 +120,21 @@ fn bind_resources(
     resources: &mut Vec<hmi_artifact::Relocation>,
 ) -> Result<()> {
     for property in definition.properties {
+        if matches!(property.storage, controls::Storage::ImageMap) {
+            let empty = "".into();
+            let entries =
+                hmi_core::icon_map::parse_source(properties.get(property.name).unwrap_or(&empty))?;
+            let placeholder = hmi_core::icon_map::render(&entries, |_| Ok(0))?;
+            properties.insert(property.name.into(), placeholder.into());
+            resources.push(hmi_artifact::Relocation {
+                object: owner,
+                property: property.name.into(),
+                kind: hmi_artifact::RelocationKind::ImageMap,
+                reference: None,
+                image_map: Some(entries),
+            });
+            continue;
+        }
         if matches!(property.storage, controls::Storage::ExternalPath(_)) {
             let active = property
                 .resource_rule
@@ -160,7 +175,7 @@ fn bind_resources(
                             "外部文件 path 必须为字符串或 ref 引用表",
                         )
                     })?;
-                reference.validate()?;
+                reference.validate_source()?;
                 if reference.name.is_none() {
                     return Err(error(
                         "resource_reference",
@@ -172,6 +187,7 @@ fn bind_resources(
                     property: property.name.into(),
                     kind: hmi_artifact::RelocationKind::ExternalPath,
                     reference: Some(reference),
+                    image_map: None,
                 });
                 properties.insert(property.name.into(), "".into());
             }
@@ -192,6 +208,14 @@ fn bind_resources(
                             format!("属性 {} 必须使用 ref、id 或 none 的引用表", property.name),
                         )
                     })?
+                } else if let controls::DefaultValue::BuiltinImage(id) = property.default {
+                    let builtin = hmi_core::builtin::BuiltinImage::from_id(id)
+                        .ok_or_else(|| error("builtin_asset", "未知的内置图标请求"))?;
+                    hmi_core::asset::ResourceReference {
+                        name: Some(builtin.key().into()),
+                        id: None,
+                        none: None,
+                    }
                 } else if property.allows_none() {
                     hmi_core::asset::ResourceReference {
                         name: None,
@@ -205,6 +229,9 @@ fn bind_resources(
                     ));
                 };
             reference.validate()?;
+            if properties.contains_key(property.name) {
+                reference.validate_source()?;
+            }
             let font = matches!(property.storage, controls::Storage::Font);
             if (reference.none == Some(true) && !property.allows_none())
                 || reference
@@ -239,6 +266,7 @@ fn bind_resources(
                     hmi_artifact::RelocationKind::ImageId
                 },
                 reference: Some(reference),
+                image_map: None,
             });
         }
     }

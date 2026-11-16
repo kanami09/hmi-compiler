@@ -32,6 +32,13 @@ pub struct ResourceReference {
     pub none: Option<bool>,
 }
 impl ResourceReference {
+    pub fn validate_source(&self) -> Result<()> {
+        self.validate()?;
+        if let Some(name) = &self.name {
+            check_key(name)?;
+        }
+        Ok(())
+    }
     pub fn validate(&self) -> Result<()> {
         if usize::from(self.name.is_some())
             + usize::from(self.id.is_some())
@@ -45,9 +52,17 @@ impl ResourceReference {
             ));
         }
         if let Some(name) = &self.name {
-            check_key(name)?;
+            check_internal_key(name)?;
         }
         Ok(())
+    }
+}
+
+pub fn check_internal_key(key: &str) -> Result<()> {
+    if crate::builtin::BuiltinImage::from_key(key).is_some() {
+        Ok(())
+    } else {
+        check_key(key)
     }
 }
 

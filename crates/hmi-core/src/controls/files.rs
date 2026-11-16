@@ -58,8 +58,28 @@ const BROWSER_PROPERTIES: &[Property] = &[
     integer("spax", Storage::U8, 0, 255, DefaultValue::Integer(24)),
     integer("spay", Storage::U8, 0, 255, DefaultValue::Integer(8)),
     integer("psta", Storage::U8, 0, 1, DefaultValue::Integer(0)),
-    integer("pic1", Storage::Image, 0, 65534, DefaultValue::Required),
-    integer("pic2", Storage::Image, 0, 65534, DefaultValue::Required),
+    integer(
+        "pic1",
+        Storage::Image,
+        0,
+        65534,
+        DefaultValue::BuiltinImage("browser-folder"),
+    ),
+    integer(
+        "pic2",
+        Storage::Image,
+        0,
+        65534,
+        DefaultValue::BuiltinImage("browser-file"),
+    ),
+    Property {
+        name: "vvs2",
+        storage: Storage::ImageMap,
+        min: 0,
+        max: 64,
+        default: DefaultValue::Text(""),
+        resource_rule: None,
+    },
     integer(
         "buffsize",
         Storage::U32,
@@ -104,7 +124,7 @@ const BROWSER_FIELDS: [Field; 58] = {
     f[49] = field("psta", FieldValue::Property("psta"));
     f[50] = field("pic1", FieldValue::Property("pic1"));
     f[51] = field("pic2", FieldValue::Property("pic2"));
-    f[52] = field("vvs2", FieldValue::Constant(&[]));
+    f[52] = field("vvs2", FieldValue::Property("vvs2"));
     f[53] = field("vvs2_m", FieldValue::Constant(&[64, 0]));
     f[54] = field("buffsize", FieldValue::Property("buffsize"));
     f[55] = field("buff", FieldValue::Constant(&[0, 0, 0, 0]));

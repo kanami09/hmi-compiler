@@ -59,6 +59,12 @@ fn run(args: &Args) -> Result<CommandResult> {
                     };
                     for relocation in &object.metadata.relocations {
                         if relocation.object == index
+                            && relocation.kind == hmi_artifact::RelocationKind::ImageMap
+                        {
+                            properties[&relocation.property] =
+                                serde_json::json!(relocation.image_map);
+                        }
+                        if relocation.object == index
                             && matches!(
                                 relocation.kind,
                                 hmi_artifact::RelocationKind::ImageId
@@ -77,7 +83,7 @@ fn run(args: &Args) -> Result<CommandResult> {
                 }
             }
             Ok(cli::success(
-                serde_json::json!({"metadata":object.metadata,"objects":records,"payload_size":object.payload.len(),"payload_sha256":hmi_core::sha256(&object.payload)}),
+                serde_json::json!({"metadata":object.metadata,"objects":records,"payload_size":object.payload.len(),"payload_sha256":hmi_core::sha256(&object.payload),"implicit_assets":object.implicit_images().iter().map(|b|serde_json::json!({"key":b.key(),"builtin":b.id()})).collect::<Vec<_>>()}),
                 "目标文件校验通过。",
             ))
         }

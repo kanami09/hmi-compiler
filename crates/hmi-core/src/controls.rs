@@ -36,6 +36,7 @@ pub enum Storage {
     Text,
     Lines,
     Image,
+    ImageMap,
     Font,
     ExternalPath(&'static str),
     Animation,
@@ -48,6 +49,7 @@ pub enum DefaultValue {
     Required,
     Integer(i64),
     Text(&'static str),
+    BuiltinImage(&'static str),
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -548,7 +550,7 @@ impl Property {
     fn encode(&self, value: &toml::Value) -> Result<Vec<u8>> {
         if matches!(
             self.storage,
-            Storage::Text | Storage::Lines | Storage::ExternalPath(_)
+            Storage::Text | Storage::Lines | Storage::ImageMap | Storage::ExternalPath(_)
         ) {
             let bytes = value
                 .as_str()
@@ -572,6 +574,11 @@ impl Property {
                     ));
                 }
                 return Ok(lf.replace('\n', "\r\n").into_bytes());
+            }
+            if matches!(self.storage, Storage::ImageMap) {
+                let text = std::str::from_utf8(&bytes).unwrap();
+                let entries = crate::icon_map::parse_native(text)?;
+                return Ok(crate::icon_map::render(&entries, |r| Ok(r.id.unwrap()))?.into_bytes());
             }
             return Ok(bytes);
         }
@@ -602,7 +609,9 @@ impl Property {
             Storage::I16 => (number as i16).to_le_bytes().to_vec(),
             Storage::I32 => (number as i32).to_le_bytes().to_vec(),
             Storage::U32 => (number as u32).to_le_bytes().to_vec(),
-            Storage::Text | Storage::Lines | Storage::ExternalPath(_) => unreachable!(),
+            Storage::Text | Storage::Lines | Storage::ImageMap | Storage::ExternalPath(_) => {
+                unreachable!()
+            }
         })
     }
 
@@ -637,7 +646,7 @@ impl Property {
             Storage::U32 => toml::Value::Integer(i64::from(u32::from_le_bytes(
                 bytes.try_into().map_err(|_| invalid())?,
             ))),
-            Storage::Text | Storage::Lines | Storage::ExternalPath(_) => {
+            Storage::Text | Storage::Lines | Storage::ImageMap | Storage::ExternalPath(_) => {
                 toml::Value::String(std::str::from_utf8(bytes).map_err(|_| invalid())?.into())
             }
         })
@@ -677,6 +686,7 @@ impl Definition {
                     }
                     DefaultValue::Integer(n) => toml::Value::Integer(n),
                     DefaultValue::Text(s) => toml::Value::String(s.into()),
+                    DefaultValue::BuiltinImage(_) => toml::Value::Integer(0),
                 };
                 &default
             };

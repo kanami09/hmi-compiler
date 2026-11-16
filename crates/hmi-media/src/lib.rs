@@ -19,6 +19,7 @@ use std::{
 };
 
 mod animation;
+pub mod builtin;
 mod input;
 pub use input::{encode, probe};
 mod audio;
@@ -375,6 +376,10 @@ fn encode_source(path: &Path, target: &Target, kind: &str) -> Result<EncodingRes
         });
     }
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
+    encode_image(p)
+}
+
+fn encode_image(p: PreparedImage) -> Result<EncodingResult> {
     if let Some(settings) = &p.info.jpeg {
         let (bytes, alpha) = encode_jpeg_pixels(
             &p.pixels,

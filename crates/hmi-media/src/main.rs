@@ -24,6 +24,14 @@ struct Args {
 enum Command {
     /// 检查可选 FFmpeg DLL 的版本和 ABI。
     Backend,
+    /// 生成受控内置图标，供独立构建计划使用。
+    Builtin {
+        id: String,
+        #[arg(long)]
+        target: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
     /// 检查媒体输入及处理参数，不写输出。
     Probe {
         source: PathBuf,
@@ -64,6 +72,21 @@ fn run(args: &Args) -> Result<CommandResult> {
             serde_json::json!({"directory":hmi_media::ffmpeg::directory()?,"backend":hmi_media::ffmpeg::backend_info()?}),
             "FFmpeg 后端检查通过。",
         )),
+        Command::Builtin { id, target, output } => {
+            let builtin = hmi_core::builtin::BuiltinImage::from_id(id).ok_or_else(|| {
+                hmi_core::error(
+                    "builtin_asset",
+                    "未知内置图标；可选browser-folder、browser-file",
+                )
+            })?;
+            let config: Target = file::read_json(target)?;
+            let encoded = hmi_media::builtin::encode(builtin, &config)?;
+            encoded.object.write(output, &[target])?;
+            Ok(cli::success(
+                serde_json::json!({"output":output,"asset":encoded.object.metadata.info,"input_action":"builtin","builtin":id}),
+                format!("内置图标已生成：{}", output.display()),
+            ))
+        }
         Command::Inspect { file } => {
             let asset = AssetObject::read(file)?;
             Ok(cli::success(

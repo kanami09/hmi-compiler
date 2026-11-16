@@ -253,7 +253,10 @@ fn runtime_directory_is_data_and_source_restrictions_preserve_previous_output() 
         "text_capacity"
     );
     o = browser();
-    o.properties.remove("pic2");
+    o.properties.insert(
+        "pic2".into(),
+        toml::Value::Table(toml::map::Map::from_iter([("none".into(), true.into())])),
+    );
     save(tmp.path(), "page0", vec![o], None);
     assert_eq!(
         hmi_cli::prepare(tmp.path())
@@ -262,7 +265,7 @@ fn runtime_directory_is_data_and_source_restrictions_preserve_previous_output() 
             .as_diagnostic()
             .unwrap()
             .code,
-        "property_required"
+        "resource_reference"
     );
     let mut o = stream("fs0");
     o.events.insert("up".into(), "missing.s".into());

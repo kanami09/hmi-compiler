@@ -40,6 +40,7 @@ pub struct PageLayout {
 pub enum RelocationKind {
     ObjectId,
     ImageId,
+    ImageMap,
     FontId,
     ExternalPath,
     AnimationId,
@@ -56,6 +57,8 @@ pub struct Relocation {
     pub kind: RelocationKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reference: Option<hmi_core::asset::ResourceReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_map: Option<Vec<hmi_core::icon_map::ImageMapEntry>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -81,6 +84,26 @@ pub struct CompiledObject {
 }
 
 impl CompiledObject {
+    /// 默认图标只由受控的保留符号请求；返回顺序与页／控件排列无关。
+    pub fn implicit_images(&self) -> Vec<hmi_core::builtin::BuiltinImage> {
+        let mut images = std::collections::BTreeSet::new();
+        for relocation in &self.metadata.relocations {
+            for reference in relocation
+                .reference
+                .iter()
+                .chain(relocation.image_map.iter().flatten().map(|e| &e.pic))
+            {
+                if let Some(image) = reference
+                    .name
+                    .as_deref()
+                    .and_then(hmi_core::builtin::BuiltinImage::from_key)
+                {
+                    images.insert(image);
+                }
+            }
+        }
+        images.into_iter().collect()
+    }
     pub fn new(
         kind: ObjectKind,
         name: Option<String>,
@@ -134,6 +157,7 @@ impl CompiledObject {
                     property: "id".into(),
                     kind: RelocationKind::ObjectId,
                     reference: None,
+                    image_map: None,
                 });
             }
         }
@@ -249,6 +273,9 @@ impl CompiledObject {
         }
         let mut relocated = std::collections::BTreeSet::new();
         for relocation in &self.metadata.relocations {
+            if relocation.kind != RelocationKind::ImageMap && relocation.image_map.is_some() {
+                return Err(error("object_relocation", "普通重定位不能附带图标映射"));
+            }
             if (relocation.object == 0 && relocation.kind != RelocationKind::ImageId)
                 || relocation.object >= layout.objects.len()
                 || !relocated.insert((relocation.object, relocation.property.as_str()))
@@ -259,6 +286,24 @@ impl CompiledObject {
                 ));
             }
             match relocation.kind {
+                RelocationKind::ImageMap => {
+                    let definition = hmi_core::controls::record_definition(
+                        layout.objects[relocation.object].type_code,
+                    )?;
+                    if relocation.reference.is_some()
+                        || !definition.properties.iter().any(|p| {
+                            p.name == relocation.property
+                                && matches!(p.storage, hmi_core::controls::Storage::ImageMap)
+                        })
+                    {
+                        return Err(error("object_relocation", "图标映射重定位的类型或属性无效"));
+                    }
+                    let entries = relocation
+                        .image_map
+                        .as_ref()
+                        .ok_or_else(|| error("object_relocation", "图标映射重定位缺少条目"))?;
+                    hmi_core::icon_map::validate(entries)?;
+                }
                 RelocationKind::ExternalPath => {
                     let definition = hmi_core::controls::record_definition(
                         layout.objects[relocation.object].type_code,
@@ -341,6 +386,7 @@ impl CompiledObject {
                 if matches!(
                     property.storage,
                     hmi_core::controls::Storage::Image
+                        | hmi_core::controls::Storage::ImageMap
                         | hmi_core::controls::Storage::Font
                         | hmi_core::controls::Storage::Animation
                         | hmi_core::controls::Storage::Video

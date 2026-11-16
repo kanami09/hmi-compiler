@@ -293,7 +293,10 @@ fn required_images_and_geometry_fail_before_overwriting_hmi() {
         }
     }
     let mut o = widget("file_browser", 3);
-    o.properties.remove("pic2");
+    o.properties.insert(
+        "pic2".into(),
+        toml::Value::Table(toml::map::Map::from_iter([("none".into(), true.into())])),
+    );
     save(tmp.path(), "page0", vec![o]);
     assert_eq!(
         hmi_cli::prepare(tmp.path())
@@ -302,7 +305,7 @@ fn required_images_and_geometry_fail_before_overwriting_hmi() {
             .as_diagnostic()
             .unwrap()
             .code,
-        "property_required"
+        "resource_reference"
     );
 }
 

@@ -224,6 +224,23 @@ fn assemble_page(
             continue;
         }
         match relocation.kind {
+            RelocationKind::ImageMap => {
+                let entries = relocation.image_map.as_ref().unwrap();
+                let placeholder = hmi_core::icon_map::render(entries, |_| Ok(0))?;
+                if parsed[relocation.object]
+                    .attribute(&relocation.property)
+                    .is_none_or(|a| a.value != placeholder.as_bytes())
+                {
+                    return Err(error(
+                        "object_relocation",
+                        "图标映射的占位数据与重定位声明不一致",
+                    ));
+                }
+                let text = hmi_core::icon_map::render(entries, |r| {
+                    resolve_resource(images, r, "自定义图标")
+                })?;
+                values[relocation.object].insert(relocation.property.clone(), text.into_bytes());
+            }
             RelocationKind::AudioId => {
                 let id = resolve_resource(
                     resources.audios,
@@ -610,8 +627,18 @@ fn layout(
         return Err(error("resource_count", "资源数量超过当前目录容量"));
     }
     let mut keys = BTreeSet::new();
-    for (key, _) in assets {
-        hmi_core::asset::check_key(key)?;
+    for (key, info) in assets {
+        hmi_core::asset::check_internal_key(key)?;
+        if let Some(builtin) = hmi_core::builtin::BuiltinImage::from_key(key)
+            && info.image().is_none_or(|image| {
+                image.source_sha256 != builtin.source_sha256()
+                    || image.width != 64
+                    || image.height != 64
+                    || !image.delivery.is_embedded()
+            })
+        {
+            return Err(error("builtin_asset", "保留图标符号只能绑定对应的内置图标"));
+        }
         if !keys.insert(key) {
             return Err(error("asset_key", format!("资产符号 {key} 重复")));
         }
@@ -924,6 +951,15 @@ pub fn link_with_assets(
     let container = Container::parse(bytes.clone())?;
     let project = Project::parse(&container)?;
     project.strict()?;
+    for asset in &mut asset_map {
+        if let Some(builtin) = asset["key"]
+            .as_str()
+            .and_then(hmi_core::builtin::BuiltinImage::from_key)
+        {
+            asset["implicit"] = true.into();
+            asset["builtin"] = builtin.id().into();
+        }
+    }
     let map = serde_json::json!({"schema":"hmi.link-map/1","target":target,
         "pages":project.pages.iter().enumerate().map(|(id,(entry,page))|serde_json::json!({"id":id,"name":page.name,"resource":container.entries[*entry].name,"objects":page.objects.iter().map(|o|serde_json::json!({"id":o.id,"name":o.name,"type":hmi_format::page::type_name(o.type_code)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),
         "assets":asset_map,
