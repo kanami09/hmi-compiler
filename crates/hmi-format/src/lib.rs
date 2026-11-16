@@ -5,6 +5,7 @@
 pub mod binary;
 pub mod container;
 pub mod font;
+pub mod gmov;
 pub mod page;
 pub mod picture;
 pub mod project;
