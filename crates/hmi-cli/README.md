@@ -1039,3 +1039,11 @@ hmi-media builtin browser-file --target target.json -o file.hma
 ```
 
 独立链接描述将这些包绑定到inspect报告的保留符号，放在显式资产之后；建议直接执行hmi plan导出的jobs.json，保持相同顺序。链接器不会临时补编码，也不通过读取用户机器上的原HMI寻找图标。
+
+生成图标批量验收工程：
+
+```powershell
+python examples/prepare_browser_icons_acceptance.py --font path/to/ui.zi
+```
+
+输出位于 `target/acceptance-browser-icons/`，Icons0／Icons90分别为X543的0°／90°，各五页，对照自动补齐、只显式指定一项、全部显式指定、符号映射和原生数值映射。图片顺序在90°反转，默认图标仍固定追加；每份实际执行16条独立作业，其中两条builtin作业生成共享图标，HMI与统一入口相同。先将输出sd0中的browser0／browser90复制到上位机虚拟SD根目录，再编译并在模拟器查看文件列表。页底左右箭头可循环切换；具体颜色、ID和示例文件见输出README。脚本仅需独立ZI，不读已有HMI或内部素材，也不自动写虚拟SD；已有输出目录不会覆盖。
