@@ -10,6 +10,7 @@ pub mod page;
 pub mod picture;
 pub mod project;
 pub mod video;
+pub mod wave;
 pub mod write;
 
 pub use hmi_core::{Error, Result, diagnostic};

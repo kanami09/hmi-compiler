@@ -16,6 +16,7 @@ pub struct Video<'a> {
     pub fps: u8,
     pub duration_ms: u32,
     pub frames: Vec<&'a [u8]>,
+    pub audio: Option<&'a [u8]>,
 }
 
 pub fn write(
@@ -26,6 +27,21 @@ pub fn write(
     fps: u8,
     frames: &[Vec<u8>],
 ) -> Result<Vec<u8>> {
+    write_with_audio(width, height, orientation, quality, fps, frames, None)
+}
+
+pub fn write_with_audio(
+    width: u16,
+    height: u16,
+    orientation: u16,
+    quality: u8,
+    fps: u8,
+    frames: &[Vec<u8>],
+    audio: Option<&[u8]>,
+) -> Result<Vec<u8>> {
+    if let Some(audio) = audio {
+        crate::wave::inspect_native(audio)?;
+    }
     if !matches!(orientation, 0 | 90 | 180 | 270) {
         return Err(error(
             "video_orientation",
@@ -36,11 +52,15 @@ pub fn write(
         return Err(error("video_frames", "视频须包含 1～10000 个输出帧"));
     }
     let table = frames.len() * 40;
-    let ext = frames.iter().try_fold(table, |n, f| {
+    let frame_end = frames.iter().try_fold(table, |n, f| {
         n.checked_add(f.len())
             .filter(|n| *n <= MAX_BYTES - 76 - 4096)
             .ok_or_else(|| error("video_length", "VIDEO 运行资源超过 128 MiB"))
     })?;
+    let ext = frame_end
+        .checked_add(audio.map_or(0, <[u8]>::len))
+        .filter(|n| *n <= MAX_BYTES - 76 - 4096)
+        .ok_or_else(|| error("video_length", "有声 VIDEO 超过 128 MiB"))?;
     let mut out = vec![0; 76 + table];
     out[..4].copy_from_slice(b"VIDE");
     out[4..8].copy_from_slice(&[10 + (orientation / 90) as u8, quality, fps, 0]);
@@ -52,6 +72,10 @@ pub fn write(
         return Err(error("video_fps", "视频 fps 必须为正整数"));
     }
     put_u32(&mut out, 24, ext + 4096)?;
+    if let Some(audio) = audio {
+        put_u32(&mut out, 28, frame_end)?;
+        put_u32(&mut out, 32, audio.len())?;
+    }
     put_u32(&mut out, 36, frames.len() * 1000 / usize::from(fps))?;
     put_u32(&mut out, 40, ext)?;
     put_u32(&mut out, 44, 4096)?;
@@ -65,6 +89,9 @@ pub fn write(
         out[row + 14..row + 16].copy_from_slice(&height.to_le_bytes());
         put_u32(&mut out, row + 16, frame.len())?;
         out.extend(frame);
+    }
+    if let Some(audio) = audio {
+        out.extend(audio);
     }
     out.extend(b"hmic");
     out.extend(4088u32.to_le_bytes());
@@ -85,7 +112,6 @@ pub fn inspect(bytes: &[u8]) -> Result<Video<'_>> {
         || u32_at(bytes, 8)? != 76
         || bytes[20..24] != [0; 4]
         || u32_at(bytes, 24)? as usize != bytes.len() - 76
-        || bytes[28..36] != [0; 8]
         || bytes[48..76] != [0; 28]
     {
         return Err(invalid());
@@ -106,6 +132,16 @@ pub fn inspect(bytes: &[u8]) -> Result<Video<'_>> {
         (width, height)
     };
     let ext = u32_at(bytes, 40)? as usize;
+    let wav_start = u32_at(bytes, 28)? as usize;
+    let wav_size = u32_at(bytes, 32)? as usize;
+    let frame_end = if wav_start == 0 && wav_size == 0 {
+        ext
+    } else {
+        if wav_start == 0 || wav_size == 0 || wav_start.checked_add(wav_size) != Some(ext) {
+            return Err(invalid());
+        }
+        wav_start
+    };
     if u32_at(bytes, 44)? != 4096
         || ext.checked_add(76 + 4096) != Some(bytes.len())
         || u32_at(bytes, 36)? as usize != count * 1000 / usize::from(bytes[6])
@@ -133,7 +169,7 @@ pub fn inspect(bytes: &[u8]) -> Result<Video<'_>> {
         }
         let end = cursor
             .checked_add(u32_at(row, 16)? as usize)
-            .filter(|n| *n <= ext)
+            .filter(|n| *n <= frame_end)
             .ok_or_else(invalid)?;
         let frame = bytes.get(76 + cursor..76 + end).ok_or_else(invalid)?;
         if jpeg::dimensions(frame)? != storage {
@@ -142,9 +178,16 @@ pub fn inspect(bytes: &[u8]) -> Result<Video<'_>> {
         frames.push(frame);
         cursor = end;
     }
-    if cursor != ext {
+    if cursor != frame_end {
         return Err(invalid());
     }
+    let audio = if wav_size > 0 {
+        let data = &bytes[76 + wav_start..76 + ext];
+        crate::wave::inspect_native(data)?;
+        Some(data)
+    } else {
+        None
+    };
     Ok(Video {
         width,
         height,
@@ -153,5 +196,6 @@ pub fn inspect(bytes: &[u8]) -> Result<Video<'_>> {
         fps: bytes[6],
         duration_ms: u32_at(bytes, 36)?,
         frames,
+        audio,
     })
 }
