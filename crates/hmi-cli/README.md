@@ -997,3 +997,11 @@ original适用于五类source资产。新的source编码结果在HMA中记录sou
 original附件必须存在且有效，类别也必须一致；源文件丢失或附件损坏会报错，不读取隐藏缓存回退。旧包没有source_request时，无法据此证明请求一致，改走正常source处理。original是显式依赖，复用结果的输入仍包含描述、source和附件三项；重新编码时也保留附件依赖。视频参数未变时可以不加载FFmpeg直接复用；发生变化而需要重新编码时，仍须提供可用后端。
 
 hmi-media probe/encode的JSON结果增加input_action：source表示实际处理源文件，encoded表示封装编码文件，native表示保留原生包，original表示复用原始编码。普通命令行也会使用对应文案。HMA中的图片质量和视频后端允许为null，以表示输入中无法可靠恢复该信息或本次未使用该后端，不用猜测值填充。
+
+生成三种媒体输入的批量验收工程：
+
+```powershell
+python examples/prepare_media_inputs_acceptance.py --font path/to/ui.zi --ffmpeg-dir path/to/ffmpeg/bin
+```
+
+输出位于 `target/acceptance-media-inputs/`，Inputs0／Inputs90分别为X543的0°／90°，各15页，合计30组合；每份按encoded／native／original三组对照图片、字库、动画、视频、音频。准备种子视频需要FFmpeg，随后统一构建及每份32条独立作业均在无可用FFmpeg的环境中完成，original组明确复用原始编码。先把输出sd0中的input0／input90目录复制到上位机虚拟SD根目录，再核对各页并每份编译一次；完整预期见输出README。仅使用指定独立ZI，其余素材由代码生成，不读已有HMI；已有输出目录不会覆盖。
