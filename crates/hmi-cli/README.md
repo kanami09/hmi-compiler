@@ -888,3 +888,11 @@ python examples/prepare_page_background_acceptance.py --font path/to/ui.zi
 ```
 
 输出位于 `target/acceptance-page-backgrounds/`。PageBgK 为 K035 的图片／单色／无背景三页；Transparent0／Transparent90 为 X543 两个方向的六类文字控件，每页用图片页面背景核对透明显示，并保留非活动图片引用。源图片由代码生成，只读取指定 ZI，无需 FFmpeg 或虚拟 SD。三份分别实际执行6／12／12条独立作业，输出与统一入口相同；已有目录不会覆盖，可用 --output 指定新目录。详细属性和显示预期见输出 README。
+
+指针／波形背景和二维码 LOGO 验收：
+
+```powershell
+python examples/prepare_graphics_modes_acceptance.py
+```
+
+输出位于 `target/acceptance-graphics-modes/`，包括 K035 的 GraphicPic／GraphicCrop／GraphicColor 和 X543 90° 的 GraphicX90。每份 gauge／wave／qrcode 三页：前三份验证图片、切图、切回单色及关闭 LOGO 后保留引用；最后一份验证透明背景和图片 ID 重排。GraphicPic／GraphicCrop／GraphicX90 显示中心 LOGO，GraphicColor 关闭 LOGO 但保留 pic。所有图片均由代码生成，无需字库、已有 HMI、FFmpeg 或虚拟 SD；每份实际执行9条独立作业比较 HMI，已有目录不会覆盖。显示预期和详细属性见输出 README，动态曲线和扫码不属于本批验收内容。
