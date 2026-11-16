@@ -941,3 +941,11 @@ from=0 时 vid 必填且不能为 none；path 可省略（默认空字符串）�
 runtime_files 记录当前启用的初始路径及最终页面／控件 ID，kind 为 external_animation／external_video／external_audio，generated 表示工程是否包含对应输出。from=0 中保留的路径不计作该控件的当前文件需求；显式声明的外部资产即使暂未使用也会输出，其 users 可以为空。同一路径被不同媒体类型或数据记录占用会报错；输出路径还会检查大小写和父子冲突。多文件发布沿用配套文件先写、HMI最后替换的流程，不承诺整包事务。
 
 .hmo 的资源条件从图片专用规则扩展为 ResourceRule，路径也携带预期媒体类别；编译、目标检查和链接共用。链接器只读取自包含.hmo/.hma，不需要原始GIF／AVI／WAV或FFmpeg。外部路径绑定不代表已经验证运行时播放、试听或文件存在，相关行为按实际运行环境验收。
+
+批量生成三类播放源的验收工程：
+
+```powershell
+python examples/prepare_external_playback_acceptance.py --ffmpeg-dir path/to/ffmpeg/bin
+```
+
+输出在 `target/acceptance-external-playback/`，MediaOut0／MediaOut90 为 X543 的0°／90°工程，每份9页，合计18个组合。每份均包含三类内部播放、外部播放保留vid、直接路径且不提供vid；每份实际执行17条独立作业比较HMI和三个配套文件。所有输入素材由代码生成，无需已有HMI或字库；生成视频需要FFmpeg，打开验收文件无需本工具后端。先将输出sd0/中的ext0／ext90目录复制到上位机虚拟SD根目录，再核对各页并分别编译一次；完整路径及预期见输出README。脚本不自动修改虚拟SD，已有输出目录也不会覆盖。
