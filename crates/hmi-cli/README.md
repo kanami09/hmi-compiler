@@ -851,3 +851,11 @@ properties = { x = 20, y = 40, w = 280, h = 40, sta = 1, psta = 1, pic2 = { ref 
 滑块图片游标保留 wid/hig 的既有语义，默认 255 自动；K0 的 psta 范围仍为0／1，其他未记录例外的型号沿用通用0／1／2。切换到图片模式不擅自改游标尺寸、style、颜色、val 或事件脚本。
 
 控件注册表的 ImageRule 集中声明图片启用条件和切图规则，源码检查与目标记录检查共用；链接器负责最终ID、资源类别和启用切图的几何绑定。当前 .hmo 给所有已注册图片字段保存重定位，包括非活动和 none 字段，避免在独立链接时丢失或绕过引用。
+
+生成本批验收工程：
+
+```powershell
+python examples/prepare_picture_modes_acceptance.py --font path/to/ui.zi
+```
+
+输出位于 `target/acceptance-picture-modes/`，包括 K035 的图片／切图／单色保留三份工程和 X543 的90°图片工程，每份四页。源图片由代码生成，只需提供独立字库；无需 FFmpeg 或虚拟 SD。每份实际执行13条独立作业比较 HMI，已有目录不会覆盖，可用 --output 指定新目录。详细属性与显示预期见输出 README。
