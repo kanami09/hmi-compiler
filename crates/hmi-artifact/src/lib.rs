@@ -44,6 +44,7 @@ pub enum RelocationKind {
     ExternalPath,
     AnimationId,
     VideoId,
+    AudioId,
 }
 
 /// object 指目标文件内的记录序号，不是预先分配的 HMI 控件 ID。
@@ -287,7 +288,8 @@ impl CompiledObject {
                 RelocationKind::ImageId
                 | RelocationKind::FontId
                 | RelocationKind::AnimationId
-                | RelocationKind::VideoId => {
+                | RelocationKind::VideoId
+                | RelocationKind::AudioId => {
                     let font = relocation.kind == RelocationKind::FontId;
                     let definition =
                         hmi_core::controls::by_code(layout.objects[relocation.object].type_code)?;
@@ -295,6 +297,8 @@ impl CompiledObject {
                         p.name == relocation.property
                             && if font {
                                 matches!(p.storage, hmi_core::controls::Storage::Font)
+                            } else if relocation.kind == RelocationKind::AudioId {
+                                matches!(p.storage, hmi_core::controls::Storage::Audio)
                             } else if relocation.kind == RelocationKind::VideoId {
                                 matches!(p.storage, hmi_core::controls::Storage::Video)
                             } else if relocation.kind == RelocationKind::AnimationId {
@@ -334,6 +338,7 @@ impl CompiledObject {
                         | hmi_core::controls::Storage::Font
                         | hmi_core::controls::Storage::Animation
                         | hmi_core::controls::Storage::Video
+                        | hmi_core::controls::Storage::Audio
                 ) && !relocated.contains(&(index, property.name))
                 {
                     return Err(error("object_relocation", "资源属性缺少重定位"));

@@ -43,6 +43,10 @@ enum Command {
 }
 fn timing_note(info: &hmi_artifact::asset::AssetInfo) -> String {
     match info {
+        hmi_artifact::asset::AssetInfo::Audio { audio: a } => format!(
+            " 音频：{}Hz，{} 声道，{} 个采样，{}ms。",
+            a.sample_rate, a.channels, a.sample_frames, a.duration_ms
+        ),
         hmi_artifact::asset::AssetInfo::Video { video: v } => format!(
             " 视频：{} 帧，{}fps，{}ms；源音轨 {} 条，音轨策略 {}。",
             v.frame_count, v.fps, v.duration_ms, v.source_audio_streams, v.audio_mode

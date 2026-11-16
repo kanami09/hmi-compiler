@@ -56,6 +56,10 @@
         {
           "control": "video",
           "supported": false
+        },
+        {
+          "control": "audio",
+          "supported": false
         }
       ],
       "k0": [
@@ -97,6 +101,10 @@
         },
         {
           "control": "video",
+          "supported": false
+        },
+        {
+          "control": "audio",
           "supported": false
         }
       ]

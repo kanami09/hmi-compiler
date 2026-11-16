@@ -19,6 +19,7 @@ use std::{
 };
 
 mod animation;
+mod audio;
 pub mod ffmpeg;
 mod video;
 
@@ -324,6 +325,9 @@ fn prepare(path: &Path, target: &Target) -> Result<PreparedImage> {
 
 /// 探测会完整解码和检查变换，但不生成运行像素、.hma 或其他输出文件。
 pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
+    if asset_kind(path)? == "audio" {
+        return audio::probe(path, target);
+    }
     if asset_kind(path)? == "video" {
         return video::probe(path, target);
     }
@@ -345,6 +349,9 @@ pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
 }
 
 pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
+    if asset_kind(path)? == "audio" {
+        return audio::encode(path, target);
+    }
     if asset_kind(path)? == "video" {
         return video::encode(path, target);
     }
@@ -450,6 +457,7 @@ fn asset_kind(path: &Path) -> Result<&'static str> {
         Some("image") => Ok("image"),
         Some("animation") => Ok("animation"),
         Some("video") => Ok("video"),
+        Some("audio") => Ok("audio"),
         _ => Err(error(
             "asset_kind",
             "当前媒体编码器支持 image、font 和 animation 资产",

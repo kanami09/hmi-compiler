@@ -261,6 +261,42 @@ pub struct FfmpegInfo {
     pub fingerprint: String,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioEncoding {
+    pub sample_rate: Option<u32>,
+    pub channels: Option<u16>,
+    #[serde(default = "sample_format")]
+    pub sample_format: String,
+}
+fn sample_format() -> String {
+    "s16".into()
+}
+impl Default for AudioEncoding {
+    fn default() -> Self {
+        Self {
+            sample_rate: None,
+            channels: None,
+            sample_format: sample_format(),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AudioSource {
+    pub schema: String,
+    pub kind: String,
+    #[serde(default = "source_mode")]
+    pub input: String,
+    pub source: String,
+    #[serde(default)]
+    pub encoding: AudioEncoding,
+    #[serde(default)]
+    pub clip: Clip,
+    #[serde(default)]
+    pub delivery: Delivery,
+}
+
 impl Default for ImageSource {
     fn default() -> Self {
         Self {

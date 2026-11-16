@@ -1,7 +1,9 @@
 //! 按最终页面顺序解析引用、生成容器并校验输出，不读取页面或脚本源码。
 
 use hmi_analysis::{Context, check_linked_facts};
-use hmi_artifact::asset::{AnimationInfo, AssetInfo, AssetObject, FontInfo, ImageInfo, VideoInfo};
+use hmi_artifact::asset::{
+    AnimationInfo, AssetInfo, AssetObject, AudioInfo, FontInfo, ImageInfo, VideoInfo,
+};
 use hmi_artifact::{CompiledObject, ObjectKind, RelocationKind};
 use hmi_core::{
     Result, controls,
@@ -34,6 +36,7 @@ pub struct ExternalOutput {
 }
 
 struct ResourceTables<'a> {
+    audios: &'a [(String, AudioInfo)],
     images: &'a [(String, ImageInfo)],
     fonts: &'a [(String, FontInfo)],
     external: &'a [(String, ImageInfo)],
@@ -204,6 +207,21 @@ fn assemble_page(
     let mut values = vec![BTreeMap::new(); parsed.len()];
     for relocation in &object.metadata.relocations {
         match relocation.kind {
+            RelocationKind::AudioId => {
+                let id = resolve_resource(
+                    resources.audios,
+                    relocation.reference.as_ref().unwrap(),
+                    "音频",
+                )?;
+                if parsed[relocation.object]
+                    .attribute(&relocation.property)
+                    .is_none_or(|a| a.value != [0, 0])
+                {
+                    return Err(error("object_relocation", "音频 ID 占位值必须为双字节零"));
+                }
+                values[relocation.object]
+                    .insert(relocation.property.clone(), id.to_le_bytes().to_vec());
+            }
             RelocationKind::VideoId => {
                 let id = resolve_resource(videos, relocation.reference.as_ref().unwrap(), "视频")?;
                 if parsed[relocation.object]
@@ -483,6 +501,22 @@ fn layout(
             ));
         }
     }
+    let audios = assets
+        .iter()
+        .filter_map(|(key, info)| match info {
+            AssetInfo::Audio { audio } => Some((key.clone(), audio.clone())),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !audios.is_empty()
+        && !target
+            .capabilities
+            .control_types
+            .iter()
+            .any(|c| c == "audio")
+    {
+        return Err(error("asset_target", "当前目标不支持音频资产"));
+    }
     if pages.is_empty() {
         return Err(error("page_count", "工程至少需要一个页面"));
     }
@@ -490,7 +524,9 @@ fn layout(
         .len()
         .checked_mul(2)
         .and_then(|n| {
-            n.checked_add(pages.len() + fonts.len() + animations.len() * 2 + videos.len() + 2)
+            n.checked_add(
+                pages.len() + fonts.len() + animations.len() * 2 + videos.len() + audios.len() + 2,
+            )
         })
         .ok_or_else(|| error("resource_count", "资源数量溢出"))?;
     if resource_count > (hmi_format::container::BACKUP_START - 8) / 28
@@ -498,6 +534,7 @@ fn layout(
         || fonts.len() > 255
         || animations.len() >= 65535
         || videos.len() >= 65535
+        || audios.len() >= 65535
     {
         return Err(error("resource_count", "资源数量超过当前目录容量"));
     }
@@ -563,6 +600,7 @@ fn layout(
             return Err(error("page_name", format!("页面名称 {name} 重复")));
         }
         let resources = ResourceTables {
+            audios: &audios,
             images: &images,
             fonts: &fonts,
             external: &external,
@@ -603,6 +641,10 @@ fn layout(
         kind: "pa".into(),
         resource: format!("{id}.pa"),
     }));
+    references.extend((0..audios.len()).map(|id| hmi_format::project::Reference {
+        kind: "wav".into(),
+        resource: format!("{id}.wav"),
+    }));
     let context = Context::from_pages(parsed.iter(), references);
     let (runtime_files, mut diagnostics) = runtime::collect(&parsed, &external)?;
     for (key, info) in &animations {
@@ -612,6 +654,19 @@ fn layout(
                 format!(
                     "动画资产 {key} 的帧延时已按原生规则调整（源：{} 帧／{}ms，输出：{} 帧／{}ms），可用 hmi-media inspect 查看各帧延时",
                     info.source_frames, info.source_duration_ms, info.frame_count, info.duration_ms
+                ),
+            ));
+        }
+    }
+    for (key, info) in &videos {
+        if let Some(a) = &info.audio
+            && u64::from(a.leading_silence_samples) + u64::from(a.trailing_silence_samples) > 0
+        {
+            diagnostics.push(Diagnostic::warning(
+                "audio_silence",
+                format!(
+                    "视频资产 {key} 按音轨时间轴补入静音：开头 {} 个采样，末尾 {} 个采样",
+                    a.leading_silence_samples, a.trailing_silence_samples
                 ),
             ));
         }

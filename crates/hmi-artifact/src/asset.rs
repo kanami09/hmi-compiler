@@ -98,12 +98,49 @@ pub struct VideoInfo {
     pub source_sha256: String,
     pub backend: hmi_core::asset::FfmpegInfo,
     pub encoder: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio: Option<AudioTrackInfo>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioTrackInfo {
+    pub source_codec: String,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub content_samples: u32,
+    pub sample_frames: u32,
+    pub padding_samples: u8,
+    pub leading_silence_samples: u32,
+    pub trailing_silence_samples: u32,
+    pub source_rate: u32,
+    pub source_channels: u16,
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct AudioInfo {
+    pub source_codec: String,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub sample_frames: u32,
+    pub content_samples: u32,
+    pub padding_samples: u8,
+    pub duration_ms: u32,
+    pub source_rate: u32,
+    pub source_channels: u16,
+    pub source_bits: u16,
+    pub source_samples: u32,
+    pub clip_start_ms: u32,
+    pub source_sha256: String,
+    pub encoder: String,
+    pub backend: Option<hmi_core::asset::FfmpegInfo>,
 }
 
 /// 每种资产只携带自己的描述，不能同时声明为图片和字库。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum AssetInfo {
+    Audio { audio: AudioInfo },
     Image { image: ImageInfo },
     Font { font: FontInfo },
     Animation { animation: AnimationInfo },
@@ -118,6 +155,7 @@ impl AssetInfo {
     }
     pub fn orientation(&self) -> u16 {
         match self {
+            Self::Audio { .. } => 0,
             Self::Image { image } => image.orientation,
             Self::Font { font } => font.orientation,
             Self::Animation { animation } => animation.orientation,
@@ -126,6 +164,7 @@ impl AssetInfo {
     }
     pub fn kind(&self) -> &'static str {
         match self {
+            Self::Audio { .. } => "audio",
             Self::Image { .. } => "image",
             Self::Font { .. } => "font",
             Self::Animation { .. } => "animation",
@@ -165,6 +204,29 @@ pub struct AssetObject {
 }
 
 impl AssetObject {
+    pub fn audio(info: AudioInfo, bytes: Vec<u8>) -> Result<Self> {
+        let member = Member {
+            role: MemberRole::Runtime,
+            extension: "wav".into(),
+            reference_kind: Some(*b"wav\0\0\0\0\0"),
+            offset: 0,
+            length: u32::try_from(bytes.len())
+                .map_err(|_| error("asset_length", "WAV 超出 u32 范围"))?,
+            sha256: sha256(&bytes),
+        };
+        let object = Self {
+            metadata: AssetMetadata {
+                schema: "hmi.asset-object/1".into(),
+                format: "ver21234".into(),
+                producer: format!("hmi-media/{}", env!("CARGO_PKG_VERSION")),
+                info: AssetInfo::Audio { audio: info },
+                members: vec![member],
+            },
+            payload: bytes,
+        };
+        object.validate()?;
+        Ok(object)
+    }
     pub fn video(info: VideoInfo, bytes: Vec<u8>) -> Result<Self> {
         let member = Member {
             role: MemberRole::Runtime,
@@ -320,6 +382,7 @@ impl AssetObject {
             return Err(error("asset_format", "不支持此资产的容器格式"));
         }
         let expected: Vec<_> = match &self.metadata.info {
+            AssetInfo::Audio { .. } => vec![(MemberRole::Runtime, "wav", Some(*b"wav\0\0\0\0\0"))],
             AssetInfo::Video { .. } => vec![(MemberRole::Runtime, "v", Some(*b"v\0\0\0\0\0\0\0"))],
             AssetInfo::Animation { .. } => vec![
                 (MemberRole::Runtime, "gmov", Some(*b"gmov\0\0\0\0")),
@@ -360,6 +423,7 @@ impl AssetObject {
             return Err(error("asset_length", "资产成员未完整覆盖载荷"));
         }
         match &self.metadata.info {
+            AssetInfo::Audio { audio } => self.validate_audio(audio),
             AssetInfo::Video { video } => self.validate_video(video),
             AssetInfo::Animation { animation } => self.validate_animation(animation),
             AssetInfo::Image { image } => self.validate_image(image),
@@ -378,6 +442,25 @@ impl AssetObject {
                 Ok(())
             }
         }
+    }
+    fn validate_audio(&self, info: &AudioInfo) -> Result<()> {
+        let w = hmi_format::wave::inspect_native(self.member(0)?)?;
+        if (info.sample_rate, info.channels, info.sample_frames)
+            != (w.sample_rate, w.channels, w.samples)
+            || info
+                .content_samples
+                .checked_add(u32::from(info.padding_samples))
+                != Some(w.samples)
+            || info.padding_samples > 1
+            || info.duration_ms != ((u64::from(w.samples) * 1000) / u64::from(w.sample_rate)) as u32
+            || !valid_digest(&info.source_sha256)
+            || w.data[info.content_samples as usize * usize::from(w.channels) * 2..]
+                .iter()
+                .any(|b| *b != 0)
+        {
+            return Err(error("asset_metadata", "音频描述与 PCM 数据不一致"));
+        }
+        Ok(())
     }
     fn validate_video(&self, info: &VideoInfo) -> Result<()> {
         let video = hmi_format::video::inspect(self.member(0)?)?;
@@ -399,9 +482,11 @@ impl AssetObject {
             video.duration_ms,
         ) || info.source_fps_num == 0
             || info.source_fps_den == 0
-            || info.audio_applied
-            || !matches!(info.audio_mode.as_str(), "drop" | "if-present")
-            || (info.source_audio_streams > 0 && info.audio_mode != "drop")
+            || !matches!(info.audio_mode.as_str(), "drop" | "if-present" | "require")
+            || info.audio_applied != video.audio.is_some()
+            || info.audio.is_some() != video.audio.is_some()
+            || ((info.source_audio_streams > 0 && info.audio_mode != "drop") != info.audio_applied)
+            || (info.audio_mode == "require" && info.source_audio_streams == 0)
             || !valid_digest(&info.source_sha256)
             || !valid_digest(&info.backend.fingerprint)
         {
@@ -409,6 +494,36 @@ impl AssetObject {
                 "asset_metadata",
                 "视频描述与运行帧、帧率或音轨策略不一致",
             ));
+        }
+        if let (Some(track), Some(data)) = (&info.audio, video.audio) {
+            let w = hmi_format::wave::inspect_native(data)?;
+            if (track.sample_rate, track.channels, track.sample_frames)
+                != (w.sample_rate, w.channels, w.samples)
+                || u64::from(track.content_samples) * 1000
+                    != u64::from(info.duration_ms) * u64::from(w.sample_rate)
+                || track
+                    .content_samples
+                    .checked_add(u32::from(track.padding_samples))
+                    != Some(w.samples)
+                || track.padding_samples > 1
+                || u64::from(track.leading_silence_samples)
+                    + u64::from(track.trailing_silence_samples)
+                    > u64::from(track.content_samples)
+                || w.data[track.content_samples as usize * usize::from(w.channels) * 2..]
+                    .iter()
+                    .any(|b| *b != 0)
+                || w.data[..track.leading_silence_samples as usize * usize::from(w.channels) * 2]
+                    .iter()
+                    .any(|b| *b != 0)
+                || w.data[(track.content_samples - track.trailing_silence_samples) as usize
+                    * usize::from(w.channels)
+                    * 2
+                    ..track.content_samples as usize * usize::from(w.channels) * 2]
+                    .iter()
+                    .any(|b| *b != 0)
+            {
+                return Err(error("asset_metadata", "视频音轨描述与 WAV 数据不一致"));
+            }
         }
         let unit = u64::from(info.source_fps_den) * u64::from(info.fps);
         let source_rate = u64::from(info.source_fps_num);
@@ -590,13 +705,27 @@ impl AssetObject {
         self.validate()?;
         target.validate()?;
         if self.metadata.format != target.format
-            || self.metadata.info.orientation() != target.orientation
+            || (!matches!(self.metadata.info, AssetInfo::Audio { .. })
+                && self.metadata.info.orientation() != target.orientation)
             || match &self.metadata.info {
-                AssetInfo::Video { .. } => !target
+                AssetInfo::Audio { .. } => !target
                     .capabilities
                     .control_types
                     .iter()
-                    .any(|c| c == "video"),
+                    .any(|c| c == "audio"),
+                AssetInfo::Video { video } => {
+                    (video.audio_applied
+                        && !target
+                            .capabilities
+                            .control_types
+                            .iter()
+                            .any(|c| c == "audio"))
+                        || !target
+                            .capabilities
+                            .control_types
+                            .iter()
+                            .any(|c| c == "video")
+                }
                 AssetInfo::Animation { .. } => !target
                     .capabilities
                     .control_types

@@ -28,7 +28,8 @@ mod ffi {
         AVChapter,
         AVProgram,
         AVStreamGroup,
-        SwsContext
+        SwsContext,
+        SwrContext
     );
     macro_rules! enums {($($name:ident),*)=>{$(pub type $name=std::ffi::c_int;)*};}
     enums!(
@@ -53,6 +54,34 @@ use ffi::*;
 
 #[allow(clippy::type_complexity, non_snake_case)]
 struct Api {
+    av_get_sample_fmt: unsafe extern "C" fn(*const c_char) -> c_int,
+    av_channel_layout_default: unsafe extern "C" fn(*mut AVChannelLayout, c_int),
+    av_channel_layout_copy:
+        unsafe extern "C" fn(*mut AVChannelLayout, *const AVChannelLayout) -> c_int,
+    av_channel_layout_compare:
+        unsafe extern "C" fn(*const AVChannelLayout, *const AVChannelLayout) -> c_int,
+    av_channel_layout_uninit: unsafe extern "C" fn(*mut AVChannelLayout),
+    swr_alloc_set_opts2: unsafe extern "C" fn(
+        *mut *mut SwrContext,
+        *const AVChannelLayout,
+        c_int,
+        c_int,
+        *const AVChannelLayout,
+        c_int,
+        c_int,
+        c_int,
+        *mut c_void,
+    ) -> c_int,
+    swr_init: unsafe extern "C" fn(*mut SwrContext) -> c_int,
+    swr_get_out_samples: unsafe extern "C" fn(*mut SwrContext, c_int) -> c_int,
+    swr_convert: unsafe extern "C" fn(
+        *mut SwrContext,
+        *const *mut u8,
+        c_int,
+        *const *const u8,
+        c_int,
+    ) -> c_int,
+    swr_free: unsafe extern "C" fn(*mut *mut SwrContext),
     avformat_open_input: unsafe extern "C" fn(
         *mut *mut AVFormatContext,
         *const c_char,
@@ -238,6 +267,16 @@ impl Api {
             fingerprint: hmi_core::sha256(fingerprint.as_bytes()),
         };
         Ok(Self {
+            av_get_sample_fmt: sym!(0, av_get_sample_fmt),
+            av_channel_layout_default: sym!(0, av_channel_layout_default),
+            av_channel_layout_copy: sym!(0, av_channel_layout_copy),
+            av_channel_layout_compare: sym!(0, av_channel_layout_compare),
+            av_channel_layout_uninit: sym!(0, av_channel_layout_uninit),
+            swr_alloc_set_opts2: sym!(1, swr_alloc_set_opts2),
+            swr_init: sym!(1, swr_init),
+            swr_get_out_samples: sym!(1, swr_get_out_samples),
+            swr_convert: sym!(1, swr_convert),
+            swr_free: sym!(1, swr_free),
             avformat_open_input: sym!(3, avformat_open_input),
             avformat_find_stream_info: sym!(3, avformat_find_stream_info),
             avformat_close_input: sym!(3, avformat_close_input),
@@ -306,9 +345,310 @@ owned!(Decoder, AVCodecContext, avcodec_free_context);
 owned!(Packet, AVPacket, av_packet_free);
 owned!(Frame, AVFrame, av_frame_free);
 owned!(Dictionary, AVDictionary, av_dict_free);
+owned!(Resample, SwrContext, swr_free);
+struct Layout<'a> {
+    api: &'a Api,
+    value: AVChannelLayout,
+}
+impl<'a> Layout<'a> {
+    fn new(api: &'a Api) -> Self {
+        // SAFETY: AVChannelLayout 的全零状态是官方规定的未初始化状态。
+        Self {
+            api,
+            value: unsafe { std::mem::zeroed() },
+        }
+    }
+}
+impl Drop for Layout<'_> {
+    fn drop(&mut self) {
+        unsafe { (self.api.av_channel_layout_uninit)(&mut self.value) }
+    }
+}
 struct Scale<'a> {
     api: &'a Api,
     pointer: *mut SwsContext,
+}
+
+/// 输出 interleaved s16；时间戳保留为原始流时间基准，媒体层负责截取和音画对齐。
+pub(super) fn audio(path: &Path, rate: u32, channels: u16) -> Result<DecodedAudio> {
+    let api = Api::load()?;
+    if rate == 0 || rate > 384000 || ![1, 2].contains(&channels) {
+        return Err(error("audio_format", "音频转换参数无效"));
+    }
+    let filename = CString::new(
+        file::absolute(path)?
+            .to_str()
+            .ok_or_else(|| error("audio_path", "音频路径必须能表示为 UTF-8"))?,
+    )
+    .map_err(|_| error("audio_path", "音频路径不能包含 NUL"))?;
+    let mut input = Input {
+        api: &api,
+        pointer: ptr::null_mut(),
+    };
+    let mut options = Dictionary {
+        api: &api,
+        pointer: ptr::null_mut(),
+    };
+    // SAFETY: 所有结构和函数均来自已经核对 ABI 的库；资源均由 RAII 持有。
+    unsafe {
+        api.check(
+            (api.av_dict_set)(
+                &mut options.pointer,
+                c"protocol_whitelist".as_ptr(),
+                c"file".as_ptr(),
+                0,
+            ),
+            "设置音频本地协议",
+        )?;
+        api.check(
+            (api.avformat_open_input)(
+                &mut input.pointer,
+                filename.as_ptr(),
+                ptr::null(),
+                &mut options.pointer,
+            ),
+            "打开音频",
+        )?;
+        api.check(
+            (api.avformat_find_stream_info)(input.pointer, ptr::null_mut()),
+            "读取音频流",
+        )?;
+        let format = &*input.pointer;
+        if format.nb_streams == 0 || format.nb_streams > 64 || format.streams.is_null() {
+            return Err(error("audio_streams", "音频流描述无效"));
+        }
+        let mut selected = None;
+        for &stream in std::slice::from_raw_parts(format.streams, format.nb_streams as usize) {
+            if stream.is_null() || (*stream).codecpar.is_null() {
+                return Err(error("audio_streams", "音频流描述不完整"));
+            }
+            if (*(*stream).codecpar).codec_type == 1 && selected.replace(stream).is_some() {
+                return Err(error("audio_streams", "当前不支持选择或混合多条音轨"));
+            }
+        }
+        let stream = selected.ok_or_else(|| error("audio_streams", "输入没有音轨"))?;
+        let tb = (*stream).time_base;
+        if tb.num <= 0 || tb.den <= 0 {
+            return Err(error("audio_timing", "音频没有有效时间基准"));
+        }
+        let parameters = (*stream).codecpar;
+        let codec_id = (*parameters).codec_id;
+        let codec = (api.avcodec_find_decoder)(codec_id);
+        if codec.is_null() {
+            return Err(error("audio_codec", "当前 FFmpeg 不支持该音频编码"));
+        }
+        let decoder = Decoder {
+            api: &api,
+            pointer: (api.avcodec_alloc_context3)(codec),
+        };
+        if decoder.pointer.is_null() {
+            return Err(error("ffmpeg_memory", "无法分配音频解码器"));
+        }
+        api.check(
+            (api.avcodec_parameters_to_context)(decoder.pointer, parameters),
+            "设置音频解码参数",
+        )?;
+        api.check(
+            (api.av_opt_set_int)(decoder.pointer.cast(), c"threads".as_ptr(), 1, 0),
+            "设置音频解码线程数",
+        )?;
+        api.check(
+            (api.avcodec_open2)(decoder.pointer, codec, ptr::null_mut()),
+            "初始化音频解码器",
+        )?;
+        let packet = Packet {
+            api: &api,
+            pointer: (api.av_packet_alloc)(),
+        };
+        let frame = Frame {
+            api: &api,
+            pointer: (api.av_frame_alloc)(),
+        };
+        if packet.pointer.is_null() || frame.pointer.is_null() {
+            return Err(error("ffmpeg_memory", "无法分配音频包或帧"));
+        }
+        let mut resampler = Resample {
+            api: &api,
+            pointer: ptr::null_mut(),
+        };
+        let mut original = Layout::new(&api);
+        let mut source = Layout::new(&api);
+        let mut output = Layout::new(&api);
+        (api.av_channel_layout_default)(&mut output.value, c_int::from(channels));
+        let mut pcm = Vec::new();
+        let mut initial = None;
+        let mut first_pts = None;
+        let mut previous: Option<(i64, i32)> = None;
+        let convert = |context: *mut SwrContext,
+                       planes: *const *const u8,
+                       count: c_int,
+                       pcm: &mut Vec<u8>|
+         -> Result<usize> {
+            let capacity = (api.swr_get_out_samples)(context, count);
+            api.check(capacity, "计算音频输出容量")?;
+            let bytes = (capacity as usize)
+                .checked_mul(usize::from(channels) * 2)
+                .filter(|n| *n <= hmi_format::wave::MAX_BYTES)
+                .ok_or_else(|| error("audio_length", "单次音频转换数据过大"))?;
+            if capacity == 0 {
+                return Ok(0);
+            }
+            let mut buffer = vec![0u8; bytes];
+            let out = [buffer.as_mut_ptr()];
+            let produced = (api.swr_convert)(context, out.as_ptr(), capacity, planes, count);
+            api.check(produced, "转换音频采样")?;
+            if produced > capacity {
+                return Err(error("audio_length", "音频转换返回了无效长度"));
+            }
+            let length = produced as usize * usize::from(channels) * 2;
+            if pcm
+                .len()
+                .checked_add(length)
+                .is_none_or(|n| n > hmi_format::wave::MAX_BYTES)
+            {
+                return Err(error("audio_length", "音频采样数据超过 64 MiB"));
+            }
+            pcm.extend(&buffer[..length]);
+            Ok(produced as usize)
+        };
+        let mut drain = |flushing: bool| -> Result<()> {
+            loop {
+                let status = (api.avcodec_receive_frame)(decoder.pointer, frame.pointer);
+                if status == HMI_ERROR_EOF {
+                    return Ok(());
+                }
+                if status == HMI_EAGAIN {
+                    if flushing {
+                        return Err(error("audio_decode", "刷新后音频解码器仍请求输入"));
+                    }
+                    return Ok(());
+                }
+                api.check(status, "解码音频帧")?;
+                let f = &*frame.pointer;
+                if f.sample_rate <= 0
+                    || f.sample_rate > 384000
+                    || f.nb_samples <= 0
+                    || f.nb_samples > 1_000_000
+                    || f.ch_layout.nb_channels <= 0
+                    || f.ch_layout.nb_channels > 32
+                    || f.extended_data.is_null()
+                {
+                    return Err(error("audio_frame", "音频帧采样参数无效"));
+                }
+                if f.pts == i64::MIN {
+                    return Err(error("audio_timing", "音频帧缺少时间戳"));
+                }
+                if let Some((pts, samples)) = previous
+                    && (i128::from(f.pts) - i128::from(pts))
+                        * i128::from(tb.num)
+                        * i128::from(f.sample_rate)
+                        != i128::from(samples) * i128::from(tb.den)
+                {
+                    return Err(error("audio_timing", "当前不支持带时间间隙或跳变的音轨"));
+                }
+                previous = Some((f.pts, f.nb_samples));
+                first_pts.get_or_insert(f.pts);
+                if let Some(shape) = initial {
+                    if shape != (f.sample_rate, f.format, f.ch_layout.nb_channels)
+                        || (api.av_channel_layout_compare)(&original.value, &f.ch_layout) != 0
+                    {
+                        return Err(error(
+                            "audio_format",
+                            "当前不支持中途改变采样参数或声道布局的音轨",
+                        ));
+                    }
+                } else {
+                    api.check(
+                        (api.av_channel_layout_copy)(&mut original.value, &f.ch_layout),
+                        "复制源声道布局",
+                    )?;
+                    if f.ch_layout.order == 0 {
+                        if f.ch_layout.nb_channels > 2 {
+                            return Err(error("audio_layout", "多声道音频必须提供明确的声道布局"));
+                        }
+                        (api.av_channel_layout_default)(&mut source.value, f.ch_layout.nb_channels);
+                    } else {
+                        api.check(
+                            (api.av_channel_layout_copy)(&mut source.value, &f.ch_layout),
+                            "复制转换声道布局",
+                        )?;
+                    }
+                    api.check(
+                        (api.swr_alloc_set_opts2)(
+                            &mut resampler.pointer,
+                            &output.value,
+                            (api.av_get_sample_fmt)(c"s16".as_ptr()),
+                            rate as c_int,
+                            &source.value,
+                            f.format,
+                            f.sample_rate,
+                            0,
+                            ptr::null_mut(),
+                        ),
+                        "配置重采样器",
+                    )?;
+                    if resampler.pointer.is_null() {
+                        return Err(error("ffmpeg_memory", "无法分配重采样器"));
+                    }
+                    api.check((api.swr_init)(resampler.pointer), "初始化重采样器")?;
+                    initial = Some((f.sample_rate, f.format, f.ch_layout.nb_channels));
+                }
+                convert(
+                    resampler.pointer,
+                    f.extended_data.cast(),
+                    f.nb_samples,
+                    &mut pcm,
+                )?;
+                (api.av_frame_unref)(frame.pointer);
+            }
+        };
+        loop {
+            let status = (api.av_read_frame)(input.pointer, packet.pointer);
+            if status == HMI_ERROR_EOF {
+                break;
+            }
+            api.check(status, "读取音频包")?;
+            if (*packet.pointer).stream_index == (*stream).index {
+                loop {
+                    let s = (api.avcodec_send_packet)(decoder.pointer, packet.pointer);
+                    if s == HMI_EAGAIN {
+                        drain(false)?;
+                        continue;
+                    }
+                    api.check(s, "提交音频包")?;
+                    break;
+                }
+                drain(false)?;
+            }
+            (api.av_packet_unref)(packet.pointer);
+        }
+        loop {
+            let s = (api.avcodec_send_packet)(decoder.pointer, ptr::null());
+            if s == HMI_EAGAIN {
+                drain(false)?;
+                continue;
+            }
+            api.check(s, "刷新音频解码器")?;
+            break;
+        }
+        drain(true)?;
+        let (source_rate, _, source_channels) =
+            initial.ok_or_else(|| error("audio_samples", "音轨没有采样数据"))?;
+        while convert(resampler.pointer, ptr::null(), 0, &mut pcm)? > 0 {}
+        Ok(DecodedAudio {
+            pcm,
+            sample_rate: rate,
+            channels,
+            source_rate: source_rate as u32,
+            source_channels: source_channels as u16,
+            start_pts: first_pts.unwrap(),
+            time_base_num: tb.num,
+            time_base_den: tb.den,
+            codec: ctext((api.avcodec_get_name)(codec_id))?,
+            backend: api.info.clone(),
+            inputs: api.paths.clone(),
+        })
+    }
 }
 impl Drop for Scale<'_> {
     fn drop(&mut self) {
@@ -321,6 +661,7 @@ pub(super) fn backend_info() -> Result<BackendInfo> {
 }
 
 pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
+    let _ = drop_audio; // 音轨策略在媒体层处理，视频解码仅报告流数量。
     let api = Api::load()?;
     let filename = CString::new(
         file::absolute(path)?
@@ -383,12 +724,6 @@ pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
                     "当前不支持多个视频流，请先明确需要使用的画面",
                 ));
             }
-        }
-        if audio_streams > 0 && !drop_audio {
-            return Err(error(
-                "video_audio",
-                "当前批次尚未接入视频音轨；需要无声输出时请显式设置 audio.mode=\"drop\"",
-            ));
         }
         let stream = video.ok_or_else(|| error("video_streams", "输入中没有可解码的视频流"))?;
         let parameters = (*stream).codecpar;
@@ -467,6 +802,7 @@ pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
         }
         let mut frames = Vec::new();
         let mut previous_pts = None;
+        let mut first_pts = None;
         let mut initial = None;
         let mut total = 0usize;
         let mut scale: Option<Scale<'_>> = None;
@@ -499,13 +835,12 @@ pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
                 if matches!(f.color_trc, HMI_TRC_PQ | HMI_TRC_HLG) {
                     return Err(error("video_color", "当前尚未支持 HDR 色调转换"));
                 }
-                if f.best_effort_timestamp == i64::MIN {
+                if f.pts == i64::MIN {
                     return Err(error("video_timing", "视频帧缺少有效时间戳"));
                 }
+                first_pts.get_or_insert(f.pts);
                 if let Some(old) = previous_pts
-                    && (i128::from(f.best_effort_timestamp) - old)
-                        * i128::from(tb.num)
-                        * i128::from(fps.num)
+                    && (i128::from(f.pts) - old) * i128::from(tb.num) * i128::from(fps.num)
                         != i128::from(tb.den) * i128::from(fps.den)
                 {
                     return Err(error(
@@ -513,7 +848,7 @@ pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
                         "当前仅支持时间戳精确等间隔的固定帧率视频",
                     ));
                 }
-                previous_pts = Some(i128::from(f.best_effort_timestamp));
+                previous_pts = Some(i128::from(f.pts));
                 if let Some(shape) = initial {
                     if shape != (w, h, f.format) {
                         return Err(error(
@@ -651,6 +986,9 @@ pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
         }
         let codec = ctext((api.avcodec_get_name)(codec_id))?;
         Ok(DecodedVideo {
+            start_pts: first_pts.unwrap(),
+            time_base_num: tb.num,
+            time_base_den: tb.den,
             frames,
             fps_num: fps.num as u32,
             fps_den: fps.den as u32,

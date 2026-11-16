@@ -12,6 +12,22 @@ pub(crate) struct DecodedVideo {
     pub codec: String,
     pub backend: BackendInfo,
     pub inputs: Vec<PathBuf>,
+    pub start_pts: i64,
+    pub time_base_num: i32,
+    pub time_base_den: i32,
+}
+pub(crate) struct DecodedAudio {
+    pub pcm: Vec<u8>,
+    pub sample_rate: u32,
+    pub channels: u16,
+    pub source_rate: u32,
+    pub source_channels: u16,
+    pub start_pts: i64,
+    pub time_base_num: i32,
+    pub time_base_den: i32,
+    pub codec: String,
+    pub backend: BackendInfo,
+    pub inputs: Vec<PathBuf>,
 }
 
 pub fn directory() -> Result<PathBuf> {
@@ -54,6 +70,21 @@ pub(crate) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
         Err(error(
             "ffmpeg_platform",
             "视频 DLL 后端当前仅支持 Windows x64",
+        ))
+    }
+}
+
+pub(crate) fn audio(path: &Path, rate: u32, channels: u16) -> Result<DecodedAudio> {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        windows::audio(path, rate, channels)
+    }
+    #[cfg(not(all(windows, target_arch = "x86_64")))]
+    {
+        let _ = (path, rate, channels);
+        Err(error(
+            "ffmpeg_platform",
+            "音频转换当前仅支持 Windows x64 DLL 后端",
         ))
     }
 }

@@ -1,8 +1,8 @@
 # 新工具链使用说明
 
-当前可从零新建工程，使用下表列出的 29 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持图片、ZI 字库、GIF 动画及首批无声视频编码。构建过程不需要已有 HMI 或逆向资料。
+当前可从零新建工程，使用下表列出的 30 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持图片、ZI 字库、GIF 动画、WAV 音频和有声／无声视频编码。构建过程不需要已有 HMI 或逆向资料。
 
-当前支持的型号和方向见根目录 `data/profiles/README.md`。其他控件和媒体种类、新格式导入、原始数据附件和增量缓存尚未接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
+当前支持的型号和方向见根目录 `data/profiles/README.md`。尚未覆盖的控件模式、新格式导入、原始数据附件和增量缓存仍待接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
 四个内置型号均可通过 `init --orientation 0/90/180/270` 选择工程方向。新建页面会使用该方向对应的尺寸；方向字段和页面几何分别写入 HMI。
 
@@ -116,7 +116,8 @@ events = { timer = "events/tm0.timer.s" }
 | data_record（数据记录） | x/y/w/h、font 引用表、path、lenth、maxval、dez 必填；强制全局，每工程最多八个；当前仅 X543 | down、up |
 | external_picture（外部图片） | x/y/w/h、path 必填；path 可为运行时路径字符串或外部图片资产的 ref；当前仅 X543 | down、up |
 | animation（动画） | x/y/w/h、vid 引用表必填；当前仅内嵌 from=0，支持播放状态、循环和速度；当前仅 X543 | down、up、playend |
-| video（视频） | x/y/w/h、vid 引用表必填；当前仅内嵌 from=0、无声视频；当前仅 X543 | down、up、playend |
+| video（视频） | x/y/w/h、vid 引用表必填；当前仅内嵌 from=0，支持单音轨保留；当前仅 X543 | down、up、playend |
+| audio（音频） | vid 引用表必填，无几何属性；当前内嵌 from=0，支持播放状态、循环和速度；当前仅 X543 | playend |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -711,7 +712,7 @@ python examples/prepare_animation_acceptance.py
 
 输出位于 `target/acceptance-animation/`，包括 X543 的 Animation0／Animation90 两份工程，每份有不透明／透明动画两页。GIF 由代码生成，不需要外部素材或字库；资源全部内嵌，无需部署到虚拟 SD。两份有意重排动画资产并使用不同 loop 值，每份实际执行七条独立作业比较 HMI。已有输出目录不会覆盖，可用 --output 指定新目录，详细核对项目见输出目录的 README。
 
-## 无声视频与 FFmpeg DLL
+## 视频与 FFmpeg DLL
 
 视频编码当前使用 Windows x64 的 FFmpeg 9 shared 库解码，再生成 JPEG 帧和 HMI 的 VIDEO 资源。构建前设置库目录，检查后端：
 
@@ -748,13 +749,13 @@ mode = "drop"
 | encoding.fps | 必填，4、6、8、10、12、14、18、24 中的一项，不高于源帧率；首批要求源帧率÷目标帧率为正整数，例如 24→4／6／8／12／24 |
 | clip.start_ms | 默认 0，以第一幅有效解码画面为起点；须精确落在源帧边界 |
 | clip.duration_ms | 正整数，省略时使用 start 之后的有效画面长度；结束位置须落在源帧边界，时长须包含整数个目标帧。超出范围、非整帧或不能精确表示的边界报错，不补帧、不静默取整 |
-| audio.mode | 默认 if-present，无音轨可编码；当前有音轨且需要保留时报告尚未支持。drop 显式丢弃音轨；require 在没有音轨时报错，有音轨时也要等保留路径接入 |
-| audio.sample_rate／channels | 音轨转换接口已留出，但本批不执行转换；drop 时禁止填写，if-present 且无音轨时报告 audio_applied=false |
+| audio.mode | 默认 if-present，有一条音轨时保留、无音轨时无声；drop 显式丢弃；require 必须有音轨。需要保留多音轨输入时拒绝，不擅自选轨或混音 |
+| audio.sample_rate／channels | 输出音轨默认 8000Hz／单声道；可选采样率 8000、11025、22050、24000、32000、44100，声道 1／2；转换为 s16 PCM。drop 时禁止填写，if-present 无音轨时报告 audio_applied=false |
 | delivery | 当前只支持默认 embedded，外部视频输出尚未接入 |
 
 首批只处理时间戳精确等间隔的固定帧率视频。变帧率、隔行、源旋转矩阵、非方形像素、HDR、透明画面或中途改变尺寸／格式的输入明确拒绝；不把这些情况擅自当作普通画面处理。输入文件和输出 VIDEO 各不超过 128 MiB，源帧最多 10000 个，单帧 RGBA 不超过 64 MiB、全部解码 RGBA 不超过 128 MiB。当前会解码全部画面核对时序，长视频的流式处理待后续完善。
 
-probe／inspect 的视频信息记录源帧率和帧数、截取起点、输出帧数／时长、源音轨数量和处理策略、源文件摘要及后端指纹。存在音轨时必须由使用者明确决定 drop；工具不会用“暂不支持”作为静默丢弃声音的理由。
+probe／inspect 的视频信息记录源帧率和帧数、截取起点、输出帧数／时长、源音轨数量和处理策略、源文件摘要及后端指纹。音轨按源时间戳与画面截取范围对齐；非整采样边界、音轨中途参数变化或时间戳跳变拒绝。音轨开始较晚或提前结束时，按时间轴补静音并报告采样数（audio_silence 警告，-Werror 可提升）。只有显式 drop 才丢弃声音。
 
 VIDEO 帧采用直接 JPEG 包装，与动画帧的 20 字节前缀不同。HMI 中的资源名是 N.v，引用 kind 为 v；视频与图片、动画分别分配 ID。原始 MP4／AVI 仍由源码工程保存，不嵌入 HMI；`.hma` 保存完整运行资源，链接器无需解码原视频。
 
@@ -767,3 +768,42 @@ python examples/prepare_video_acceptance.py --ffmpeg-dir path/to/ffmpeg/bin
 ```
 
 输出位于 `target/acceptance-video/`，包含 Video0／Video90 两份 X543 工程，各有完整片段和截取片段两页。原始 AVI 由代码生成，4fps、四帧、1000ms；截取从 250ms 开始、长 500ms。每份实际执行六条独立作业，比较 HMI 和链接映射。资源全部内嵌，打开验收 HMI 不需要配置本工具的 FFmpeg；重新构建源码才需要。已有输出目录不会覆盖，可用 --output 指定新目录。
+
+
+## WAV 音频与音频控件
+
+音频的源文件为 WAV。例：
+
+```toml
+schema = "hmi.asset/1"
+kind = "audio"
+source = "startup.wav"
+
+[encoding]
+sample_rate = 8000
+channels = 1
+sample_format = "s16"
+
+[clip]
+start_ms = 250
+duration_ms = 500
+```
+
+| 字段 | 默认与含义 |
+|---|---|
+| source | 相对资产描述文件的 WAV 输入，检查 RIFF、fmt、data 与块边界；支持 PCM 8/16/24/32 位和浮点 32/64 位，其他压缩 WAV 暂不支持 |
+| encoding.sample_rate | 省略保持源采样率；当前输出支持 8000、11025、22050、24000、32000、44100Hz。不支持的源参数需显式指定转换，不自动选值 |
+| encoding.channels | 省略保持源声道数；输出支持 1／2。多声道源转换需提供明确的输入布局；不猜测未知多声道的扬声器位置 |
+| encoding.sample_format | 默认且当前只支持 s16，有符号 16 位小端 PCM；不存在图片的 quality、fps 或 resize 参数 |
+| clip | 起点默认 0，duration 省略到结束。按转换后的时间轴截取，起点／时长须能精确表示为输出采样，越界不裁剪或悄悄补零 |
+| delivery | 当前仅默认 embedded；音频控件外部 from/path 模式尚未接入 |
+
+PCM16 参数不变时直接处理，不需要 FFmpeg；需要位深、声道或采样率转换才加载 DLL。FFmpeg 执行完整解码和重采样刷新，再按明确边界截取；原 WAV 文件不改写。音频没有屏幕方向，同一资产目标可在四方向中使用。原文件不超过 64 MiB，输出 PCM 也不超过 64 MiB。
+
+运行 WAV 采用标准 PCM16 fmt、512 字节 hmic 和 data 块。按原生规则四字节对齐，必要时补一个静音采样；content_samples 是有效采样数，sample_frames 包含对齐补入值，padding_samples 明确记录差异。duration_ms 为实际采样时长的整数毫秒部分，精确时长可用 sample_frames/sample_rate 计算。
+
+hmic 的 name 缺省采用源文件名，不带扩展名；已有 name 和其他受支持的 hmic 项原样保留，不依据资产 key 追踪改名。crc 重新计算，采用已验证的原生覆盖范围与算法，不使用标准 ZIP CRC32。已有工程导入时的完整未知数据保留仍属于后续解析器迁移范围。
+
+控件用 `type="audio"`、`vid={ref="tone"}` 或当前音频列表的 `{id=...}`。音频与图片、动画、视频分别编号，资源名 N.wav、引用 kind 为 wav；视频内的音轨不占独立音频 ID。当前仅对已有音频证据的 X543 开放，不据此表示全部 X 系列型号都有扬声器。
+
+音频是特殊控件栏中的非可视控件，不接受 x/y/w/h、字体或图片。vscope 默认 0，可设 0／1；from 固定 0，en 为 0 停止／1 播放／2 暂停，loop 为 0／1，dis 为 10～1000、默认 100，tim 默认 0。stim/qty 运行时只读，初始零，不从文件回填。保留 fps=1、molloc_s/molloc=64000；只有 playend 事件，无 down/up。当前不根据全局作用域承诺跨页播放行为，实际播放、声道听感和音画同步需在模拟器或硬件单独验收。

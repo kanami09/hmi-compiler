@@ -121,15 +121,12 @@ fn audio_is_never_silently_dropped_and_bad_ranges_are_rejected() {
     fs::write(&input, fixture::avi(64, 32, 4, 4, true)).unwrap();
     let mut c = config();
     let path = description(tmp.path(), &c);
-    assert_eq!(
-        hmi_media::probe(&path, &target(0))
-            .err()
-            .unwrap()
-            .as_diagnostic()
-            .unwrap()
-            .code,
-        "video_audio"
-    );
+    let info = hmi_media::probe(&path, &target(0)).unwrap().info;
+    let AssetInfo::Video { video } = &info else {
+        panic!()
+    };
+    assert!(video.audio_applied);
+    assert_eq!(video.audio.as_ref().unwrap().sample_rate, 8000);
     c.audio.mode = "drop".into();
     let p = description(tmp.path(), &c);
     let good = hmi_media::encode(&p, &target(0)).unwrap();

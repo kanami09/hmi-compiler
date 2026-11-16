@@ -43,6 +43,7 @@ fn asset() -> AssetObject {
             source_audio_streams: 0,
             audio_mode: "if-present".into(),
             audio_applied: false,
+            audio: None,
             codec: "rawvideo".into(),
             source_sha256: "0".repeat(64),
             backend: FfmpegInfo {

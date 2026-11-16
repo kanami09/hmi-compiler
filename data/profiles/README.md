@@ -55,4 +55,4 @@ K/T 三组配置已接入 RGB565 图片，X543 已接入 JPEG 与七位透明度
 
 同一配置文件的 control_support 表记录已确认的控件系列限制。series 和 profiles 的键及覆盖顺序与属性约束相同，条目为 `{"control":"switch","supported":false}`；单独型号可以覆盖系列的同名控件状态。
 
-没有条目时默认允许该已接入类型，具体是否具备媒体后端仍按工具实现能力检查。当前根据官方说明，在 t0／k0 中禁用 switch、combo_box、text_select、sliding_text、file_browser、file_stream、data_record、external_picture、animation、video；X543 按默认开放。这些状态展开到 target 的 control_types，源码编译和独立链接共用最终列表。未注册类型、同一作用域的重复声明或未知系列／型号会报错。
+没有条目时默认允许该已接入类型，具体是否具备媒体后端仍按工具实现能力检查。当前根据官方说明，在 t0／k0 中禁用 switch、combo_box、text_select、sliding_text、file_browser、file_stream、data_record、external_picture、animation、video、audio；X543 按默认开放。这些状态展开到 target 的 control_types，源码编译和独立链接共用最终列表。未注册类型、同一作用域的重复声明或未知系列／型号会报错。

@@ -1,6 +1,6 @@
 # FFmpeg DLL 接口
 
-此后端当前用于 Windows x64 视频输入，按需动态加载。普通图片、GIF、字库和独立链接器不加载 FFmpeg。
+此后端当前用于 Windows x64 音视频输入，按需动态加载。普通图片、GIF、字库和独立链接器不加载 FFmpeg。
 
 库目录由 `HMI_FFMPEG_DIR` 指定；未设置时使用可执行文件旁的 `ffmpeg` 子目录。需要同一 shared 构建的五个库：`avutil-61.dll`、`swresample-7.dll`、`avcodec-63.dll`、`avformat-63.dll`、`swscale-10.dll`。无声解码也需要 swresample，因为该构建的 avcodec 依赖它。不会启动 FFmpeg EXE、修改 PATH 或写入 HMI 安装目录。
 
@@ -13,5 +13,7 @@
 使用 `python tools/regenerate_ffmpeg_bindings.py --include path/to/sdk/include --offline` 可以再生绑定，需要 Clang 和缓存的 bindgen 依赖。脚本先核对 headers.json 中的 SDK 头文件摘要，拒绝不匹配的版本；普通用户不需要执行。
 
 原生对象由 RAII 封装释放，数据包和帧及时 unref，处理 send/receive 的 EAGAIN 与 EOF 刷新。媒体输入只允许本地 file 协议。FFmpeg 原生日志静音，失败返回码转为工具链诊断；颜色转换使用源矩阵和范围，当前仅支持 SDR BT.601／BT.709、方形像素和稳定画面尺寸。源旋转矩阵、隔行标记、HDR、透明视频及变帧率当前明确拒绝，不静默转换。
+
+音频使用相同的解封装／解码资源管理和 swresample 转换为 interleaved s16，含 EOF 与重采样器刷新；保留声道布局、检查连续时间戳，按源起点与输出采样边界对齐。
 
 视频调度首版支持精确等间隔时间戳、源帧率为目标帧率整倍数及整帧截取。当前保留全部解码画面进行验证，RGBA 总量限制为 128 MiB；后续可在保持时间调度规则的前提下改为流式取帧。

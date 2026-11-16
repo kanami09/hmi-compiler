@@ -707,6 +707,11 @@ fn check_facts_inner(
         .filter(|r| r.kind == "gmov")
         .count();
     let videos = project.references.iter().filter(|r| r.kind == "v").count();
+    let audios = project
+        .references
+        .iter()
+        .filter(|r| r.kind == "wav")
+        .count();
     if let Some(page) = page_index.and_then(|index| project.pages.get(index)) {
         for (object_index, object) in page.objects.iter().enumerate() {
             let mut keys = vec![("font", fonts, 255)];
@@ -715,6 +720,9 @@ fn check_facts_inner(
             }
             if object.type_code == 3 && object.integer("from") == Some(0) {
                 keys.push(("vid", videos, 65535));
+            }
+            if object.type_code == 4 && object.integer("from") == Some(0) {
+                keys.push(("vid", audios, 65535));
             }
             let picture_key = match (object.type_code, object.integer("sta")) {
                 (112, _) | (121, Some(1)) => Some("pic"),
