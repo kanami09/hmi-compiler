@@ -101,11 +101,8 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
     }
     let config: VideoSource = file::read_toml(path)?;
     check_schema(&config.schema, "hmi.asset/1")?;
-    if config.kind != "video" || config.input != "source" || !config.delivery.is_embedded() {
-        return Err(error(
-            "asset_input",
-            "当前视频需要 video 的 source 输入，采用内嵌方式",
-        ));
+    if config.kind != "video" || config.input != "source" {
+        return Err(error("asset_input", "当前视频需要 video 的 source 输入"));
     }
     if !(1..=100).contains(&config.encoding.quality)
         || !hmi_format::video::FPS.contains(&config.encoding.fps)
@@ -134,6 +131,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
     {
         return Err(error("video_audio", "音轨采样率或声道数不受当前配置支持"));
     }
+    config.delivery.validate_for("video")?;
     let input = path.parent().unwrap_or(Path::new(".")).join(&config.source);
     let metadata = std::fs::metadata(&input).map_err(|e| file::at_file(e.into(), &input))?;
     if !metadata.is_file() || metadata.len() > 128 * 1024 * 1024 {
@@ -240,6 +238,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
         return Err(error("video_frames", "截取帧数与调度结果不一致"));
     }
     let info = VideoInfo {
+        delivery: config.delivery,
         width,
         height,
         orientation: target.orientation,

@@ -24,10 +24,10 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
     }
     let config: AnimationSource = file::read_toml(path)?;
     check_schema(&config.schema, "hmi.asset/1")?;
-    if config.kind != "animation" || config.input != "source" || !config.delivery.is_embedded() {
+    if config.kind != "animation" || config.input != "source" {
         return Err(error(
             "asset_input",
-            "当前动画编码需要 animation 的 source GIF 输入，采用内嵌方式",
+            "当前动画编码需要 animation 的 source GIF 输入",
         ));
     }
     let settings = &config.encoding;
@@ -54,6 +54,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
     } else {
         None
     };
+    config.delivery.validate_for("animation")?;
     let input = path.parent().unwrap_or(Path::new(".")).join(&config.source);
     let gif = file::read(&input)?;
     if gif.len() > 64 * 1024 * 1024 {
@@ -122,6 +123,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
             .enumerate()
             .any(|(i, (index, d))| *index as usize != i || u32::from(*d) != source.delays[i]);
     let info = AnimationInfo {
+        delivery: config.delivery,
         width: source.width,
         height: source.height,
         orientation: target.orientation,

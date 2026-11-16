@@ -221,7 +221,7 @@ fn invalid_source_properties_and_wrong_media_classes_keep_previous_output() {
     fs::write(&output, b"previous").unwrap();
     for (property, value) in [
         ("en", 3),
-        ("from", 1),
+        ("from", 2),
         ("dis", 9),
         ("dis", 1001),
         ("loop", 2),

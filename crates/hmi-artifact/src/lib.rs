@@ -265,7 +265,7 @@ impl CompiledObject {
                     )?;
                     if !definition.properties.iter().any(|p| {
                         p.name == relocation.property
-                            && matches!(p.storage, hmi_core::controls::Storage::ExternalPath)
+                            && matches!(p.storage, hmi_core::controls::Storage::ExternalPath(_))
                     }) {
                         return Err(error("object_relocation", "外部路径重定位的类型或属性无效"));
                     }
@@ -316,11 +316,10 @@ impl CompiledObject {
                         .as_ref()
                         .ok_or_else(|| error("object_relocation", "资源重定位缺少引用"))?;
                     reference.validate()?;
-                    let optional = relocation.kind == RelocationKind::ImageId
-                        && definition
-                            .properties
-                            .iter()
-                            .any(|p| p.name == relocation.property && p.allows_none());
+                    let optional = definition
+                        .properties
+                        .iter()
+                        .any(|p| p.name == relocation.property && p.allows_none());
                     if (reference.none == Some(true) && !optional)
                         || reference
                             .id

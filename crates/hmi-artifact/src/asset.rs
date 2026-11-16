@@ -58,6 +58,8 @@ pub struct FontInfo {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AnimationInfo {
+    #[serde(default, skip_serializing_if = "Delivery::is_embedded")]
+    pub delivery: Delivery,
     pub width: u16,
     pub height: u16,
     pub orientation: u16,
@@ -80,6 +82,8 @@ pub struct AnimationInfo {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct VideoInfo {
+    #[serde(default, skip_serializing_if = "Delivery::is_embedded")]
+    pub delivery: Delivery,
     pub width: u16,
     pub height: u16,
     pub orientation: u16,
@@ -119,6 +123,8 @@ pub struct AudioTrackInfo {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct AudioInfo {
+    #[serde(default, skip_serializing_if = "Delivery::is_embedded")]
+    pub delivery: Delivery,
     pub source_codec: String,
     pub sample_rate: u32,
     pub channels: u16,
@@ -147,6 +153,19 @@ pub enum AssetInfo {
     Video { video: VideoInfo },
 }
 impl AssetInfo {
+    pub fn delivery(&self) -> Option<&Delivery> {
+        match self {
+            Self::Image { image } => Some(&image.delivery),
+            Self::Animation { animation } => Some(&animation.delivery),
+            Self::Video { video } => Some(&video.delivery),
+            Self::Audio { audio } => Some(&audio.delivery),
+            Self::Font { .. } => None,
+        }
+    }
+    pub fn is_external(&self) -> bool {
+        self.delivery().is_some_and(|d| d.mode == "external")
+    }
+
     pub fn image(&self) -> Option<&ImageInfo> {
         match self {
             Self::Image { image } => Some(image),
@@ -208,7 +227,7 @@ impl AssetObject {
         let member = Member {
             role: MemberRole::Runtime,
             extension: "wav".into(),
-            reference_kind: Some(*b"wav\0\0\0\0\0"),
+            reference_kind: info.delivery.is_embedded().then_some(*b"wav\0\0\0\0\0"),
             offset: 0,
             length: u32::try_from(bytes.len())
                 .map_err(|_| error("asset_length", "WAV 超出 u32 范围"))?,
@@ -231,7 +250,7 @@ impl AssetObject {
         let member = Member {
             role: MemberRole::Runtime,
             extension: "v".into(),
-            reference_kind: Some(*b"v\0\0\0\0\0\0\0"),
+            reference_kind: info.delivery.is_embedded().then_some(*b"v\0\0\0\0\0\0\0"),
             offset: 0,
             length: u32::try_from(bytes.len())
                 .map_err(|_| error("asset_length", "VIDEO 运行资源超过 u32 范围"))?,
@@ -258,7 +277,7 @@ impl AssetObject {
             Member {
                 role: MemberRole::Runtime,
                 extension: "gmov".into(),
-                reference_kind: Some(*b"gmov\0\0\0\0"),
+                reference_kind: info.delivery.is_embedded().then_some(*b"gmov\0\0\0\0"),
                 offset: 0,
                 length: u32::try_from(split)
                     .map_err(|_| error("asset_length", "动画资源超过 u32 范围"))?,
@@ -381,11 +400,27 @@ impl AssetObject {
         if self.metadata.format != "ver21234" {
             return Err(error("asset_format", "不支持此资产的容器格式"));
         }
+        if let Some(delivery) = self.metadata.info.delivery() {
+            delivery.validate_for(self.metadata.info.kind())?;
+        }
+        let embedded = !self.metadata.info.is_external();
         let expected: Vec<_> = match &self.metadata.info {
-            AssetInfo::Audio { .. } => vec![(MemberRole::Runtime, "wav", Some(*b"wav\0\0\0\0\0"))],
-            AssetInfo::Video { .. } => vec![(MemberRole::Runtime, "v", Some(*b"v\0\0\0\0\0\0\0"))],
+            AssetInfo::Audio { .. } => vec![(
+                MemberRole::Runtime,
+                "wav",
+                embedded.then_some(*b"wav\0\0\0\0\0"),
+            )],
+            AssetInfo::Video { .. } => vec![(
+                MemberRole::Runtime,
+                "v",
+                embedded.then_some(*b"v\0\0\0\0\0\0\0"),
+            )],
             AssetInfo::Animation { .. } => vec![
-                (MemberRole::Runtime, "gmov", Some(*b"gmov\0\0\0\0")),
+                (
+                    MemberRole::Runtime,
+                    "gmov",
+                    embedded.then_some(*b"gmov\0\0\0\0"),
+                ),
                 (MemberRole::Source, "gmovs", None),
             ],
             AssetInfo::Image { image } if image.delivery.mode == "external" => {

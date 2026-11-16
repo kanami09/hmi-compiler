@@ -29,6 +29,7 @@ fn asset() -> AssetObject {
     .unwrap();
     AssetObject::video(
         VideoInfo {
+            delivery: Default::default(),
             width: 320,
             height: 160,
             orientation: 0,

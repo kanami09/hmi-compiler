@@ -46,16 +46,14 @@ fn prepare(path: &Path, target: &Target) -> Result<(AudioInfo, Vec<u8>, Vec<Path
     }
     let config: AudioSource = file::read_toml(path)?;
     check_schema(&config.schema, "hmi.asset/1")?;
-    if config.kind != "audio"
-        || config.input != "source"
-        || !config.delivery.is_embedded()
-        || config.encoding.sample_format != "s16"
+    if config.kind != "audio" || config.input != "source" || config.encoding.sample_format != "s16"
     {
         return Err(error(
             "audio_input",
-            "当前音频需要 source WAV 输入、s16 采样和内嵌方式",
+            "当前音频需要 source WAV 输入、s16 采样",
         ));
     }
+    config.delivery.validate_for("audio")?;
     let input = path.parent().unwrap_or(Path::new(".")).join(&config.source);
     let metadata = std::fs::metadata(&input).map_err(|e| file::at_file(e.into(), &input))?;
     if !metadata.is_file() || metadata.len() > wave::MAX_BYTES as u64 + 4096 {
@@ -108,6 +106,7 @@ fn prepare(path: &Path, target: &Target) -> Result<(AudioInfo, Vec<u8>, Vec<Path
     let output = wave::write(rate, channels, &pcm, &source.metadata, Some(name))?;
     let parsed = wave::inspect_native(&output)?;
     let info = AudioInfo {
+        delivery: config.delivery,
         source_codec,
         sample_rate: rate,
         channels,

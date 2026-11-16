@@ -119,9 +119,9 @@ events = { timer = "events/tm0.timer.s" }
 | file_stream（文件流） | 强制私有，当前仅声明未打开状态，无几何属性；当前仅 X543 | 无 |
 | data_record（数据记录） | x/y/w/h、font 引用表、path、lenth、maxval、dez 必填；强制全局，每工程最多八个；当前仅 X543 | down、up |
 | external_picture（外部图片） | x/y/w/h、path 必填；path 可为运行时路径字符串或外部图片资产的 ref；当前仅 X543 | down、up |
-| animation（动画） | x/y/w/h、vid 引用表必填；当前仅内嵌 from=0，支持播放状态、循环和速度；当前仅 X543 | down、up、playend |
-| video（视频） | x/y/w/h、vid 引用表必填；当前仅内嵌 from=0，支持单音轨保留；当前仅 X543 | down、up、playend |
-| audio（音频） | vid 引用表必填，无几何属性；当前内嵌 from=0，支持播放状态、循环和速度；当前仅 X543 | playend |
+| animation（动画） | x/y/w/h 必填；from=0 使用 vid 内嵌资源，1 使用外部 path，支持播放状态、循环和速度；当前仅 X543 | down、up、playend |
+| video（视频） | x/y/w/h 必填；from=0 使用 vid 内嵌资源，1 使用外部 path，支持单音轨保留；当前仅 X543 | down、up、playend |
+| audio（音频） | 无几何属性；from=0 使用 vid 内嵌资源，1 使用外部 path，支持播放状态、循环和速度；当前仅 X543 | playend |
 
 vscope 和 en 使用整数 0／1。坐标、尺寸、字体、图片等属性不会自动加到没有这些字段的控件上；例如变量和定时器不接受 x/y/w/h。type、id、objname 和几何端点由工具生成，不作为 properties 输入。
 
@@ -676,7 +676,7 @@ timing = "native-compatible"
 | encoding.quality | JPEG 运行帧质量，1～100、默认 80；100 仍使用 JPEG，不切换到私有编码 |
 | encoding.alpha | 默认 preserve，保留透明度；flatten 时必须指定 background="#RRGGBB"，不改写原始 GIF |
 | encoding.timing | 当前只支持 native-compatible：丢弃零延时帧，按原生规则处理不足 30ms 的短帧，单帧延时最大 65000ms |
-| delivery | 当前只支持默认 embedded；外部动画输出尚未接入 |
+| delivery | 默认 embedded；external 输出 sd0/ 下的 .gmov 运行文件，不占内部动画 ID |
 
 动画不接受 fps 或 codec 参数，播放时序来自 GIF 延时；loop/en 是控件属性，不放在共享资产中。当前不提供动画缩放参数，保留原始逻辑尺寸；修改控件几何不会隐式改写共享 GIF。尺寸补齐只发生在运行帧的编码光栅中，先按 16 对齐再旋转，不改变逻辑画布。
 
@@ -694,11 +694,11 @@ properties = { x = 20, y = 20, w = 160, h = 80, vid = { ref = "clip" }, en = 0, 
 events = { playend = "events/gm0.playend.s" }
 ```
 
-vid 必须为动画的 `{ ref = "..." }` 或最终动画列表的 `{ id = ... }`，不能用裸整数、none 或其他媒体类别。当前内置型号中仅 X543 开放动画，支持四个方向；T0/K0 的限制通过统一能力表配置。
+from=0 时 vid 必须为动画的 `{ ref = "..." }` 或最终动画列表的 `{ id = ... }`，不能使用裸整数、none 或其他媒体类别。from=1 时 vid 可省略或写 `{ none = true }`（原生65535），也可保留有效内部动画引用。当前内置型号中仅 X543 开放动画，支持四个方向；T0/K0 的限制通过统一能力表配置。
 
 | 控件属性 | 含义与范围 |
 |---|---|
-| from | 当前固定为 0，引用内嵌动画；外部播放和 path 输入尚未接入 |
+| from | 默认 0，使用 vid 内嵌动画；1 使用外部 path。非活动配置保留 |
 | vscope、sendkey | 默认均为 0，可设 0／1；动画默认私有 |
 | en | 默认 0 停止，1 播放，2 暂停 |
 | loop | 默认 0，不循环；1 表示循环；不会因为 loop=1 自动把 en 改为播放 |
@@ -706,7 +706,7 @@ vid 必须为动画的 `{ ref = "..." }` 或最终动画列表的 `{ id = ... }`
 | tim | 当前播放时间的 u32 初值，默认 0；实际播放和定位行为需在运行环境核对 |
 | stim、qty | 运行时总时长／总帧数，只读；文件中初始化为 0，不从资产信息预先回填 |
 
-事件槽为 down、up、playend。原生保留字段按创建配方写入，不作为用户可编辑数值；属性只读检查、作用域和事件归属沿用共同规则。当前 GIF 解码使用 Rust 图像库，无需 FFmpeg 或原厂转换工具；视频／音频后端仍另行接入。支持范围为最多 1000 个源帧、源文件不超过 64 MiB，单帧解码 RGBA 不超过 64 MiB、保留帧 RGBA 总量及运行资源各不超过 128 MiB；纯文本 GIF 扩展当前明确拒绝。
+事件槽为 down、up、playend。原生保留字段按创建配方写入，不作为用户可编辑数值；属性只读检查、作用域和事件归属沿用共同规则。当前 GIF 解码使用 Rust 图像库，无需 FFmpeg 或原厂转换工具；视频／音频的输入范围和 DLL 要求见后文。支持范围为最多 1000 个源帧、源文件不超过 64 MiB，单帧解码 RGBA 不超过 64 MiB、保留帧 RGBA 总量及运行资源各不超过 128 MiB；纯文本 GIF 扩展当前明确拒绝。
 
 生成动画验收工程：
 
@@ -755,7 +755,7 @@ mode = "drop"
 | clip.duration_ms | 正整数，省略时使用 start 之后的有效画面长度；结束位置须落在源帧边界，时长须包含整数个目标帧。超出范围、非整帧或不能精确表示的边界报错，不补帧、不静默取整 |
 | audio.mode | 默认 if-present，有一条音轨时保留、无音轨时无声；drop 显式丢弃；require 必须有音轨。需要保留多音轨输入时拒绝，不擅自选轨或混音 |
 | audio.sample_rate／channels | 输出音轨默认 8000Hz／单声道；可选采样率 8000、11025、22050、24000、32000、44100，声道 1／2；转换为 s16 PCM。drop 时禁止填写，if-present 无音轨时报告 audio_applied=false |
-| delivery | 当前只支持默认 embedded，外部视频输出尚未接入 |
+| delivery | 默认 embedded；external 输出 sd0/ 下的 .video，不占内部视频 ID |
 
 首批只处理时间戳精确等间隔的固定帧率视频。变帧率、隔行、源旋转矩阵、非方形像素、HDR、透明画面或中途改变尺寸／格式的输入明确拒绝；不把这些情况擅自当作普通画面处理。输入文件和输出 VIDEO 各不超过 128 MiB，源帧最多 10000 个，单帧 RGBA 不超过 64 MiB、全部解码 RGBA 不超过 128 MiB。当前会解码全部画面核对时序，长视频的流式处理待后续完善。
 
@@ -763,7 +763,7 @@ probe／inspect 的视频信息记录源帧率和帧数、截取起点、输出�
 
 VIDEO 帧采用直接 JPEG 包装，与动画帧的 20 字节前缀不同。HMI 中的资源名是 N.v，引用 kind 为 v；视频与图片、动画分别分配 ID。原始 MP4／AVI 仍由源码工程保存，不嵌入 HMI；`.hma` 保存完整运行资源，链接器无需解码原视频。
 
-控件用 `type="video"`，`vid={ref="clip"}` 或 `{id=...}` 引用当前视频列表。x/y/w/h 必填；from 当前固定 0。en 为 0 停止／1 播放／2 暂停，loop 为 0／1，dis 为 10～1000、默认 100，tim 为 u32 初值、默认 0；stim/qty 初始零且运行时只读。事件为 down、up、playend。保留字段 fps 固定为原生值 1，不按资源帧率改写；molloc_s/molloc 保留 64000，不作为源文件大小修改。当前内置型号中仅 X543 支持，四方向分别编码画面并写方向标记。
+控件用 `type="video"`，`vid={ref="clip"}` 或 `{id=...}` 引用当前视频列表。x/y/w/h 必填；from 默认 0，另支持 1 外部文件；vid 与 path 的条件要求见后文。en 为 0 停止／1 播放／2 暂停，loop 为 0／1，dis 为 10～1000、默认 100，tim 为 u32 初值、默认 0；stim/qty 初始零且运行时只读。事件为 down、up、playend。保留字段 fps 固定为原生值 1，不按资源帧率改写；molloc_s/molloc 保留 64000，不作为源文件大小修改。当前内置型号中仅 X543 支持，四方向分别编码画面并写方向标记。
 
 生成无声视频验收工程：
 
@@ -800,7 +800,7 @@ duration_ms = 500
 | encoding.channels | 省略保持源声道数；输出支持 1／2。多声道源转换需提供明确的输入布局；不猜测未知多声道的扬声器位置 |
 | encoding.sample_format | 默认且当前只支持 s16，有符号 16 位小端 PCM；不存在图片的 quality、fps 或 resize 参数 |
 | clip | 起点默认 0，duration 省略到结束。按转换后的时间轴截取，起点／时长须能精确表示为输出采样，越界不裁剪或悄悄补零 |
-| delivery | 当前仅默认 embedded；音频控件外部 from/path 模式尚未接入 |
+| delivery | 默认 embedded；external 输出 sd0/ 下的格式化 .wav，不占内部音频 ID |
 
 PCM16 参数不变时直接处理，不需要 FFmpeg；需要位深、声道或采样率转换才加载 DLL。FFmpeg 执行完整解码和重采样刷新，再按明确边界截取；原 WAV 文件不改写。音频没有屏幕方向，同一资产目标可在四方向中使用。原文件不超过 64 MiB，输出 PCM 也不超过 64 MiB。
 
@@ -810,7 +810,7 @@ hmic 的 name 缺省采用源文件名，不带扩展名；已有 name 和其他
 
 控件用 `type="audio"`、`vid={ref="tone"}` 或当前音频列表的 `{id=...}`。音频与图片、动画、视频分别编号，资源名 N.wav、引用 kind 为 wav；视频内的音轨不占独立音频 ID。当前仅对已有音频证据的 X543 开放，不据此表示全部 X 系列型号都有扬声器。
 
-音频是特殊控件栏中的非可视控件，不接受 x/y/w/h、字体或图片。vscope 默认 0，可设 0／1；from 固定 0，en 为 0 停止／1 播放／2 暂停，loop 为 0／1，dis 为 10～1000、默认 100，tim 默认 0。stim/qty 运行时只读，初始零，不从文件回填。保留 fps=1、molloc_s/molloc=64000；只有 playend 事件，无 down/up。当前不根据全局作用域承诺跨页播放行为，实际播放、声道听感和音画同步需在模拟器或硬件单独验收。
+音频是特殊控件栏中的非可视控件，不接受 x/y/w/h、字体或图片。vscope 默认 0，可设 0／1；from 默认 0，另支持 1 外部文件，en 为 0 停止／1 播放／2 暂停，loop 为 0／1，dis 为 10～1000、默认 100，tim 默认 0。stim/qty 运行时只读，初始零，不从文件回填。保留 fps=1、molloc_s/molloc=64000；只有 playend 事件，无 down/up。当前不根据全局作用域承诺跨页播放行为，实际播放、声道听感和音画同步需在模拟器或硬件单独验收。
 
 生成音频与有声视频验收工程：
 
@@ -858,7 +858,7 @@ properties = { x = 20, y = 40, w = 280, h = 40, sta = 1, psta = 1, pic2 = { ref 
 
 滑块图片游标保留 wid/hig 的既有语义，默认 255 自动；K0 的 psta 范围仍为0／1，其他未记录例外的型号沿用通用0／1／2。切换到图片模式不擅自改游标尺寸、style、颜色、val 或事件脚本。
 
-控件注册表的 ImageRule 集中声明图片启用条件和切图规则，源码检查与目标记录检查共用；链接器负责最终ID、资源类别和启用切图的几何绑定。当前 .hmo 给所有已注册图片字段保存重定位，包括非活动和 none 字段，避免在独立链接时丢失或绕过引用。
+控件注册表的 ResourceRule 集中声明图片启用条件和切图规则，源码检查与目标记录检查共用；链接器负责最终ID、资源类别和启用切图的几何绑定。当前 .hmo 给所有已注册图片字段保存重定位，包括非活动和 none 字段，避免在独立链接时丢失或绕过引用。
 
 生成本批验收工程：
 
@@ -869,7 +869,7 @@ python examples/prepare_picture_modes_acceptance.py --font path/to/ui.zi
 输出位于 `target/acceptance-picture-modes/`，包括 K035 的图片／切图／单色保留三份工程和 X543 的90°图片工程，每份四页。源图片由代码生成，只需提供独立字库；无需 FFmpeg 或虚拟 SD。每份实际执行13条独立作业比较 HMI，已有目录不会覆盖，可用 --output 指定新目录。详细属性与显示预期见输出 README。
 
 
-数字、虚拟浮点数、双态按钮和滚动文本沿用相同的 ImageRule，不另建图片ID或编码路线。它们的原生记录分别仍为39／39／42／46项：仅按模式和显式引用设置图片字段，不因换背景改写 val、lenth/format、vvs0/vvs1、txt_maxl、滚动参数或事件。数字的 val 保持有符号i32，图片模式不会把它变成文本；双态按钮 val=1 时使用其第二状态图片。这四类与文本、普通按钮的 sta=3 透明背景仅对 X 系列开放，T0／K0 按已确认的系列规则限制为 0～2。
+数字、虚拟浮点数、双态按钮和滚动文本沿用相同的 ResourceRule，不另建图片ID或编码路线。它们的原生记录分别仍为39／39／42／46项：仅按模式和显式引用设置图片字段，不因换背景改写 val、lenth/format、vvs0/vvs1、txt_maxl、滚动参数或事件。数字的 val 保持有符号i32，图片模式不会把它变成文本；双态按钮 val=1 时使用其第二状态图片。这四类与文本、普通按钮的 sta=3 透明背景仅对 X 系列开放，T0／K0 按已确认的系列规则限制为 0～2。
 
 ```powershell
 python examples/prepare_additional_picture_modes_acceptance.py --font path/to/ui.zi
@@ -899,7 +899,7 @@ python examples/prepare_graphics_modes_acceptance.py
 输出位于 `target/acceptance-graphics-modes/`，包括 K035 的 GraphicPic／GraphicCrop／GraphicColor 和 X543 90° 的 GraphicX90。每份 gauge／wave／qrcode 三页：前三份验证图片、切图、切回单色及关闭 LOGO 后保留引用；最后一份验证透明背景和图片 ID 重排。GraphicPic／GraphicCrop／GraphicX90 显示中心 LOGO，GraphicColor 关闭 LOGO 但保留 pic。所有图片均由代码生成，无需字库、已有 HMI、FFmpeg 或虚拟 SD；每份实际执行9条独立作业比较 HMI，已有目录不会覆盖。显示预期和详细属性见输出 README，动态曲线和扫码不属于本批验收内容。
 
 
-五类 X 系列控件共用 ImageRule：sta=2 使用 pic，sta=0 使用全屏 picc；sta=1／3 不要求背景图片，显式声明的非活动引用仍保留和解析。背景模式不改写选项、当前值、文本缓存、文件浏览器图标、数据文件结构或运行时依赖。选中项、表头、弹出列表、边框等仍按各自属性及原生行为绘制，透明背景不代表这些部分的颜色也被清除。文件浏览器的 pic1／pic2 与背景 pic／picc 是不同用途的图片引用，前两者在任何模式下仍必填。
+五类 X 系列控件共用 ResourceRule：sta=2 使用 pic，sta=0 使用全屏 picc；sta=1／3 不要求背景图片，显式声明的非活动引用仍保留和解析。背景模式不改写选项、当前值、文本缓存、文件浏览器图标、数据文件结构或运行时依赖。选中项、表头、弹出列表、边框等仍按各自属性及原生行为绘制，透明背景不代表这些部分的颜色也被清除。文件浏览器的 pic1／pic2 与背景 pic／picc 是不同用途的图片引用，前两者在任何模式下仍必填。
 
 批量生成五类控件的四种背景验收工程：
 
@@ -908,3 +908,36 @@ python examples/prepare_x_backgrounds_acceptance.py --font path/to/ui.zi
 ```
 
 输出位于 `target/acceptance-x-backgrounds/`，共两份 HMI、20 页，每页一个控件。XModes0 为 X543 0°，前五页图片、后五页单色；XModes90 为90°，前五页切图、后五页透明，并反转图片ID。每组依次为下拉框、选择文本、滑动文本、文件浏览器、数据记录，核对后每份编译一次即可。背景图片和图标均由代码生成，只读取指定ZI；无需FFmpeg、虚拟SD或预置.data。每份实际执行18条独立作业，输出与统一入口相同；已有目录不会覆盖，可用 --output 指定新目录。完整页面清单、图片ID和显示预期见输出 README。
+
+
+## 动画、视频和音频的外部播放
+
+这三类控件使用同一套规则：from=0 使用内嵌 vid，from=1 使用外部 path，默认 from=0。vid 是本类内部资源的 ref／id 引用；path 可写运行时路径字符串，也可写对应 external 资产的 ref。动画只能绑定动画，视频只能绑定视频，音频只能绑定音频，不能用外部资产冒充内部 ID。
+
+```toml
+# 资产：仍以原始视频为输入，编码后生成独立 VIDEO 文件。
+schema = "hmi.asset/1"
+kind = "video"
+source = "movie.avi"
+[delivery]
+mode = "external"
+path = "sd0/media/movie.video"
+```
+
+```toml
+# 页面控件：路径绑定到上面在工程资产表中声明的 movie_out。
+[[objects]]
+name = "v0"
+type = "video"
+properties = { x = 20, y = 20, w = 160, h = 80, from = 1, path = { ref = "movie_out" }, en = 0 }
+```
+
+from=0 时 vid 必填且不能为 none；path 可省略（默认空字符串）或保留已有路径配置。from=1 时 path 必须是非空字符串或有效 ref；vid 可省略／none，写入原生65535，也可保留有效内嵌引用。切换 from 不清空另一套配置，显式非活动引用仍按当前工程解析；资产不存在、类别不符或部署方式错误时仍报错。播放状态 en、loop、速度、时间初值、几何和事件也不会因为切换播放源而自动修改。
+
+三类 delivery 默认 embedded；external 必须指定 sd0/ 下的安全输出路径，后缀分别为动画 .gmov、视频 .video、音频 .wav。外部动画输出的是运行 GMOV，编辑源仍在 .hma 内保存，不部署到 SD，也不进入 HMI。VIDEO/WAV 复用相同运行字节和校验包装，外部输出不会额外占本类 ID，重排混合资产也不会使外部项挤占内部编号。
+
+例如 HMI 输出为 dist/Panel/Panel.HMI，配套文件同时输出到 dist/Panel/sd0/media/movie.video。用户将 sd0/ 中的内容按相同目录结构复制到 SD 卡或上位机虚拟 SD；工具不自动修改用户的运行环境。只写 `path="sd0/existing.video"` 时，仅记录运行时需求，不读取、生成或检查构建机同名文件；用户须提供已转换的运行媒体，不能把 AVI／GIF 改后缀代替编码。路径字符串还可指向设备支持的 ram/ 等位置；自动部署输出目前仍限 sd0/。
+
+runtime_files 记录当前启用的初始路径及最终页面／控件 ID，kind 为 external_animation／external_video／external_audio，generated 表示工程是否包含对应输出。from=0 中保留的路径不计作该控件的当前文件需求；显式声明的外部资产即使暂未使用也会输出，其 users 可以为空。同一路径被不同媒体类型或数据记录占用会报错；输出路径还会检查大小写和父子冲突。多文件发布沿用配套文件先写、HMI最后替换的流程，不承诺整包事务。
+
+.hmo 的资源条件从图片专用规则扩展为 ResourceRule，路径也携带预期媒体类别；编译、目标检查和链接共用。链接器只读取自包含.hmo/.hma，不需要原始GIF／AVI／WAV或FFmpeg。外部路径绑定不代表已经验证运行时播放、试听或文件存在，相关行为按实际运行环境验收。

@@ -39,7 +39,7 @@ struct ResourceTables<'a> {
     audios: &'a [(String, AudioInfo)],
     images: &'a [(String, ImageInfo)],
     fonts: &'a [(String, FontInfo)],
-    external: &'a [(String, ImageInfo)],
+    external: &'a [(String, AssetInfo)],
     animations: &'a [(String, AnimationInfo)],
     videos: &'a [(String, VideoInfo)],
 }
@@ -206,6 +206,23 @@ fn assemble_page(
     }
     let mut values = vec![BTreeMap::new(); parsed.len()];
     for relocation in &object.metadata.relocations {
+        if matches!(
+            relocation.kind,
+            RelocationKind::AnimationId | RelocationKind::VideoId | RelocationKind::AudioId
+        ) && relocation
+            .reference
+            .as_ref()
+            .is_some_and(|r| r.none == Some(true))
+        {
+            if parsed[relocation.object]
+                .attribute(&relocation.property)
+                .is_none_or(|a| a.value != [255, 255])
+            {
+                return Err(error("object_relocation", "空媒体必须使用 65535 占位值"));
+            }
+            values[relocation.object].insert(relocation.property.clone(), vec![255, 255]);
+            continue;
+        }
         match relocation.kind {
             RelocationKind::AudioId => {
                 let id = resolve_resource(
@@ -260,7 +277,7 @@ fn assemble_page(
                     .ok_or_else(|| {
                         error(
                             "resource_symbol",
-                            format!("外部图片资产 {key} 不存在或没有 external 部署方式"),
+                            format!("外部资产 {key} 不存在或没有 external 部署方式"),
                         )
                     })?;
                 if parsed[relocation.object]
@@ -269,12 +286,28 @@ fn assemble_page(
                 {
                     return Err(error(
                         "object_relocation",
-                        "外部图片路径占位值必须为空字符串",
+                        "外部文件路径占位值必须为空字符串",
                     ));
+                }
+                let definition = controls::record_definition(parsed[relocation.object].type_code)?;
+                let expected = definition
+                    .properties
+                    .iter()
+                    .find(|p| p.name == relocation.property)
+                    .unwrap();
+                if !matches!(expected.storage, controls::Storage::ExternalPath(kind) if kind == info.kind())
+                {
+                    return Err(error("resource_reference", "外部资产类别与控件路径不符"));
                 }
                 values[relocation.object].insert(
                     relocation.property.clone(),
-                    info.delivery.path.as_ref().unwrap().as_bytes().to_vec(),
+                    info.delivery()
+                        .unwrap()
+                        .path
+                        .as_ref()
+                        .unwrap()
+                        .as_bytes()
+                        .to_vec(),
                 );
             }
             RelocationKind::ObjectId => {
@@ -324,7 +357,8 @@ fn assemble_page(
                     .iter()
                     .map(|a| (a.name.clone(), a.value.clone()))
                     .collect::<Vec<_>>();
-                if property.image_rule.is_some_and(|r| r.crop) && property.image_active(&attributes)
+                if property.resource_rule.is_some_and(|r| r.crop)
+                    && property.resource_active(&attributes)
                 {
                     let info = &images[usize::from(id)].1;
                     if info.width != target.canvas.width || info.height != target.canvas.height {
@@ -440,26 +474,29 @@ fn layout(
         .collect::<Vec<_>>();
     let external = assets
         .iter()
-        .filter_map(|(key, info)| match info {
-            AssetInfo::Image { image } if image.delivery.mode == "external" => {
-                Some((key.clone(), image.clone()))
-            }
-            _ => None,
-        })
+        .filter(|(_, info)| info.is_external())
+        .map(|(key, info)| (key.clone(), info.clone()))
         .collect::<Vec<_>>();
     let mut deployment_paths = Vec::new();
     for (_, info) in &external {
-        info.delivery.validate()?;
-        if info.codec != "jpeg"
-            || !target
-                .capabilities
-                .control_types
-                .iter()
-                .any(|c| c == "external_picture")
+        let delivery = info.delivery().unwrap();
+        delivery.validate_for(info.kind())?;
+        let control = if info.kind() == "image" {
+            "external_picture"
+        } else {
+            info.kind()
+        };
+        if !target
+            .capabilities
+            .control_types
+            .iter()
+            .any(|c| c == control)
+            || (info.kind() != "audio" && info.orientation() != target.orientation)
+            || info.image().is_some_and(|image| image.codec != "jpeg")
         {
-            return Err(error("asset_target", "当前目标不支持此外部图片编码路线"));
+            return Err(error("asset_target", "当前目标不支持此外部媒体路线"));
         }
-        let path = hmi_core::deployment::key(info.delivery.path.as_ref().unwrap());
+        let path = hmi_core::deployment::key(delivery.path.as_ref().unwrap());
         if deployment_paths.iter().any(|old: &String| {
             *old == path
                 || old.starts_with(&format!("{path}/"))
@@ -482,7 +519,9 @@ fn layout(
     let animations = assets
         .iter()
         .filter_map(|(key, info)| match info {
-            AssetInfo::Animation { animation } => Some((key.clone(), animation.clone())),
+            AssetInfo::Animation { animation } if animation.delivery.is_embedded() => {
+                Some((key.clone(), animation.clone()))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -505,7 +544,9 @@ fn layout(
     let videos = assets
         .iter()
         .filter_map(|(key, info)| match info {
-            AssetInfo::Video { video } => Some((key.clone(), video.clone())),
+            AssetInfo::Video { video } if video.delivery.is_embedded() => {
+                Some((key.clone(), video.clone()))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -526,7 +567,9 @@ fn layout(
     let audios = assets
         .iter()
         .filter_map(|(key, info)| match info {
-            AssetInfo::Audio { audio } => Some((key.clone(), audio.clone())),
+            AssetInfo::Audio { audio } if audio.delivery.is_embedded() => {
+                Some((key.clone(), audio.clone()))
+            }
             _ => None,
         })
         .collect::<Vec<_>>();
@@ -567,7 +610,10 @@ fn layout(
             return Err(error("asset_key", format!("资产符号 {key} 重复")));
         }
     }
-    for (key, info) in images.iter().chain(&external) {
+    for (key, info) in assets
+        .iter()
+        .filter_map(|(key, info)| info.image().map(|image| (key, image)))
+    {
         if info.width == 0
             || info.height == 0
             || info.orientation != target.orientation
@@ -818,12 +864,17 @@ pub fn link_with_assets(
     let mut asset_map = Vec::new();
     let mut external_files = Vec::new();
     for (key, asset) in assets {
-        if let Some(image) = asset.metadata.info.image()
-            && image.delivery.mode == "external"
-        {
-            let path = image.delivery.path.as_ref().unwrap();
+        if asset.metadata.info.is_external() {
+            let path = asset
+                .metadata
+                .info
+                .delivery()
+                .unwrap()
+                .path
+                .as_ref()
+                .unwrap();
             let bytes = asset.member(0)?.to_vec();
-            asset_map.push(serde_json::json!({"key":key,"kind":"image","id":null,
+            asset_map.push(serde_json::json!({"key":key,"kind":asset.metadata.info.kind(),"id":null,
                 "path":path,"size":bytes.len(),"sha256":hmi_core::sha256(&bytes),"info":asset.metadata.info}));
             external_files.push(ExternalOutput {
                 path: path.clone(),

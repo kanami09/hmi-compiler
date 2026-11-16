@@ -1,11 +1,12 @@
-//! 动画只写播放配置，tim/stim/qty 不从媒体信息回填。
+//! 三类播放控件共用条件媒体及路径；模式切换不清除非活动配置。
+//! tim/stim/qty 不从媒体信息回填。
 use super::*;
 
 const FIELDS: [Field; 33] = {
     let mut f = drawable_fields();
     f[21] = field("from", FieldValue::Property("from"));
     f[22] = field("vid", FieldValue::Property("vid"));
-    f[23] = field("path", FieldValue::Constant(&[]));
+    f[23] = field("path", FieldValue::Property("path"));
     f[24] = field("path_m", FieldValue::Constant(&[255, 0]));
     f[25] = field("en", FieldValue::Property("en"));
     f[26] = field("loop", FieldValue::Property("loop"));
@@ -28,8 +29,9 @@ pub(super) const ANIMATION: Definition = Definition {
         integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
         integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
         integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
-        integer("from", Storage::U8, 0, 0, DefaultValue::Integer(0)),
-        integer("vid", Storage::Animation, 0, 65534, DefaultValue::Required),
+        integer("from", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+        playback_resource(Storage::Animation),
+        playback_path("animation"),
         integer("en", Storage::U8, 0, 2, DefaultValue::Integer(0)),
         integer("loop", Storage::U8, 0, 1, DefaultValue::Integer(0)),
         integer("dis", Storage::U16, 10, 1000, DefaultValue::Integer(100)),
@@ -44,7 +46,7 @@ const VIDEO_FIELDS: [Field; 34] = {
     let mut f = drawable_fields();
     f[21] = field("from", FieldValue::Property("from"));
     f[22] = field("vid", FieldValue::Property("vid"));
-    f[23] = field("path", FieldValue::Constant(&[]));
+    f[23] = field("path", FieldValue::Property("path"));
     f[24] = field("path_m", FieldValue::Constant(&[255, 0]));
     f[25] = field("en", FieldValue::Property("en"));
     f[26] = field("loop", FieldValue::Property("loop"));
@@ -68,8 +70,9 @@ pub(super) const VIDEO: Definition = Definition {
         integer("w", Storage::U16, 1, 65535, DefaultValue::Required),
         integer("h", Storage::U16, 1, 65535, DefaultValue::Required),
         integer("sendkey", Storage::U8, 0, 1, DefaultValue::Integer(0)),
-        integer("from", Storage::U8, 0, 0, DefaultValue::Integer(0)),
-        integer("vid", Storage::Video, 0, 65534, DefaultValue::Required),
+        integer("from", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+        playback_resource(Storage::Video),
+        playback_path("video"),
         integer("en", Storage::U8, 0, 2, DefaultValue::Integer(0)),
         integer("loop", Storage::U8, 0, 1, DefaultValue::Integer(0)),
         integer("dis", Storage::U16, 10, 1000, DefaultValue::Integer(100)),
@@ -85,8 +88,9 @@ pub(super) const AUDIO: Definition = Definition {
     code: 4,
     properties: &[
         SCOPE,
-        integer("from", Storage::U8, 0, 0, DefaultValue::Integer(0)),
-        integer("vid", Storage::Audio, 0, 65534, DefaultValue::Required),
+        integer("from", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+        playback_resource(Storage::Audio),
+        playback_path("audio"),
         integer("en", Storage::U8, 0, 2, DefaultValue::Integer(0)),
         integer("loop", Storage::U8, 0, 1, DefaultValue::Integer(0)),
         integer("dis", Storage::U16, 10, 1000, DefaultValue::Integer(100)),
@@ -102,7 +106,7 @@ pub(super) const AUDIO: Definition = Definition {
         field("groupid1", FieldValue::Constant(&[0; 4])),
         field("from", FieldValue::Property("from")),
         field("vid", FieldValue::Property("vid")),
-        field("path", FieldValue::Constant(&[])),
+        field("path", FieldValue::Property("path")),
         field("path_m", FieldValue::Constant(&[255, 0])),
         field("en", FieldValue::Property("en")),
         field("loop", FieldValue::Property("loop")),
@@ -117,3 +121,31 @@ pub(super) const AUDIO: Definition = Definition {
     events: &["playend"],
     access: PropertyAccess::readonly(&["fps", "stim", "qty", "molloc_s", "molloc"]),
 };
+
+// vid 和 path 均完整保存；from=0 才要求内部资源，from=1 才要求外部路径。
+const fn playback_resource(storage: Storage) -> Property {
+    Property {
+        name: "vid",
+        storage,
+        min: 0,
+        max: 65535,
+        default: DefaultValue::Integer(65535),
+        resource_rule: Some(ResourceRule {
+            active_when: Some(("from", 0)),
+            crop: false,
+        }),
+    }
+}
+const fn playback_path(kind: &'static str) -> Property {
+    Property {
+        name: "path",
+        storage: Storage::ExternalPath(kind),
+        min: 0,
+        max: 0,
+        default: DefaultValue::Text(""),
+        resource_rule: Some(ResourceRule {
+            active_when: Some(("from", 1)),
+            crop: false,
+        }),
+    }
+}

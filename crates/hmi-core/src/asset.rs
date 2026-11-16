@@ -104,6 +104,33 @@ pub struct Delivery {
     pub path: Option<String>,
 }
 impl Delivery {
+    /// 部署文件的后缀描述实际运行格式；输入文件的后缀不参与此判断。
+    pub fn validate_for(&self, kind: &str) -> Result<()> {
+        self.validate()?;
+        if self.is_embedded() {
+            return Ok(());
+        }
+        let extension = match kind {
+            "image" => ".xi",
+            "animation" => ".gmov",
+            "video" => ".video",
+            "audio" => ".wav",
+            _ => return Err(error("asset_delivery", "此媒体类别不支持外部输出")),
+        };
+        if !self
+            .path
+            .as_ref()
+            .unwrap()
+            .to_ascii_lowercase()
+            .ends_with(extension)
+        {
+            return Err(error(
+                "asset_delivery",
+                format!("{kind} 外部输出路径必须以 {extension} 结尾"),
+            ));
+        }
+        Ok(())
+    }
     pub fn is_embedded(&self) -> bool {
         self.mode == "embedded" && self.path.is_none()
     }

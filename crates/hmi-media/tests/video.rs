@@ -109,6 +109,20 @@ fn dll_decode_precise_clip_all_orientations_and_complete_video_payload() {
                 hmi_media::probe(&path, &target(orientation)).unwrap().info,
                 encoded.object.metadata.info
             );
+            let mut outside = c.clone();
+            outside.delivery = Delivery {
+                mode: "external".into(),
+                path: Some("sd0/clip.video".into()),
+            };
+            let external = hmi_media::encode(&description(tmp.path(), &outside), &target(0))
+                .unwrap()
+                .object;
+            assert_eq!(
+                external.member(0).unwrap(),
+                encoded.object.member(0).unwrap()
+            );
+            assert!(external.metadata.info.is_external());
+            assert!(external.metadata.members[0].reference_kind.is_none());
         }
     }
 }

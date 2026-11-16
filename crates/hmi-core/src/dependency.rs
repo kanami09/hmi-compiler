@@ -18,6 +18,15 @@ pub enum RuntimeFile {
     ExternalPicture {
         path: String,
     },
+    ExternalAnimation {
+        path: String,
+    },
+    ExternalVideo {
+        path: String,
+    },
+    ExternalAudio {
+        path: String,
+    },
     DataRecord {
         path: String,
         structure: DataRecordStructure,
@@ -37,13 +46,37 @@ impl RuntimeFile {
     pub fn path(&self) -> &str {
         match self {
             Self::ExternalPicture { path } => path,
+            Self::ExternalAnimation { path }
+            | Self::ExternalVideo { path }
+            | Self::ExternalAudio { path } => path,
             Self::DataRecord { path, .. } => path,
         }
     }
 
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::ExternalPicture { .. } => "external_picture",
+            Self::ExternalAnimation { .. } => "external_animation",
+            Self::ExternalVideo { .. } => "external_video",
+            Self::ExternalAudio { .. } => "external_audio",
+            Self::DataRecord { .. } => "data_record",
+        }
+    }
+
+    pub fn external(kind: &str, path: &str) -> Result<Self> {
+        let path = path.to_string();
+        Ok(match kind {
+            "image" => Self::ExternalPicture { path },
+            "animation" => Self::ExternalAnimation { path },
+            "video" => Self::ExternalVideo { path },
+            "audio" => Self::ExternalAudio { path },
+            _ => return Err(error("runtime_dependency", "此媒体类别不支持外部文件依赖")),
+        })
+    }
+
     /// 仅从已编译记录提取依赖，独立链接不需要回读页面源码或访问虚拟 SD。
     pub fn from_control(code: u8, attributes: &[(String, Vec<u8>)]) -> Result<Option<Self>> {
-        if !matches!(code, 60 | 66) {
+        if !matches!(code, 2 | 3 | 4 | 60 | 66) {
             return Ok(None);
         }
         let bytes = |key: &str| -> Result<&[u8]> {
@@ -58,17 +91,20 @@ impl RuntimeFile {
             if b.len() != width {
                 return Err(error(
                     "runtime_dependency",
-                    format!("数据记录依赖属性 {key} 的宽度无效"),
+                    format!("文件依赖属性 {key} 的宽度无效"),
                 ));
             }
             Ok(b.iter()
                 .enumerate()
                 .fold(0, |n, (i, b)| n | (u32::from(*b) << (i * 8))))
         };
+        if matches!(code, 2..=4) && integer("from", 1)? == 0 {
+            return Ok(None);
+        }
         let path = std::str::from_utf8(bytes("path")?)
             .map_err(|_| error("runtime_file_path", "运行时文件路径必须是 UTF-8 文本"))?;
         // 空字符串仅用于外部资产符号的重定位占位，最终链接仍须绑定非空路径。
-        if code == 60 && path.is_empty() {
+        if code != 66 && path.is_empty() {
             return Ok(None);
         }
         if path.is_empty() || path.len() > 255 || path.as_bytes().contains(&0) {
@@ -77,8 +113,14 @@ impl RuntimeFile {
                 "运行时文件路径不能为空、包含 NUL 或超过 255 字节",
             ));
         }
-        if code == 60 {
-            return Ok(Some(Self::ExternalPicture { path: path.into() }));
+        if code != 66 {
+            let kind = match code {
+                2 => "animation",
+                3 => "video",
+                4 => "audio",
+                _ => "image",
+            };
+            return Self::external(kind, path).map(Some);
         }
         let record_bytes = integer("lenth", 4)?;
         let max_records = integer("maxval", 4)?;

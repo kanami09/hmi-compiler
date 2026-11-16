@@ -37,7 +37,7 @@ pub enum Storage {
     Lines,
     Image,
     Font,
-    ExternalPath,
+    ExternalPath(&'static str),
     Animation,
     Video,
     Audio,
@@ -57,12 +57,12 @@ pub struct Property {
     pub min: i64,
     pub max: i64,
     pub default: DefaultValue,
-    /// 图片启用条件与裁切规则；其他属性为 None。
-    pub image_rule: Option<ImageRule>,
+    /// 媒体与路径的启用条件；crop 只用于全屏图片裁切。
+    pub resource_rule: Option<ResourceRule>,
 }
 
 #[derive(Clone, Copy, Debug, Serialize)]
-pub struct ImageRule {
+pub struct ResourceRule {
     pub active_when: Option<(&'static str, u8)>,
     pub crop: bool,
 }
@@ -130,7 +130,7 @@ const fn integer(
         min,
         max,
         default,
-        image_rule: None,
+        resource_rule: None,
     }
 }
 const fn field(name: &'static str, value: FieldValue) -> Field {
@@ -149,7 +149,7 @@ const fn background_image(
         min: 0,
         max: 65535,
         default: DefaultValue::Integer(65535),
-        image_rule: Some(ImageRule {
+        resource_rule: Some(ResourceRule {
             active_when: Some((mode, value)),
             crop,
         }),
@@ -174,7 +174,7 @@ const VARIABLE_PROPERTIES: &[Property] = &[
         min: 0,
         max: 0,
         default: DefaultValue::Text("newtxt"),
-        image_rule: None,
+        resource_rule: None,
     },
     integer(
         "txt_maxl",
@@ -210,7 +210,7 @@ const fn image_properties(name: &'static str) -> [Property; 7] {
 const PICTURE_PROPERTIES: &[Property] = &image_properties("pic");
 const CROP_PROPERTIES: &[Property] = &{
     let mut p = image_properties("picc");
-    p[6].image_rule = Some(ImageRule {
+    p[6].resource_rule = Some(ResourceRule {
         active_when: None,
         crop: true,
     });
@@ -252,7 +252,7 @@ const fn text_properties<const N: usize>(button: bool) -> [Property; N] {
         min: 0,
         max: 0,
         default: DefaultValue::Required,
-        image_rule: None,
+        resource_rule: None,
     };
     p[16] = integer(
         "txt_maxl",
@@ -531,11 +531,13 @@ fn property_error(code: &str, property: &str, message: impl Into<String>) -> cra
 
 impl Property {
     pub fn allows_none(&self) -> bool {
-        matches!(self.storage, Storage::Image)
-            && matches!(self.default, DefaultValue::Integer(65535))
+        matches!(
+            self.storage,
+            Storage::Image | Storage::Animation | Storage::Video | Storage::Audio
+        ) && matches!(self.default, DefaultValue::Integer(65535))
     }
-    pub fn image_active(&self, attributes: &[(String, Vec<u8>)]) -> bool {
-        self.image_rule
+    pub fn resource_active(&self, attributes: &[(String, Vec<u8>)]) -> bool {
+        self.resource_rule
             .and_then(|r| r.active_when)
             .is_none_or(|(field, value)| {
                 attributes
@@ -546,7 +548,7 @@ impl Property {
     fn encode(&self, value: &toml::Value) -> Result<Vec<u8>> {
         if matches!(
             self.storage,
-            Storage::Text | Storage::Lines | Storage::ExternalPath
+            Storage::Text | Storage::Lines | Storage::ExternalPath(_)
         ) {
             let bytes = value
                 .as_str()
@@ -600,7 +602,7 @@ impl Property {
             Storage::I16 => (number as i16).to_le_bytes().to_vec(),
             Storage::I32 => (number as i32).to_le_bytes().to_vec(),
             Storage::U32 => (number as u32).to_le_bytes().to_vec(),
-            Storage::Text | Storage::Lines | Storage::ExternalPath => unreachable!(),
+            Storage::Text | Storage::Lines | Storage::ExternalPath(_) => unreachable!(),
         })
     }
 
@@ -635,7 +637,7 @@ impl Property {
             Storage::U32 => toml::Value::Integer(i64::from(u32::from_le_bytes(
                 bytes.try_into().map_err(|_| invalid())?,
             ))),
-            Storage::Text | Storage::Lines | Storage::ExternalPath => {
+            Storage::Text | Storage::Lines | Storage::ExternalPath(_) => {
                 toml::Value::String(std::str::from_utf8(bytes).map_err(|_| invalid())?.into())
             }
         })
@@ -722,7 +724,7 @@ impl Definition {
                 }
             }
         }
-        if self.code == 60 && values["path"].len() > 255 {
+        if matches!(self.code, 2..=4 | 60) && values["path"].len() > 255 {
             return Err(property_error(
                 "text_capacity",
                 "path",
@@ -818,8 +820,10 @@ impl Definition {
             })
             .collect::<Result<Vec<_>>>()?;
         for property in self.properties {
-            if matches!(property.storage, Storage::Image)
-                && property.image_active(&attributes)
+            if matches!(
+                property.storage,
+                Storage::Image | Storage::Animation | Storage::Video | Storage::Audio
+            ) && property.resource_active(&attributes)
                 && attributes
                     .iter()
                     .any(|(k, v)| k == property.name && v == &[255, 255])
@@ -827,7 +831,7 @@ impl Definition {
                 return Err(property_error(
                     "property_required",
                     property.name,
-                    format!("当前 {} 模式必须指定图片属性 {}", self.name, property.name),
+                    format!("当前 {} 模式必须指定媒体属性 {}", self.name, property.name),
                 ));
             }
         }

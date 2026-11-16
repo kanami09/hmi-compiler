@@ -1,5 +1,5 @@
 //! 汇总最终原生记录的初始文件绑定；符号路径此时已经完成重定位。
-use hmi_artifact::asset::ImageInfo;
+use hmi_artifact::asset::AssetInfo;
 use hmi_core::{
     Result,
     controls::DATA_RECORD_LIMIT,
@@ -12,18 +12,14 @@ use std::collections::BTreeMap;
 
 pub(super) fn collect(
     pages: &[Page],
-    external: &[(String, ImageInfo)],
+    external: &[(String, AssetInfo)],
 ) -> Result<(Vec<serde_json::Value>, Vec<Diagnostic>)> {
     let mut files: Vec<(RuntimeFile, Vec<serde_json::Value>, bool)> = Vec::new();
     let mut indices = BTreeMap::<String, usize>::new();
-    for (_, image) in external {
-        let path = image.delivery.path.as_ref().unwrap();
+    for (_, info) in external {
+        let path = info.delivery().unwrap().path.as_ref().unwrap();
         indices.insert(deployment::key(path), files.len());
-        files.push((
-            RuntimeFile::ExternalPicture { path: path.clone() },
-            vec![],
-            true,
-        ));
+        files.push((RuntimeFile::external(info.kind(), path)?, vec![], true));
     }
     let mut diagnostics = Vec::new();
     let mut count = 0;
@@ -35,10 +31,13 @@ pub(super) fn collect(
                 .map(|a| (a.name.clone(), a.value.clone()))
                 .collect::<Vec<_>>();
             let file = RuntimeFile::from_control(object.type_code, &attributes)?;
-            if object.type_code == 60 && file.is_none() {
+            if (object.type_code == 60
+                || (matches!(object.type_code, 2..=4) && object.integer("from") == Some(1)))
+                && file.is_none()
+            {
                 return Err(hmi_core::error(
                     "runtime_file_path",
-                    "外部图片的最终路径不能为空",
+                    "外部文件的最终路径不能为空",
                 ));
             }
             let Some(file) = file else {
@@ -71,8 +70,8 @@ pub(super) fn collect(
             let key = deployment::key(path);
             if let Some(&index) = indices.get(&key) {
                 let (previous, users, _) = &mut files[index];
+                let same_kind = previous.kind() == file.kind();
                 match (previous, &file) {
-                    (RuntimeFile::ExternalPicture { .. }, RuntimeFile::ExternalPicture { .. }) => {}
                     (
                         RuntimeFile::DataRecord { structure: old, .. },
                         RuntimeFile::DataRecord { structure, .. },
@@ -81,6 +80,8 @@ pub(super) fn collect(
                             "多个数据记录控件绑定文件 {path}；运行时同时打开会发生占用冲突，请在脚本中协调路径切换"
                         )).at(location));
                     }
+                    (previous, _)
+                        if same_kind && !matches!(previous, RuntimeFile::DataRecord { .. }) => {}
                     _ => {
                         return Err(Diagnostic::error(
                             "runtime_file_conflict",
@@ -101,7 +102,7 @@ pub(super) fn collect(
     }
     let files = files.into_iter().map(|(file, users, generated)| match file {
         RuntimeFile::DataRecord { path, structure, .. } => serde_json::json!({"kind":"data_record","path":path,"structure":structure,"generated":generated,"users":users}),
-        RuntimeFile::ExternalPicture { path } => serde_json::json!({"kind":"external_picture","path":path,"generated":generated,"users":users}),
+        file => serde_json::json!({"kind":file.kind(),"path":file.path(),"generated":generated,"users":users}),
     }).collect();
     Ok((files, diagnostics))
 }

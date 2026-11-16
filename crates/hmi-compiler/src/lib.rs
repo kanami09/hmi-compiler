@@ -120,27 +120,51 @@ fn bind_resources(
     resources: &mut Vec<hmi_artifact::Relocation>,
 ) -> Result<()> {
     for property in definition.properties {
-        if matches!(property.storage, controls::Storage::ExternalPath) {
+        if matches!(property.storage, controls::Storage::ExternalPath(_)) {
+            let active = property
+                .resource_rule
+                .and_then(|r| r.active_when)
+                .is_none_or(|(mode, expected)| {
+                    let value = properties
+                        .get(mode)
+                        .and_then(|v| v.as_integer())
+                        .or_else(|| {
+                            definition
+                                .properties
+                                .iter()
+                                .find(|p| p.name == mode)
+                                .and_then(|p| match p.default {
+                                    controls::DefaultValue::Integer(n) => Some(n),
+                                    _ => None,
+                                })
+                        });
+                    value == Some(i64::from(expected))
+                });
+            let fallback = match property.default {
+                controls::DefaultValue::Text(text) => Some(text.into()),
+                _ => None,
+            };
             let value = properties
                 .get(property.name)
-                .ok_or_else(|| error("property_required", "必须指定外部图片 path"))?;
+                .or(fallback.as_ref())
+                .ok_or_else(|| error("property_required", "必须指定外部文件 path"))?;
             if let Some(path) = value.as_str() {
-                if path.is_empty() {
-                    return Err(error("runtime_file_path", "外部图片路径不能为空"));
+                if active && path.is_empty() {
+                    return Err(error("runtime_file_path", "当前模式要求非空的外部文件路径"));
                 }
             } else {
                 let reference: hmi_core::asset::ResourceReference =
                     value.clone().try_into().map_err(|_| {
                         error(
                             "resource_reference",
-                            "外部图片 path 必须为字符串或 ref 引用表",
+                            "外部文件 path 必须为字符串或 ref 引用表",
                         )
                     })?;
                 reference.validate()?;
                 if reference.name.is_none() {
                     return Err(error(
                         "resource_reference",
-                        "外部图片路径只接受 ref，不接受 ID 或 none",
+                        "外部文件路径只接受 ref，不接受 ID 或 none",
                     ));
                 }
                 resources.push(hmi_artifact::Relocation {

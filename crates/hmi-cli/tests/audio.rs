@@ -155,7 +155,7 @@ fn unsupported_fields_readonly_writes_and_input_damage_preserve_hmi() {
         ("en", 3),
         ("dis", 9),
         ("loop", 2),
-        ("from", 1),
+        ("from", 2),
         ("fps", 1),
         ("qty", 0),
     ] {
