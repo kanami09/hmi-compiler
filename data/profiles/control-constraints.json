@@ -64,6 +64,15 @@
           "min": 0,
           "max": 2
         }
+      },
+      {
+        "control": "gauge",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
       }
     ],
     "t0": [
@@ -114,6 +123,15 @@
       },
       {
         "control": "scrolling_text",
+        "property": "sta",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 2
+        }
+      },
+      {
+        "control": "gauge",
         "property": "sta",
         "constraint": {
           "kind": "range",

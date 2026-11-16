@@ -58,3 +58,5 @@ K/T 三组配置已接入 RGB565 图片，X543 已接入 JPEG 与七位透明度
 没有条目时默认允许该已接入类型，具体是否具备媒体后端仍按工具实现能力检查。当前根据官方说明，在 t0／k0 中禁用 switch、combo_box、text_select、sliding_text、file_browser、file_stream、data_record、external_picture、animation、video、audio；X543 按默认开放。这些状态展开到 target 的 control_types，源码编译和独立链接共用最终列表。未注册类型、同一作用域的重复声明或未知系列／型号会报错。
 
 text、button、number、xfloat、dual_state_button、scrolling_text 的通用 sta 范围为 0～3；官方说明将 3（透明背景）限定为 X 系列，因此 t0／k0 对这六类控件配置 0～2 范围。与滑块游标一样，这些差异由同一约束接口合并及检查，编译器和链接器无需分别维护型号分支。页面背景单独使用 0 无背景／1 单色／2 图片，不套用上述文字控件规则。
+
+指针 gauge 同样支持 sta=0～3，官方说明明确透明背景仅 X 系列支持，故 t0／k0 限制为 0～2。波形 waveform 的说明列出 0～3 但未单独注明系列限制，当前按通用范围处理；若确认实际例外，只需增加相应属性约束。二维码的 sta=0／1 是中心 LOGO 开关，与背景模式分别定义。

@@ -108,9 +108,9 @@ events = { timer = "events/tm0.timer.s" }
 | dual_state_button（双态按钮） | x/y/w/h、font 引用表、txt 必填；val 为 0／1；sta 为 0～3，3 仅 X 系列 | down、up |
 | scrolling_text（滚动文本） | x/y/w/h、font 引用表、txt 必填；可设滚动方向、幅度、周期和使能；sta 为 0～3，3 仅 X 系列 | down、up |
 | touch_cap（触摸捕捉） | 仅 vscope 可设置；每页最多一个，无几何属性；val 为只读捕捉结果 | down、up |
-| gauge（指针） | x/y/w/h 必填；val 为 0～360，尖长／尾长为有符号整数；当前 sta=1 | down、up |
-| waveform（波形） | x/y/w/h 必填；ch 为 1～4，支持方向、网格、通道颜色和缩放；当前 sta=1 | down、up |
-| qrcode（二维码） | x/y/w/h、txt 必填；txt_maxl 为 0～192；当前 sta=0，无中心 LOGO | down、up |
+| gauge（指针） | x/y/w/h 必填；val 为 0～360，尖长／尾长为有符号整数；sta 为 0～3，3 仅 X 系列 | down、up |
+| waveform（波形） | x/y/w/h 必填；ch 为 1～4，支持方向、网格、通道颜色和缩放；sta 为 0～3 | down、up |
+| qrcode（二维码） | x/y/w/h、txt 必填；txt_maxl 为 0～192；sta=0 无中心 LOGO、1 使用 pic 图片 | down、up |
 | switch（状态开关） | x/y/w/h、font 引用表必填；val 为 0／1，dez 为方向；当前仅 X543 | down、up |
 | combo_box（下拉框） | x/y/w/h、font 引用表必填；path 是选项集合，txt 是独立保存的文本；当前仅 X543 | down、up |
 | text_select（选择文本） | x/y/w/h、font 引用表必填；path 是选项集合，val 为 u32，txt 只读；当前仅 X543 | down、up |
@@ -416,7 +416,7 @@ properties = { x = 60, y = 40, w = 200, h = 200, txt = "HMI-A", txt_maxl = 16 }
 
 示例条目应分别安排在相应页面或调整实际位置。
 
-指针当前使用单色背景 sta=1、bco=65535。val 为 0～360，默认 0；指针色 pco 默认 0、中心圆颜色 pco2 默认 63488，颜色范围均为 0～65535。
+指针 sta=0 为切图、1 为单色、2 为图片、3 为透明；透明仅 X 系列支持，T0／K0 限制为 0～2。默认 sta=1、bco=65535，sta=2 必须提供 pic、sta=0 必须提供全屏 picc 引用。val 为 0～360，默认 0；指针色 pco 默认 0、中心圆颜色 pco2 默认 63488，颜色范围均为 0～65535。
 
 | 指针形状属性 | 默认值与范围 |
 |---|---|
@@ -427,7 +427,7 @@ properties = { x = 60, y = 40, w = 200, h = 200, txt = "HMI-A", txt_maxl = 16 }
 
 原生的 format、left、wid 本批分别初始化为 0、0、2，暂不作为可编辑属性。工具创建指针本身，不自动生成表盘背景。
 
-波形当前使用单色背景 sta=1，默认黑底 bco=0、网格色 gdc=1024。ch 为 1～4、默认 1，四个颜色字段始终保留；减少通道数不会清除其他通道的颜色。
+波形 sta=0 为切图、1 为单色、2 为图片、3 为透明，默认 sta=1、黑底 bco=0、网格色 gdc=1024。sta=2 必须提供 pic，sta=0 必须提供全屏 picc 引用。颜色与网格参数始终保留，背景和网格色用于单色模式。波形文档未单独注明 sta=3 的系列限制，当前沿用 0～3 通用范围；后续确认例外时通过同一型号约束表调整。ch 为 1～4、默认 1，四个颜色字段始终保留；减少通道数不会清除其他通道的颜色。
 
 | 波形属性 | 默认值与范围 |
 |---|---|
@@ -438,7 +438,7 @@ properties = { x = 60, y = 40, w = 200, h = 200, txt = "HMI-A", txt_maxl = 16 }
 
 objWid、objHig、inittrue、molloc_s、molloc 按原生配方初始化为零，名字和字段宽度保留；它们不作为用户输入。创建后的波形没有预置数据，曲线由运行时指令提供；当前静态分析不完整检查 add／addt 的参数和实际绘图效果。
 
-二维码的 sta 是中心 LOGO 开关；当前支持 sta=0，无中心 LOGO，不能套用其他类型的背景模式。默认 bco=65535、pco=0，txt 必填，txt_maxl 默认 16、范围 0～192，按 UTF-8 字节检查。文本保存在控件中，由上位机／屏幕生成二维码，不需要导入字体或预先编码成图片。原生 dis 保持 8、pic 保持空值 65535，本批不作为可编辑属性。
+二维码的 sta 是中心 LOGO 开关：0 无、1 有，默认 0，不能套用其他类型的背景模式。sta=1 必须提供 pic 图片引用，不允许省略或 none；sta=0 时 pic 默认为原生空值65535，也可保留非活动引用。默认 bco=65535、pco=0，txt 必填，txt_maxl 默认 16、范围 0～192，按 UTF-8 字节检查。文本保存在控件中，由上位机／屏幕生成二维码，不需要导入字体或预先编码成图片。原生 dis 保持 8，暂不作为可编辑属性。LOGO 使用普通图片资产与引用，不要求全屏；工具不会根据控件几何缩放共享源图，不修改二维码文本、颜色或控件尺寸。
 
 本批验证控件结构、静态预览及上位机编译；扫码结果、动态曲线和硬件运行分别验收。
 
@@ -823,13 +823,15 @@ python examples/prepare_audio_acceptance.py --ffmpeg-dir path/to/ffmpeg/bin
 
 ## 图片背景与图片游标
 
-当前接入页面背景，以及文本、普通按钮、滑块、进度条、数字、虚拟浮点数、双态按钮、滚动文本的图片模式。其他类型维持各自现有范围，不因共用字段布局自动放开。
+当前接入页面背景，以及文本、普通按钮、滑块、进度条、数字、虚拟浮点数、双态按钮、滚动文本、指针、波形的图片模式，以及二维码的中心 LOGO。其他类型维持各自现有范围，不因共用字段布局自动放开。
 
 | 控件 | 模式与必需图片 |
 |---|---|
 | page（页面自身） | sta=0 无背景、1 单色、2 全屏图片；sta=2 时 pic 必填，图片逻辑尺寸须与页面相同 |
 | text／number／xfloat／scrolling_text | sta=2 时 pic 必填；sta=0 时 picc 必填；sta=1 单色；X 系列另支持 sta=3 透明 |
 | button／dual_state_button | sta=2 时 pic／pic2 分别为普通／按下图片；sta=0 时 picc／picc2 为两种状态切图；sta=1 单色；X 系列另支持 sta=3 透明 |
+| gauge／waveform | sta=2 时 pic 必填；sta=0 时 picc 必填；sta=1 单色、3 透明；指针透明仅 X 系列，波形当前按通用范围 |
+| qrcode | sta=1 时 pic 为必填 LOGO；sta=0 不显示 LOGO，pic 可省略或保留 |
 | slider | sta=2 时 pic／pic1 为背景／前景；sta=0 时 picc／picc1 为两项切图；sta=1 单色。独立的 psta=1 使用 pic2 游标图片 |
 | progress_bar | sta=0 单色，sta=1 使用 bpic 背景与 ppic 前景；此类型的 sta 数值与文本等不同 |
 

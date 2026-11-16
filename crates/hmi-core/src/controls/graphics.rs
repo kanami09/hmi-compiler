@@ -1,4 +1,4 @@
-//! 无媒体依赖的指针、空数据波形和无中心 LOGO 的二维码。
+//! 指针、空数据波形和二维码；背景与 LOGO 复用条件图片引用。
 use super::*;
 
 const fn geometry_properties<const N: usize>() -> [Property; N] {
@@ -11,9 +11,9 @@ const fn geometry_properties<const N: usize>() -> [Property; N] {
     p
 }
 
-const GAUGE_PROPERTIES: [Property; 17] = {
+const GAUGE_PROPERTIES: [Property; 19] = {
     let mut p = geometry_properties();
-    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+    p[6] = integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1));
     p[7] = integer("bco", Storage::U16, 0, 65535, DefaultValue::Integer(65535));
     p[8] = integer("val", Storage::U16, 0, 360, DefaultValue::Integer(0));
     // 尖长和尾长允许负数，必须按有符号两字节编码，32767 为自动尖长。
@@ -37,14 +37,16 @@ const GAUGE_PROPERTIES: [Property; 17] = {
     p[14] = integer("vvs0", Storage::U8, 0, 128, DefaultValue::Integer(1));
     p[15] = integer("vvs1", Storage::U8, 0, 128, DefaultValue::Integer(7));
     p[16] = integer("vvs2", Storage::U8, 0, 128, DefaultValue::Integer(2));
+    p[17] = background_image("pic", "sta", 2, false);
+    p[18] = background_image("picc", "sta", 0, true);
     p
 };
 const GAUGE_FIELDS: [Field; 37] = {
     let mut f = drawable_fields();
     f[21] = field("sta", FieldValue::Property("sta"));
-    f[22] = field("picc", FieldValue::Constant(&[255, 255]));
+    f[22] = field("picc", FieldValue::Property("picc"));
     f[23] = field("bco", FieldValue::Property("bco"));
-    f[24] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[24] = field("pic", FieldValue::Property("pic"));
     f[25] = field("val", FieldValue::Property("val"));
     f[26] = field("format", FieldValue::Constant(&[0, 0]));
     f[27] = field("up", FieldValue::Property("up"));
@@ -61,9 +63,9 @@ const GAUGE_FIELDS: [Field; 37] = {
     f
 };
 
-const WAVE_PROPERTIES: [Property; 18] = {
+const WAVE_PROPERTIES: [Property; 20] = {
     let mut p = geometry_properties();
-    p[6] = integer("sta", Storage::U8, 1, 1, DefaultValue::Integer(1));
+    p[6] = integer("sta", Storage::U8, 0, 3, DefaultValue::Integer(1));
     p[7] = integer("dir", Storage::U8, 0, 2, DefaultValue::Integer(0));
     p[8] = integer("ch", Storage::U8, 1, 4, DefaultValue::Integer(1));
     p[9] = integer("bco", Storage::U16, 0, 65535, DefaultValue::Integer(0));
@@ -87,6 +89,8 @@ const WAVE_PROPERTIES: [Property; 18] = {
     p[15] = integer("pco2", Storage::U16, 0, 65535, DefaultValue::Integer(63488));
     p[16] = integer("pco3", Storage::U16, 0, 65535, DefaultValue::Integer(2016));
     p[17] = integer("dis", Storage::U16, 10, 1000, DefaultValue::Integer(100));
+    p[18] = background_image("pic", "sta", 2, false);
+    p[19] = background_image("picc", "sta", 0, true);
     p
 };
 const WAVE_FIELDS: [Field; 40] = {
@@ -95,8 +99,8 @@ const WAVE_FIELDS: [Field; 40] = {
     f[22] = field("dir", FieldValue::Property("dir"));
     f[23] = field("ch", FieldValue::Property("ch"));
     f[24] = field("bco", FieldValue::Property("bco"));
-    f[25] = field("picc", FieldValue::Constant(&[255, 255]));
-    f[26] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[25] = field("picc", FieldValue::Property("picc"));
+    f[26] = field("pic", FieldValue::Property("pic"));
     f[27] = field("gdc", FieldValue::Property("gdc"));
     f[28] = field("gdw", FieldValue::Property("gdw"));
     f[29] = field("gdh", FieldValue::Property("gdh"));
@@ -114,10 +118,10 @@ const WAVE_FIELDS: [Field; 40] = {
     f
 };
 
-const QR_PROPERTIES: [Property; 11] = {
+const QR_PROPERTIES: [Property; 12] = {
     let mut p = geometry_properties();
     // QR 的 sta 是 LOGO 开关，与背景模式不是同一概念。
-    p[6] = integer("sta", Storage::U8, 0, 0, DefaultValue::Integer(0));
+    p[6] = integer("sta", Storage::U8, 0, 1, DefaultValue::Integer(0));
     p[7] = integer("bco", Storage::U16, 0, 65535, DefaultValue::Integer(65535));
     p[8] = integer("pco", Storage::U16, 0, 65535, DefaultValue::Integer(0));
     p[9] = Property {
@@ -129,6 +133,8 @@ const QR_PROPERTIES: [Property; 11] = {
         image_rule: None,
     };
     p[10] = integer("txt_maxl", Storage::U16, 0, 192, DefaultValue::Integer(16));
+    // LOGO 使用普通图片，不按背景切图处理，也不改变二维码文字或控件几何。
+    p[11] = background_image("pic", "sta", 1, false);
     p
 };
 const QR_FIELDS: [Field; 28] = {
@@ -137,7 +143,7 @@ const QR_FIELDS: [Field; 28] = {
     f[22] = field("dis", FieldValue::Constant(&[8]));
     f[23] = field("bco", FieldValue::Property("bco"));
     f[24] = field("pco", FieldValue::Property("pco"));
-    f[25] = field("pic", FieldValue::Constant(&[255, 255]));
+    f[25] = field("pic", FieldValue::Property("pic"));
     f[26] = field("txt", FieldValue::Property("txt"));
     f[27] = field("txt_maxl", FieldValue::Property("txt_maxl"));
     f
