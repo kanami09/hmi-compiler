@@ -1144,3 +1144,11 @@ python examples/prepare_import_acceptance.py
 当前支持K/T的RGB565及X的JPEG图片、规定的UTF-8 ZI v6、已接入JPEG运行GMOV／GIF编辑源、VIDEO及其PCM音轨、格式化PCM16 WAV。标准RGB／RGBA／调色板等合法PNG头型及JPEG编辑源按包装、尺寸及结构校验后保留。原来没有.is或.gmovs就保持缺失：native包可保留现有内嵌运行GMOV，但不会为它伪造GIF、原始帧映射或转换参数；这不改变encoded运行GMOV只开放external的规则。
 
 外部控件仅导出原始路径字符串；导入器不会去SD、ram或用户机器的虚拟SD寻找文件。隐藏字段若含当前引用表中不存在的ID，也会报出实际引用问题，不把它静默改为none。型号、方向和编码兼容性仍必须通过检查；未知编码分支及不支持的源变体会具体指出资源名。
+
+生成媒体导入验收工程（输入使用此前已验收的Inputs两份媒体HMI）：
+
+```powershell
+python examples/prepare_import_media_acceptance.py --inputs path/to/Inputs0.HMI path/to/Inputs90.HMI
+```
+
+配套外部GMOV默认取输入HMI同级sd0目录，也可用--sd0明确指定。输出位于 `target/acceptance-import-media/`，最终MediaImport0／MediaImport90各15页。脚本先对照未修改重建的逻辑运行载荷、已有编辑源和目录未知字，再修改图片顺序、文字、坐标、循环和控件名；每份14个内嵌原生包、31条独立作业，HMI与统一入口相同，全部在无可用FFmpeg环境中完成。外部动画可沿用上一批已部署的input0／input90，详细预期见输出README。已有输出目录不会覆盖，roundtrip参考放在子目录，不是额外必验文件。
