@@ -21,6 +21,7 @@ const FIELDS: [Field; 33] = {
 };
 pub(super) const ANIMATION: Definition = Definition {
     name: "animation",
+    presentation: Presentation::Control,
     code: 2,
     properties: &[
         SCOPE,
@@ -62,6 +63,7 @@ const VIDEO_FIELDS: [Field; 34] = {
 };
 pub(super) const VIDEO: Definition = Definition {
     name: "video",
+    presentation: Presentation::Control,
     code: 3,
     properties: &[
         SCOPE,
@@ -85,6 +87,7 @@ pub(super) const VIDEO: Definition = Definition {
 
 pub(super) const AUDIO: Definition = Definition {
     name: "audio",
+    presentation: Presentation::None,
     code: 4,
     properties: &[
         SCOPE,

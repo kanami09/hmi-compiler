@@ -73,6 +73,33 @@
           "min": 0,
           "max": 2
         }
+      },
+      {
+        "control": "*",
+        "property": "drag",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 0
+        }
+      },
+      {
+        "control": "*",
+        "property": "aph",
+        "constraint": {
+          "kind": "range",
+          "min": 127,
+          "max": 127
+        }
+      },
+      {
+        "control": "*",
+        "property": "effect",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 0
+        }
       }
     ],
     "t0": [
@@ -137,6 +164,33 @@
           "kind": "range",
           "min": 0,
           "max": 2
+        }
+      },
+      {
+        "control": "*",
+        "property": "drag",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 0
+        }
+      },
+      {
+        "control": "*",
+        "property": "aph",
+        "constraint": {
+          "kind": "range",
+          "min": 127,
+          "max": 127
+        }
+      },
+      {
+        "control": "*",
+        "property": "effect",
+        "constraint": {
+          "kind": "range",
+          "min": 0,
+          "max": 0
         }
       }
     ]

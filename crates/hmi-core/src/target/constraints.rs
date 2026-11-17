@@ -62,19 +62,26 @@ pub(super) struct ResolvedRules {
 
 impl ControlPropertyConstraint {
     fn property_definition(&self) -> Result<&'static controls::Property> {
-        controls::by_name(&self.control)?
-            .properties
-            .iter()
-            .find(|p| p.name == self.property)
-            .ok_or_else(|| {
-                error(
-                    "target_rules",
-                    format!(
-                        "型号约束引用了不存在的属性 {}.{}",
-                        self.control, self.property
-                    ),
-                )
-            })
+        if self.control == "*" {
+            return controls::presentation_property(&self.property)
+                .ok_or_else(|| error("target_rules", "通配约束只适用于已登记的公共属性"));
+        }
+        (if self.control == "page" {
+            &controls::PAGE
+        } else {
+            controls::by_name(&self.control)?
+        })
+        .all_properties()
+        .find(|p| p.name == self.property)
+        .ok_or_else(|| {
+            error(
+                "target_rules",
+                format!(
+                    "型号约束引用了不存在的属性 {}.{}",
+                    self.control, self.property
+                ),
+            )
+        })
     }
 
     fn validate(&self) -> Result<()> {
@@ -217,14 +224,37 @@ impl RuleSet {
     fn resolve(&self, series: &str, profile: &str) -> Vec<ControlPropertyConstraint> {
         let mut merged = BTreeMap::new();
         // 不存在条目就保持通用范围；型号条目覆盖系列中的同一控件／属性。
-        for entry in self
-            .series
-            .get(series)
+        for entries in [self.series.get(series), self.profiles.get(profile)]
             .into_iter()
             .flatten()
-            .chain(self.profiles.get(profile).into_iter().flatten())
         {
-            merged.insert((&entry.control, &entry.property), entry.clone());
+            // 同一层先展开公共默认，再让具体控件覆盖；与JSON排列无关。
+            for entry in entries.iter().filter(|e| e.control == "*") {
+                for definition in controls::DEFINITIONS
+                    .iter()
+                    .chain(std::iter::once(&controls::PAGE))
+                {
+                    if definition
+                        .presentation
+                        .properties()
+                        .iter()
+                        .any(|p| p.name == entry.property)
+                    {
+                        let mut concrete = entry.clone();
+                        concrete.control = definition.name.into();
+                        merged.insert(
+                            (concrete.control.clone(), concrete.property.clone()),
+                            concrete,
+                        );
+                    }
+                }
+            }
+            for entry in entries.iter().filter(|e| e.control != "*") {
+                merged.insert(
+                    (entry.control.clone(), entry.property.clone()),
+                    entry.clone(),
+                );
+            }
         }
         merged.into_values().collect()
     }
@@ -270,7 +300,7 @@ pub(super) fn check(
     code: u8,
     attributes: &[(String, Vec<u8>)],
 ) -> Result<()> {
-    let definition = controls::by_code(code)?;
+    let definition = controls::record_definition(code)?;
     for rule in rules.iter().filter(|r| r.control == definition.name) {
         rule.check(profile, attributes)?;
     }
@@ -280,6 +310,51 @@ pub(super) fn check(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shared_wildcards_expand_and_specific_profile_rules_win_independent_of_order() {
+        let mut data: RuleSet = serde_json::from_str(DATA).unwrap();
+        let rule = |control: &str, max| ControlPropertyConstraint {
+            control: control.into(),
+            property: "aph".into(),
+            constraint: IntegerConstraint::Range { min: 0, max },
+        };
+        data.series.get_mut("k0").unwrap().push(rule("gauge", 100));
+        data.profiles.insert(
+            "TJC4832K035_011".into(),
+            vec![rule("gauge", 10), rule("*", 20)],
+        );
+        data.validate().unwrap();
+        let merged = data.resolve("k0", "TJC4832K035_011");
+        assert!(!merged.iter().any(|r| r.control == "*"));
+        assert_eq!(
+            merged
+                .iter()
+                .find(|r| r.control == "gauge" && r.property == "aph"),
+            Some(&rule("gauge", 10))
+        );
+        assert_eq!(
+            merged
+                .iter()
+                .find(|r| r.control == "text" && r.property == "aph"),
+            Some(&rule("text", 20))
+        );
+        assert!(!merged.iter().any(|r| r.control == "hotspot"));
+        assert!(
+            merged
+                .iter()
+                .filter(|r| r.control == "page")
+                .all(|r| r.property == "effect")
+        );
+        data.series
+            .get_mut("k0")
+            .unwrap()
+            .push(ControlPropertyConstraint {
+                control: "*".into(),
+                property: "val".into(),
+                constraint: IntegerConstraint::Values { values: vec![0] },
+            });
+        assert!(data.validate().is_err());
+    }
 
     #[test]
     fn defaults_are_unrestricted_and_profile_rules_override_series_by_property() {
@@ -288,7 +363,7 @@ mod tests {
             defaults
                 .property_constraints
                 .iter()
-                .all(|r| r.control != "slider")
+                .all(|r| r.control != "slider" || r.property != "psta")
         );
         let mut data: RuleSet = serde_json::from_str(DATA).unwrap();
         let replacement = ControlPropertyConstraint {
@@ -310,19 +385,21 @@ mod tests {
         assert_eq!(
             merged
                 .into_iter()
-                .filter(|r| r.control == "slider")
+                .filter(|r| r.control == "slider"
+                    && !matches!(r.property.as_str(), "drag" | "aph" | "effect"))
                 .collect::<Vec<_>>(),
             vec![replacement, extra]
         );
         assert!(
             data.resolve("t0", "TJC3224T028_011")
                 .iter()
-                .all(|r| r.control != "slider")
+                .all(|r| r.control != "slider" || r.property != "psta")
         );
         assert_eq!(
             data.resolve("k0", "other")
                 .iter()
-                .filter(|r| r.control == "slider")
+                .filter(|r| r.control == "slider"
+                    && !matches!(r.property.as_str(), "drag" | "aph" | "effect"))
                 .count(),
             1
         );

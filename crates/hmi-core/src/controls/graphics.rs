@@ -151,6 +151,7 @@ const QR_FIELDS: [Field; 28] = {
 
 pub(super) const GAUGE: Definition = Definition {
     name: "gauge",
+    presentation: Presentation::Control,
     code: 122,
     properties: &GAUGE_PROPERTIES,
     fields: &GAUGE_FIELDS,
@@ -159,6 +160,7 @@ pub(super) const GAUGE: Definition = Definition {
 };
 pub(super) const WAVEFORM: Definition = Definition {
     name: "waveform",
+    presentation: Presentation::Control,
     code: 0,
     properties: &WAVE_PROPERTIES,
     fields: &WAVE_FIELDS,
@@ -167,6 +169,7 @@ pub(super) const WAVEFORM: Definition = Definition {
 };
 pub(super) const QRCODE: Definition = Definition {
     name: "qrcode",
+    presentation: Presentation::Control,
     code: 58,
     properties: &QR_PROPERTIES,
     fields: &QR_FIELDS,

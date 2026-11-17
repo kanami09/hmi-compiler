@@ -10,6 +10,7 @@ const EXTERNAL_FIELDS: [Field; 23] = {
 
 pub(super) const EXTERNAL_PICTURE: Definition = Definition {
     name: "external_picture",
+    presentation: Presentation::Control,
     code: 60,
     properties: &[
         SCOPE,
@@ -157,6 +158,7 @@ const STREAM_FIELDS: [Field; 17] = [
 
 pub(super) const FILE_BROWSER: Definition = Definition {
     name: "file_browser",
+    presentation: Presentation::Control,
     code: 65,
     properties: BROWSER_PROPERTIES,
     fields: &BROWSER_FIELDS,
@@ -170,6 +172,7 @@ pub(super) const FILE_BROWSER: Definition = Definition {
 
 pub(super) const FILE_STREAM: Definition = Definition {
     name: "file_stream",
+    presentation: Presentation::None,
     code: 63,
     properties: &[integer(
         "vscope",
@@ -314,6 +317,7 @@ pub const DATA_RECORD_LIMIT: usize = 8;
 
 pub(super) const DATA_RECORD: Definition = Definition {
     name: "data_record",
+    presentation: Presentation::Control,
     code: 66,
     properties: RECORD_PROPERTIES,
     fields: &RECORD_FIELDS,

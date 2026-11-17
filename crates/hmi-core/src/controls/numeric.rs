@@ -63,6 +63,7 @@ const XFLOAT_FIELDS: [Field; 39] = fields(true);
 
 pub(super) const NUMBER: Definition = Definition {
     name: "number",
+    presentation: Presentation::Control,
     code: 54,
     properties: &NUMBER_PROPERTIES,
     fields: &NUMBER_FIELDS,
@@ -71,6 +72,7 @@ pub(super) const NUMBER: Definition = Definition {
 };
 pub(super) const XFLOAT: Definition = Definition {
     name: "xfloat",
+    presentation: Presentation::Control,
     code: 59,
     properties: &XFLOAT_PROPERTIES,
     fields: &XFLOAT_FIELDS,

@@ -39,6 +39,7 @@ const SWITCH_FIELDS: [Field; 32] = {
 
 pub(super) const SWITCH: Definition = Definition {
     name: "switch",
+    presentation: Presentation::Control,
     code: 67,
     properties: SWITCH_PROPERTIES,
     fields: &SWITCH_FIELDS,
@@ -135,6 +136,7 @@ const COMBO_BOX_FIELDS: [Field; 55] = {
 
 pub(super) const COMBO_BOX: Definition = Definition {
     name: "combo_box",
+    presentation: Presentation::Control,
     code: 61,
     properties: COMBO_BOX_PROPERTIES,
     fields: &COMBO_BOX_FIELDS,
@@ -197,6 +199,7 @@ const TEXT_SELECT_FIELDS: [Field; 41] = {
 
 pub(super) const TEXT_SELECT: Definition = Definition {
     name: "text_select",
+    presentation: Presentation::Control,
     code: 68,
     properties: TEXT_SELECT_PROPERTIES,
     fields: &TEXT_SELECT_FIELDS,
@@ -268,6 +271,7 @@ const SLIDING_TEXT_FIELDS: [Field; 44] = {
 
 pub(super) const SLIDING_TEXT: Definition = Definition {
     name: "sliding_text",
+    presentation: Presentation::Control,
     code: 62,
     properties: SLIDING_TEXT_PROPERTIES,
     fields: &SLIDING_TEXT_FIELDS,

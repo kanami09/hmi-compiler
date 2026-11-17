@@ -13,6 +13,7 @@ const FIELDS: [Field; 28] = {
 };
 pub const PAGE: Definition = Definition {
     name: "page",
+    presentation: Presentation::Page,
     code: 121,
     properties: &[
         integer("vscope", Storage::U8, 0, 0, DefaultValue::Integer(0)),

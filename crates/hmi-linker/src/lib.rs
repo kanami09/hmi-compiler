@@ -118,6 +118,7 @@ fn assemble_page(
                 ));
             }
             controls::PAGE.validate_record(&current.name, &attributes)?;
+            target.check_control_properties(121, &attributes)?;
             controls::PAGE_EVENTS
         } else {
             let definition = controls::by_code(current.type_code)?;
@@ -308,8 +309,7 @@ fn assemble_page(
                 }
                 let definition = controls::record_definition(parsed[relocation.object].type_code)?;
                 let expected = definition
-                    .properties
-                    .iter()
+                    .all_properties()
                     .find(|p| p.name == relocation.property)
                     .unwrap();
                 if !matches!(expected.storage, controls::Storage::ExternalPath(kind) if kind == info.kind())
@@ -365,8 +365,7 @@ fn assemble_page(
                 }
                 let definition = controls::record_definition(current.type_code)?;
                 let property = definition
-                    .properties
-                    .iter()
+                    .all_properties()
                     .find(|p| p.name == relocation.property)
                     .unwrap();
                 let attributes = current

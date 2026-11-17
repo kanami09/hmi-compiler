@@ -60,6 +60,7 @@ const DUAL_PROPERTIES: [Property; 27] = {
 // 两种按钮布局相同，val 的运行语义不同；不生成额外状态切换脚本。
 pub(super) const DUAL_STATE_BUTTON: Definition = Definition {
     name: "dual_state_button",
+    presentation: Presentation::Control,
     code: 53,
     properties: &DUAL_PROPERTIES,
     fields: &BUTTON_FIELDS,
@@ -128,6 +129,7 @@ const TOUCH_FIELDS: [Field; 8] = [
 
 pub(super) const SLIDER: Definition = Definition {
     name: "slider",
+    presentation: Presentation::Control,
     code: 1,
     properties: &SLIDER_PROPERTIES,
     fields: &SLIDER_FIELDS,
@@ -136,6 +138,7 @@ pub(super) const SLIDER: Definition = Definition {
 };
 pub(super) const TOUCH_CAPTURE: Definition = Definition {
     name: "touch_cap",
+    presentation: Presentation::None,
     code: 5,
     properties: &[SCOPE],
     fields: &TOUCH_FIELDS,
@@ -144,6 +147,7 @@ pub(super) const TOUCH_CAPTURE: Definition = Definition {
 };
 pub(super) const SCROLL_TEXT: Definition = Definition {
     name: "scrolling_text",
+    presentation: Presentation::Control,
     code: 55,
     properties: &SCROLL_PROPERTIES,
     fields: &SCROLL_FIELDS,

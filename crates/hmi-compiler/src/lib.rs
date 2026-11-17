@@ -119,7 +119,7 @@ fn bind_resources(
     owner: usize,
     resources: &mut Vec<hmi_artifact::Relocation>,
 ) -> Result<()> {
-    for property in definition.properties {
+    for property in definition.all_properties() {
         if matches!(property.storage, controls::Storage::ImageMap) {
             let empty = "".into();
             let entries =
@@ -145,8 +145,7 @@ fn bind_resources(
                         .and_then(|v| v.as_integer())
                         .or_else(|| {
                             definition
-                                .properties
-                                .iter()
+                                .all_properties()
                                 .find(|p| p.name == mode)
                                 .and_then(|p| match p.default {
                                     controls::DefaultValue::Integer(n) => Some(n),
@@ -311,7 +310,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
         }
     }
     for property in page.properties.keys() {
-        if !matches!(property.as_str(), "sta" | "bco" | "pic") {
+        if !matches!(property.as_str(), "sta" | "bco" | "pic" | "effect") {
             return Err(error(
                 "page_property",
                 format!("不支持页面属性 {property}；几何由目标固定"),
@@ -325,6 +324,7 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
     let mut resources = Vec::new();
     bind_resources(&controls::PAGE, &mut page_properties, 0, &mut resources)?;
     let attributes = controls::PAGE.attributes(&page.name, &page_properties)?;
+    target.check_control_properties(121, &attributes)?;
     let directory = path.parent().unwrap_or(Path::new("."));
     let mut inputs = vec![path.to_path_buf()];
     let mut facts = Vec::new();

@@ -291,7 +291,7 @@ impl CompiledObject {
                         layout.objects[relocation.object].type_code,
                     )?;
                     if relocation.reference.is_some()
-                        || !definition.properties.iter().any(|p| {
+                        || !definition.all_properties().any(|p| {
                             p.name == relocation.property
                                 && matches!(p.storage, hmi_core::controls::Storage::ImageMap)
                         })
@@ -308,7 +308,7 @@ impl CompiledObject {
                     let definition = hmi_core::controls::record_definition(
                         layout.objects[relocation.object].type_code,
                     )?;
-                    if !definition.properties.iter().any(|p| {
+                    if !definition.all_properties().any(|p| {
                         p.name == relocation.property
                             && matches!(p.storage, hmi_core::controls::Storage::ExternalPath(_))
                     }) {
@@ -340,7 +340,7 @@ impl CompiledObject {
                     let definition = hmi_core::controls::record_definition(
                         layout.objects[relocation.object].type_code,
                     )?;
-                    if !definition.properties.iter().any(|p| {
+                    if !definition.all_properties().any(|p| {
                         p.name == relocation.property
                             && if font {
                                 matches!(p.storage, hmi_core::controls::Storage::Font)
@@ -362,8 +362,7 @@ impl CompiledObject {
                         .ok_or_else(|| error("object_relocation", "资源重定位缺少引用"))?;
                     reference.validate()?;
                     let optional = definition
-                        .properties
-                        .iter()
+                        .all_properties()
                         .any(|p| p.name == relocation.property && p.allows_none());
                     if (reference.none == Some(true) && !optional)
                         || reference
@@ -382,7 +381,9 @@ impl CompiledObject {
             if index > 0 && !relocated.contains(&(index, "id")) {
                 return Err(error("object_relocation", "普通控件缺少 ID 重定位"));
             }
-            for property in hmi_core::controls::record_definition(record.type_code)?.properties {
+            for property in
+                hmi_core::controls::record_definition(record.type_code)?.all_properties()
+            {
                 if matches!(
                     property.storage,
                     hmi_core::controls::Storage::Image

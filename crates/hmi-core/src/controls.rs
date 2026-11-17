@@ -76,6 +76,7 @@ pub enum FieldValue {
     Name,
     Property(&'static str),
     Constant(&'static [u8]),
+    PropertyOrConstant(&'static [u8]),
     EndX,
     EndY,
 }
@@ -92,6 +93,31 @@ pub struct PropertyAccess {
     pub readonly: &'static [&'static str],
     pub page_local: &'static [&'static str],
     pub compile_only: &'static [&'static str],
+}
+
+/// 是否公开可视属性由类型明确声明，不从同名保留字节推断。
+#[derive(Clone, Copy, Debug, Serialize)]
+pub enum Presentation {
+    None,
+    Control,
+    Page,
+}
+const PRESENTATION_PROPERTIES: &[Property] = &[
+    integer("drag", Storage::U8, 0, 1, DefaultValue::Integer(0)),
+    integer("aph", Storage::U8, 0, 127, DefaultValue::Integer(127)),
+    integer("effect", Storage::U8, 0, 8, DefaultValue::Integer(0)),
+];
+impl Presentation {
+    pub fn properties(self) -> &'static [Property] {
+        match self {
+            Self::None => &[],
+            Self::Control => PRESENTATION_PROPERTIES,
+            Self::Page => &PRESENTATION_PROPERTIES[2..],
+        }
+    }
+}
+pub fn presentation_property(name: &str) -> Option<&'static Property> {
+    PRESENTATION_PROPERTIES.iter().find(|p| p.name == name)
 }
 impl PropertyAccess {
     pub const DEFAULT: Self = Self {
@@ -111,6 +137,7 @@ impl PropertyAccess {
 #[derive(Debug, Serialize)]
 pub struct Definition {
     pub name: &'static str,
+    pub presentation: Presentation,
     pub code: u8,
     pub properties: &'static [Property],
     pub fields: &'static [Field],
@@ -289,9 +316,9 @@ const HOTSPOT_FIELDS: &[Field] = &[
     field("id", FieldValue::Id),
     field("objname", FieldValue::Name),
     field("vscope", FieldValue::Property("vscope")),
-    field("drag", FieldValue::Constant(&[0])),
+    field("drag", FieldValue::PropertyOrConstant(&[0])),
     field("sendkey", FieldValue::Property("sendkey")),
-    field("aph", FieldValue::Constant(&[127])),
+    field("aph", FieldValue::PropertyOrConstant(&[127])),
     field("movex", FieldValue::Constant(&[0, 0])),
     field("movey", FieldValue::Constant(&[0, 0])),
     field("x", FieldValue::Property("x")),
@@ -300,7 +327,7 @@ const HOTSPOT_FIELDS: &[Field] = &[
     field("h", FieldValue::Property("h")),
     field("endx", FieldValue::EndX),
     field("endy", FieldValue::EndY),
-    field("effect", FieldValue::Constant(&[0])),
+    field("effect", FieldValue::PropertyOrConstant(&[0])),
     field("first", FieldValue::Constant(&[0])),
     field("time", FieldValue::Constant(&[0x2c, 1])),
     field("lockobj", FieldValue::Constant(&[0])),
@@ -429,6 +456,7 @@ pub const DEFINITIONS: &[Definition] = &[
     indicators::PROGRESS,
     Definition {
         name: "text",
+        presentation: Presentation::Control,
         code: 116,
         properties: &TEXT_PROPERTIES,
         fields: &TEXT_FIELDS,
@@ -437,6 +465,7 @@ pub const DEFINITIONS: &[Definition] = &[
     },
     Definition {
         name: "button",
+        presentation: Presentation::Control,
         code: 98,
         properties: &BUTTON_PROPERTIES,
         fields: &BUTTON_FIELDS,
@@ -445,6 +474,7 @@ pub const DEFINITIONS: &[Definition] = &[
     },
     Definition {
         name: "hotspot",
+        presentation: Presentation::None,
         code: 109,
         properties: HOTSPOT_PROPERTIES,
         fields: HOTSPOT_FIELDS,
@@ -453,6 +483,7 @@ pub const DEFINITIONS: &[Definition] = &[
     },
     Definition {
         name: "variable",
+        presentation: Presentation::None,
         code: 52,
         properties: VARIABLE_PROPERTIES,
         fields: VARIABLE_FIELDS,
@@ -461,6 +492,7 @@ pub const DEFINITIONS: &[Definition] = &[
     },
     Definition {
         name: "timer",
+        presentation: Presentation::None,
         code: 51,
         properties: TIMER_PROPERTIES,
         fields: TIMER_FIELDS,
@@ -469,6 +501,7 @@ pub const DEFINITIONS: &[Definition] = &[
     },
     Definition {
         name: "picture",
+        presentation: Presentation::Control,
         code: 112,
         properties: PICTURE_PROPERTIES,
         fields: &PICTURE_FIELDS,
@@ -477,6 +510,7 @@ pub const DEFINITIONS: &[Definition] = &[
     },
     Definition {
         name: "crop",
+        presentation: Presentation::Control,
         code: 113,
         properties: CROP_PROPERTIES,
         fields: &CROP_FIELDS,
@@ -519,7 +553,10 @@ pub fn record_definition(code: u8) -> Result<&'static Definition> {
 
 /// 注册表变化必须使旧目标配置失效，即使文件格式版本没有变化。
 pub fn fingerprint() -> String {
-    sha256(&serde_json::to_vec(&(DEFINITIONS, &PAGE)).expect("静态控件定义可以序列化"))
+    sha256(
+        &serde_json::to_vec(&(DEFINITIONS, &PAGE, PRESENTATION_PROPERTIES))
+            .expect("静态控件定义可以序列化"),
+    )
 }
 
 fn property_error(code: &str, property: &str, message: impl Into<String>) -> crate::Error {
@@ -654,6 +691,12 @@ impl Property {
 }
 
 impl Definition {
+    /// 类型专属与公共属性合并为同一个视图，供编译、反解和目标约束共用。
+    pub fn all_properties(&self) -> impl Iterator<Item = &'static Property> {
+        self.properties
+            .iter()
+            .chain(self.presentation.properties().iter())
+    }
     /// 保持布局顺序，先补齐已定义默认值，再编码；不会依据模式移除字段。
     pub fn attributes(
         &self,
@@ -662,7 +705,7 @@ impl Definition {
     ) -> Result<Vec<(String, Vec<u8>)>> {
         check_name(name)?;
         for key in properties.keys() {
-            if !self.properties.iter().any(|p| p.name == key) {
+            if !self.all_properties().any(|p| p.name == key) {
                 return Err(property_error(
                     "control_property",
                     key,
@@ -671,7 +714,7 @@ impl Definition {
             }
         }
         let mut values = BTreeMap::new();
-        for property in self.properties {
+        for property in self.all_properties() {
             let default;
             let value = if let Some(value) = properties.get(property.name) {
                 value
@@ -823,13 +866,17 @@ impl Definition {
                     FieldValue::Name => name.as_bytes().to_vec(),
                     FieldValue::Property(key) => values[key].clone(),
                     FieldValue::Constant(bytes) => bytes.to_vec(),
+                    FieldValue::PropertyOrConstant(default) => values
+                        .get(field.name)
+                        .cloned()
+                        .unwrap_or_else(|| default.to_vec()),
                     FieldValue::EndX => endpoint("x", "w")?,
                     FieldValue::EndY => endpoint("y", "h")?,
                 };
                 Ok((field.name.into(), value))
             })
             .collect::<Result<Vec<_>>>()?;
-        for property in self.properties {
+        for property in self.all_properties() {
             if matches!(
                 property.storage,
                 Storage::Image | Storage::Animation | Storage::Video | Storage::Audio
@@ -869,7 +916,7 @@ impl Definition {
         attributes: &[(String, Vec<u8>)],
     ) -> Result<BTreeMap<String, toml::Value>> {
         let mut properties = BTreeMap::new();
-        for property in self.properties {
+        for property in self.all_properties() {
             let bytes = attributes
                 .iter()
                 .find(|(key, _)| key == property.name)

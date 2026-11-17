@@ -71,6 +71,7 @@ const PROGRESS_FIELDS: [Field; 29] = {
 
 pub(super) const CHECKBOX: Definition = Definition {
     name: "checkbox",
+    presentation: Presentation::Control,
     code: 56,
     properties: &CHECKBOX_PROPERTIES,
     fields: &CHECKBOX_FIELDS,
@@ -79,6 +80,7 @@ pub(super) const CHECKBOX: Definition = Definition {
 };
 pub(super) const RADIO: Definition = Definition {
     name: "radio",
+    presentation: Presentation::Control,
     code: 57,
     properties: &RADIO_PROPERTIES,
     fields: &RADIO_FIELDS,
@@ -87,6 +89,7 @@ pub(super) const RADIO: Definition = Definition {
 };
 pub(super) const PROGRESS: Definition = Definition {
     name: "progress_bar",
+    presentation: Presentation::Control,
     code: 106,
     properties: &PROGRESS_PROPERTIES,
     fields: &PROGRESS_FIELDS,
