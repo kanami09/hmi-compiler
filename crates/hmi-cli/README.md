@@ -1071,3 +1071,11 @@ properties = { x = 20, y = 20, w = 64, h = 64, pic = { ref = "tile" }, drag = 1,
 页面effect当前也开放0～8（X系列），但开机第一个页面不显示页面加载特效；需要观察时从另一个页面跳转进入。官方说明还指出：初始effect为0时，运行指令不能改成其他特效。当前本工具检查源码初值及目标条件，尚不完整分析运行脚本中改变effect的语义；静态画布也不能代替模拟器或硬件动态验收。
 
 公共属性通过Definition.all_properties统一参与源码检查、目标反解、编译和链接防御性检查。原生布局仍保留相同字段顺序与宽度；未开放的类型继续使用原来的常量值。指针format／left／wid仍保持创建值0／0／2，符号或合法范围未确认时不按字节宽度猜测开放。
+
+生成公共属性组合验收工程：
+
+```powershell
+python examples/prepare_presentation_acceptance.py --font path/to/ui.zi
+```
+
+输出位于 `target/acceptance-presentation/`，Visual0／Visual90分别为X543的0°／90°，各六页，包含黑色开机页、拖动、不透明度、八种控件特效、页面特效及组合配置。页底箭头循环切换，资源全部内嵌，不需要虚拟SD或FFmpeg；各编译一次后在模拟器核对动态表现。图片由代码生成，仅需独立ZI，不读已有HMI。每份实际执行14条独立作业，HMI与统一入口相同；已有目录不会覆盖，完整参数及预期见输出README。
