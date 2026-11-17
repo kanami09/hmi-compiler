@@ -167,6 +167,7 @@ fn widgets(from: i64, keep_vid: bool) -> Vec<ObjectFile> {
                 ]);
             }
             ObjectFile {
+                original_record: None,
                 name: (*name).into(),
                 type_name: (*kind).into(),
                 properties,

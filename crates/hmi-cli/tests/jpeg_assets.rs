@@ -61,6 +61,7 @@ fn setup(orientation: u16) -> tempfile::TempDir {
         ("q0", "crop", "picc", "background", 96, 96),
     ] {
         page.objects.push(ObjectFile {
+            original_record: None,
             name: name.into(),
             type_name: kind.into(),
             properties: BTreeMap::from([

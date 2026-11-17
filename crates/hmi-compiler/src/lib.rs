@@ -54,7 +54,14 @@ pub fn compile_program(path: &Path, target: &Target) -> Result<Compilation> {
 }
 
 pub fn compile_page(path: &Path, target: &Target) -> Result<Compilation> {
-    compile_page_inner(path, target).map_err(|e| file::at_file(e, path))
+    compile_page_with_original(path, target, None)
+}
+pub fn compile_page_with_original(
+    path: &Path,
+    target: &Target,
+    original: Option<&hmi_artifact::original::OriginalBundle>,
+) -> Result<Compilation> {
+    compile_page_inner(path, target, original).map_err(|e| file::at_file(e, path))
 }
 
 type EventRecords = Vec<(String, Vec<Vec<u8>>)>;
@@ -272,14 +279,41 @@ fn bind_resources(
     Ok(())
 }
 
-fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
+fn compile_page_inner(
+    path: &Path,
+    target: &Target,
+    original: Option<&hmi_artifact::original::OriginalBundle>,
+) -> Result<Compilation> {
     target.validate()?;
     let page: PageSource = file::read_toml(path)?;
     check_schema(&page.schema, "hmi.page/1")?;
     check_name(&page.name)?;
-    if page.original_record.is_some() {
-        return Err(error("page_feature", "当前尚未接入原始数据附件"));
-    }
+    let require_original = || {
+        original.ok_or_else(|| {
+            error(
+                "original_required",
+                "源码声明了original_record，但未提供original附件",
+            )
+        })
+    };
+    let original_page = page
+        .original_record
+        .as_ref()
+        .map(|locator| -> Result<_> {
+            let bundle = require_original()?;
+            let index = hmi_artifact::original::OriginalBundle::page_index(locator)?;
+            let old = bundle.page(index)?;
+            if old.objects[0].integer("w") != Some(u32::from(target.canvas.width))
+                || old.objects[0].integer("h") != Some(u32::from(target.canvas.height))
+            {
+                return Err(error(
+                    "original_geometry",
+                    "原始页面几何与当前目标不一致，本批尚未接入此类方向迁移",
+                ));
+            }
+            Ok((index, old))
+        })
+        .transpose()?;
     if page.objects.len() > 250 {
         return Err(error("object_count", "页面最多包含 250 个普通控件"));
     }
@@ -336,7 +370,26 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
         &mut inputs,
         &mut facts,
     )?;
-    let mut records = vec![(121, page.name.clone(), write::object(&attributes, &events)?)];
+    let own_original =
+        original_page
+            .as_ref()
+            .map(|(_, p)| hmi_artifact::original::OriginalRecord {
+                raw: p.objects[0].raw.clone(),
+                index_unknown: p.indices[0].unknown,
+            });
+    let own = if let Some(old) = &own_original {
+        hmi_artifact::original::merge_record(
+            &controls::PAGE,
+            &page.name,
+            &attributes,
+            &events,
+            old,
+        )?
+    } else {
+        write::object(&attributes, &events)?
+    };
+    let mut originals = vec![own_original];
+    let mut records = vec![(121, page.name.clone(), own)];
     for (index, object) in page.objects.iter().enumerate() {
         let compiled = (|| {
             let definition = controls::by_name(&object.type_name)?;
@@ -362,19 +415,60 @@ fn compile_page_inner(path: &Path, target: &Target) -> Result<Compilation> {
                 &mut inputs,
                 &mut facts,
             )?;
-            Ok((
-                definition.code,
-                object.name.clone(),
-                write::object(&attributes, &events)?,
-            ))
+            let old = object
+                .original_record
+                .as_deref()
+                .map(|locator| require_original()?.object(locator))
+                .transpose()?;
+            let bytes = if let Some(old) = &old {
+                hmi_artifact::original::merge_record(
+                    definition,
+                    &object.name,
+                    &attributes,
+                    &events,
+                    old,
+                )?
+            } else {
+                write::object(&attributes, &events)?
+            };
+            originals.push(old);
+            Ok((definition.code, object.name.clone(), bytes))
         })()
         .map_err(|e| at_object(e, &page.name, &object.name, index + 1))?;
         records.push(compiled);
     }
-    Ok(Compilation {
-        object: CompiledObject::page(page.name, target, facts, records, resources)?,
-        inputs,
-    })
+    let mut object = CompiledObject::page(page.name, target, facts, records, resources)?;
+    for (record, original) in object
+        .metadata
+        .layout
+        .as_mut()
+        .unwrap()
+        .objects
+        .iter_mut()
+        .zip(originals)
+    {
+        record.original = original;
+    }
+    if let Some((index, page)) = original_page {
+        object.metadata.original_page_header = Some(page.raw[..56].to_vec());
+        object.metadata.original_page_directory =
+            Some(require_original()?.metadata.pages[index].directory_unknown);
+    }
+    if object.metadata.original_page_header.is_some()
+        || object
+            .metadata
+            .layout
+            .as_ref()
+            .unwrap()
+            .objects
+            .iter()
+            .any(|r| r.original.is_some())
+    {
+        object.metadata.original_bundle_sha256 =
+            Some(hmi_core::sha256(&require_original()?.encode()?));
+    }
+    object.validate()?;
+    Ok(Compilation { object, inputs })
 }
 
 /// init 的页面源码不依赖字体或图片，用户可直接完成第一次构建。

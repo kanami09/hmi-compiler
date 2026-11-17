@@ -106,7 +106,7 @@ fn assemble_page(
                 ("endx", u32::from(target.canvas.width) - 1),
                 ("endy", u32::from(target.canvas.height) - 1),
             ];
-            if current.attributes.len() != 28
+            if (current.attributes.len() != 28 && record.original.is_none())
                 || dimensions.iter().any(|(key, value)| {
                     current.integer(key) != Some(*value)
                         || current.attribute(key).is_none_or(|a| a.value.len() != 2)
@@ -117,7 +117,11 @@ fn assemble_page(
                     format!("页面 {name} 的自身对象与目标几何或属性布局不一致"),
                 ));
             }
-            controls::PAGE.validate_record(&current.name, &attributes)?;
+            hmi_artifact::original::validate_record(
+                &controls::PAGE,
+                &current,
+                record.original.as_ref(),
+            )?;
             target.check_control_properties(121, &attributes)?;
             controls::PAGE_EVENTS
         } else {
@@ -133,7 +137,11 @@ fn assemble_page(
                     format!("目标未开放控件类型 {}", definition.name),
                 ));
             }
-            definition.validate_record(&current.name, &attributes)?;
+            hmi_artifact::original::validate_record(
+                definition,
+                &current,
+                record.original.as_ref(),
+            )?;
             target
                 .check_control_properties(current.type_code, &attributes)
                 .map_err(|e| -> hmi_core::Error {
@@ -154,7 +162,7 @@ fn assemble_page(
             .map(|e| e.kind.as_str())
             .collect::<Vec<_>>()
             != slots
-            || write::object(&attributes, &events)? != current.raw
+            || (record.original.is_none() && write::object(&attributes, &events)? != current.raw)
         {
             return Err(error(
                 "object_layout",
@@ -434,7 +442,20 @@ fn assemble_page(
         .zip(&values)
         .map(|(object, values)| object.rebuild(values, &BTreeMap::new()))
         .collect::<Result<Vec<_>>>()?;
-    Ok((write::page(name, &objects)?, bound))
+    let unknown = layout
+        .objects
+        .iter()
+        .map(|r| r.original.as_ref().map_or(0, |r| r.index_unknown))
+        .collect::<Vec<_>>();
+    Ok((
+        write::page_preserved(
+            name,
+            &objects,
+            object.metadata.original_page_header.as_deref(),
+            &unknown,
+        )?,
+        bound,
+    ))
 }
 
 fn resolve_resource<T>(
@@ -830,6 +851,36 @@ pub fn check(
     assets: &[(String, AssetInfo)],
     deny_warnings: bool,
 ) -> Result<Vec<Diagnostic>> {
+    check_with_original(target, program, pages, assets, deny_warnings, None)
+}
+fn check_original_context(
+    pages: &[CompiledObject],
+    original: Option<&hmi_artifact::original::OriginalBundle>,
+) -> Result<()> {
+    let digest = original
+        .map(|o| o.encode().map(|b| hmi_core::sha256(&b)))
+        .transpose()?;
+    for page in pages {
+        if let Some(expected) = &page.metadata.original_bundle_sha256
+            && digest.as_ref() != Some(expected)
+        {
+            return Err(error(
+                "original_required",
+                "链接缺少页面声明的原始附件，或附件与编译时不一致",
+            ));
+        }
+    }
+    Ok(())
+}
+pub fn check_with_original(
+    target: &Target,
+    program: &CompiledObject,
+    pages: &[CompiledObject],
+    assets: &[(String, AssetInfo)],
+    deny_warnings: bool,
+    original: Option<&hmi_artifact::original::OriginalBundle>,
+) -> Result<Vec<Diagnostic>> {
+    check_original_context(pages, original)?;
     Ok(layout(target, program, pages, assets, deny_warnings)?.diagnostics)
 }
 
@@ -854,7 +905,22 @@ pub fn from_manifest(path: &Path, deny_warnings: bool) -> Result<Linked> {
         assets.push((asset.key, AssetObject::read(&input)?));
         inputs.push(input);
     }
-    let mut linked = link_with_assets(&target, &program, &pages, &assets, deny_warnings)?;
+    let original_path = source.original.as_ref().map(|o| directory.join(&o.bundle));
+    let original = original_path
+        .as_deref()
+        .map(hmi_artifact::original::OriginalBundle::read)
+        .transpose()?;
+    if let Some(path) = original_path {
+        inputs.push(path);
+    }
+    let mut linked = link_with_original(
+        &target,
+        &program,
+        &pages,
+        &assets,
+        deny_warnings,
+        original.as_ref(),
+    )?;
     linked.inputs = inputs;
     Ok(linked)
 }
@@ -875,6 +941,17 @@ pub fn link_with_assets(
     assets: &[(String, AssetObject)],
     deny_warnings: bool,
 ) -> Result<Linked> {
+    link_with_original(target, program, pages, assets, deny_warnings, None)
+}
+pub fn link_with_original(
+    target: &Target,
+    program: &CompiledObject,
+    pages: &[CompiledObject],
+    assets: &[(String, AssetObject)],
+    deny_warnings: bool,
+    original: Option<&hmi_artifact::original::OriginalBundle>,
+) -> Result<Linked> {
+    check_original_context(pages, original)?;
     for (_, asset) in assets {
         asset.validate_for(target)?;
     }
@@ -933,20 +1010,62 @@ pub fn link_with_assets(
         *id += 1;
     }
     references.extend((0..pages.len()).map(|id| ("pa".to_string(), format!("{id}.pa"))));
+    let mut directory_unknown = BTreeMap::new();
+    if let Some(original) = original {
+        original.validate()?;
+        directory_unknown.insert("main.HMI".into(), original.metadata.main_directory_unknown);
+        directory_unknown.insert(
+            "Program.s".into(),
+            original.metadata.program_directory_unknown,
+        );
+        for extra in &original.metadata.extras {
+            if resources.iter().any(|(name, _)| name == &extra.name) {
+                return Err(error(
+                    "original_resource",
+                    format!("原始资源 {} 与当前输出冲突", extra.name),
+                ));
+            }
+            resources.push((extra.name.clone(), original.extra_bytes(extra)?.to_vec()));
+            directory_unknown.insert(extra.name.clone(), extra.directory_unknown);
+        }
+        let main = original.main()?;
+        let start = hmi_format::binary::usize32(main, 24)?;
+        let count = hmi_format::binary::usize32(main, 28)?;
+        hmi_format::binary::checked_table(main, start, count, 16)?;
+        for i in 0..count {
+            let kind = hmi_format::binary::name(&main[start + i * 16..start + i * 16 + 8])?;
+            let name = hmi_format::binary::name(&main[start + i * 16 + 8..start + i * 16 + 16])?;
+            if kind != "pa" {
+                if !resources.iter().any(|(n, _)| n == &name) {
+                    return Err(error(
+                        "original_resource",
+                        format!("原始引用 {name} 缺少资源"),
+                    ));
+                }
+                references.push((kind, name));
+            }
+        }
+    }
+    for (id, page) in pages.iter().enumerate() {
+        if let Some(unknown) = page.metadata.original_page_directory {
+            directory_unknown.insert(format!("{id}.pa"), unknown);
+        }
+    }
     let borrowed = references
         .iter()
         .map(|(kind, name)| (kind.as_str(), name.as_str()))
         .collect::<Vec<_>>();
-    resources.push((
-        "main.HMI".into(),
-        write::main_resource(
-            &target.profile,
-            target.header_tag()?,
-            target.orientation,
-            &borrowed,
-        )?,
-    ));
-    let bytes = write::container(&resources)?;
+    let mut main = write::main_resource(
+        &target.profile,
+        target.header_tag()?,
+        target.orientation,
+        &borrowed,
+    )?;
+    if let Some(original) = original {
+        main = write::main_preserved(main, original.main()?)?;
+    }
+    resources.push(("main.HMI".into(), main));
+    let bytes = write::container_preserved(&resources, &directory_unknown)?;
     let container = Container::parse(bytes.clone())?;
     let project = Project::parse(&container)?;
     project.strict()?;

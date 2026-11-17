@@ -339,6 +339,7 @@ pub(crate) fn make_bundle(container: &Container, project: &Project) -> Result<Bu
                 }
             }
             objects.push(ObjectFile {
+                original_record: None,
                 name: object.name.clone(),
                 type_name: type_name(object.type_code),
                 properties: properties(object)?,

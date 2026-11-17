@@ -91,6 +91,7 @@ impl PageDocument {
                 })
                 .collect();
             ObjectFile {
+                original_record: None,
                 name: object.name.into_inner(),
                 type_name: object.type_name.into_inner(),
                 properties,

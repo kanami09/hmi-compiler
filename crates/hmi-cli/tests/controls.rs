@@ -26,6 +26,7 @@ fn fixture() -> tempfile::TempDir {
 }
 fn control(name: &str, kind: &str, properties: &[(&str, toml::Value)]) -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: name.into(),
         type_name: kind.into(),
         properties: properties

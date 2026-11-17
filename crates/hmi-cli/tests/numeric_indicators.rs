@@ -55,6 +55,7 @@ fn widget(kind: &str, name: &str, x: i64, y: i64, w: i64, h: i64) -> ObjectFile 
         );
     }
     ObjectFile {
+        original_record: None,
         name: name.into(),
         type_name: kind.into(),
         properties: p,

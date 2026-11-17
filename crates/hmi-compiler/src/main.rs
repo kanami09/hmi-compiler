@@ -22,6 +22,8 @@ enum Command {
     Page {
         source: PathBuf,
         #[arg(long)]
+        original: Option<PathBuf>,
+        #[arg(long)]
         target: PathBuf,
         #[arg(short, long)]
         output: PathBuf,
@@ -54,7 +56,11 @@ fn run(args: &Args) -> Result<CommandResult> {
                             .iter()
                             .map(|a| (a.name.clone(), a.value.clone()))
                             .collect::<Vec<_>>();
-                        definition.validate_record(&parsed.name, &attributes)?;
+                        hmi_artifact::original::validate_record(
+                            definition,
+                            &parsed,
+                            record.original.as_ref(),
+                        )?;
                         serde_json::json!(definition.properties_from_record(&attributes)?)
                     };
                     for relocation in &object.metadata.relocations {
@@ -91,6 +97,7 @@ fn run(args: &Args) -> Result<CommandResult> {
             source,
             target,
             output,
+            ..
         }
         | Command::Program {
             source,
@@ -98,13 +105,23 @@ fn run(args: &Args) -> Result<CommandResult> {
             output,
         } => {
             let config: Target = file::read_json(target)?;
+            let original_path = match &args.command {
+                Command::Page { original, .. } => original.as_deref(),
+                _ => None,
+            };
+            let original = original_path
+                .map(hmi_artifact::original::OriginalBundle::read)
+                .transpose()?;
             let compilation = if matches!(args.command, Command::Page { .. }) {
-                hmi_page_compiler::compile_page(source, &config)?
+                hmi_page_compiler::compile_page_with_original(source, &config, original.as_ref())?
             } else {
                 hmi_page_compiler::compile_program(source, &config)?
             };
             let mut inputs: Vec<_> = compilation.inputs.iter().map(|p| p.as_path()).collect();
             inputs.push(target);
+            if let Some(path) = original_path {
+                inputs.push(path);
+            }
             compilation.object.write(output, &inputs)?;
             Ok(cli::success(
                 serde_json::json!({"output":output,"kind":compilation.object.metadata.kind}),

@@ -63,6 +63,7 @@ fn reference(key: &str) -> toml::Value {
 }
 fn animation(name: &str, key: &str) -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: name.into(),
         type_name: "animation".into(),
         properties: BTreeMap::from([

@@ -66,6 +66,7 @@ fn setup() -> tempfile::TempDir {
 }
 fn browser() -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: "fb0".into(),
         type_name: "file_browser".into(),
         properties: BTreeMap::from([

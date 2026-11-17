@@ -297,12 +297,14 @@ fn compile_page(
         return (None, errors);
     }
     let own = ObjectFile {
+        original_record: None,
         name: edited.name.clone(),
         type_name: "page".into(),
         properties: edited.properties.clone(),
         events: edited.events.clone(),
     };
     let expected_own = ObjectFile {
+        original_record: None,
         name: expected.name.clone(),
         type_name: "page".into(),
         properties: expected.properties.clone(),

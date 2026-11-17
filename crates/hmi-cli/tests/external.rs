@@ -58,6 +58,7 @@ fn asset(root: &Path, key: &str, path: &str) {
 }
 fn object(name: &str, path: toml::Value) -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: name.into(),
         type_name: "external_picture".into(),
         properties: BTreeMap::from([

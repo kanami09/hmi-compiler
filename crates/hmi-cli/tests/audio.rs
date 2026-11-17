@@ -56,6 +56,7 @@ fn setup() -> tempfile::TempDir {
 }
 fn object() -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: "wav0".into(),
         type_name: "audio".into(),
         properties: BTreeMap::from([(

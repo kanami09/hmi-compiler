@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 pub mod asset;
 mod envelope;
+pub mod original;
 
 const MAGIC: &[u8; 8] = b"HMIOBJ02";
 
@@ -27,6 +28,8 @@ pub struct ObjectRecord {
     pub type_code: u8,
     pub offset: u32,
     pub length: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<original::OriginalRecord>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -64,6 +67,12 @@ pub struct Relocation {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Metadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_bundle_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_page_header: Option<Vec<u8>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_page_directory: Option<[u8; 3]>,
     pub schema: String,
     pub kind: ObjectKind,
     pub name: Option<String>,
@@ -113,6 +122,9 @@ impl CompiledObject {
     ) -> Self {
         Self {
             metadata: Metadata {
+                original_bundle_sha256: None,
+                original_page_header: None,
+                original_page_directory: None,
                 schema: "hmi.object/2".into(),
                 kind,
                 name,
@@ -145,6 +157,7 @@ impl CompiledObject {
             let length = u32::try_from(bytes.len())
                 .map_err(|_| error("object_length", "对象记录长度超过 u32 范围"))?;
             layout.objects.push(ObjectRecord {
+                original: None,
                 name,
                 type_code,
                 offset,
@@ -223,7 +236,10 @@ impl CompiledObject {
             }
         }
         if self.metadata.kind == ObjectKind::Program {
-            if self.metadata.layout.is_some()
+            if self.metadata.original_bundle_sha256.is_some()
+                || self.metadata.original_page_header.is_some()
+                || self.metadata.original_page_directory.is_some()
+                || self.metadata.layout.is_some()
                 || !self.metadata.relocations.is_empty()
                 || !self.metadata.runtime_dependencies.is_empty()
                 || self.metadata.scripts.iter().any(|f| {
@@ -249,8 +265,22 @@ impl CompiledObject {
             ));
         }
         let mut cursor = 0usize;
+        if self
+            .metadata
+            .original_page_header
+            .as_ref()
+            .is_some_and(|h| h.len() != 56 || h[21..23] != [0x55, 0x21])
+        {
+            return Err(error("original_page", "目标携带的原始页头格式无效"));
+        }
         let mut names = std::collections::BTreeSet::new();
         for (index, record) in layout.objects.iter().enumerate() {
+            if let Some(original) = &record.original {
+                let old = hmi_format::page::Object::parse(&original.raw)?;
+                if old.type_code != record.type_code {
+                    return Err(error("original_type", "目标携带的原始记录类型不一致"));
+                }
+            }
             hmi_core::model::check_name(&record.name)?;
             if !names.insert(&record.name) || record.offset as usize != cursor || record.length == 0
             {
@@ -270,6 +300,20 @@ impl CompiledObject {
         }
         if cursor != self.payload.len() {
             return Err(error("object_length", "对象记录未完整覆盖页面载荷"));
+        }
+        let preserved = self.metadata.original_page_header.is_some()
+            || layout.objects.iter().any(|r| r.original.is_some());
+        if preserved
+            && self
+                .metadata
+                .original_bundle_sha256
+                .as_ref()
+                .is_none_or(|s| s.len() != 64 || !s.bytes().all(|b| b.is_ascii_hexdigit()))
+        {
+            return Err(error(
+                "original_required",
+                "保留原始记录的目标缺少附件摘要声明",
+            ));
         }
         let mut relocated = std::collections::BTreeSet::new();
         for relocation in &self.metadata.relocations {

@@ -125,6 +125,7 @@ fn save(root: &Path, page_effect: i64, aph: i64) {
     let mut page = hmi_page_compiler::empty_page("page0");
     page.properties.insert("effect".into(), page_effect.into());
     page.objects.push(ObjectFile {
+        original_record: None,
         name: "t0".into(),
         type_name: "text".into(),
         properties: BTreeMap::from([

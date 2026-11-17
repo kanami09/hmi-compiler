@@ -11,6 +11,8 @@ pub type Properties = BTreeMap<String, toml::Value>;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ObjectFile {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_record: Option<String>,
     pub name: String,
     #[serde(rename = "type")]
     pub type_name: String,
@@ -80,10 +82,12 @@ pub struct AssetSources {
     pub items: Vec<AssetSource>,
 }
 
-/// 从零创建所需的完整清单；原始数据附件在后续导入阶段实现。
+/// 工程清单；original声明的是输入附件，不属于派生构建缓存。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectSource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<OriginalConfig>,
     pub schema: String,
     pub name: String,
     pub target: TargetConfig,
@@ -119,6 +123,8 @@ pub struct AssetObjects {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LinkSource {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<OriginalConfig>,
     pub schema: String,
     pub name: String,
     pub target: String,
@@ -156,4 +162,11 @@ pub fn check_name(name: &str) -> Result<()> {
         ));
     }
     Ok(())
+}
+
+/// 显式原始数据附件；路径相对于所在清单，不用于推断页面／控件身份。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OriginalConfig {
+    pub bundle: String,
 }

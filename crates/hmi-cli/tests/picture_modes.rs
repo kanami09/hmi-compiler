@@ -130,6 +130,7 @@ fn widget(kind: &str, state: u8) -> ObjectFile {
         properties.insert("psta".into(), (if state == 2 { 0 } else { 1 }).into());
     }
     ObjectFile {
+        original_record: None,
         name: match kind {
             "text" => "t0",
             "button" => "b0",
@@ -361,6 +362,7 @@ fn known_k_series_constraints_reject_transparent_mode() {
 
 fn additional_widget(kind: &str, state: u8) -> ObjectFile {
     let mut o = ObjectFile {
+        original_record: None,
         name: "w0".into(),
         type_name: kind.into(),
         properties: BTreeMap::from([

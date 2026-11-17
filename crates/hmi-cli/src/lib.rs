@@ -8,7 +8,7 @@ use hmi_core::{
     model::*,
     target::{DEFAULT_PROGRAM, Target, TargetConfig},
 };
-use hmi_page_compiler::{Compilation, compile_page, compile_program};
+use hmi_page_compiler::{Compilation, compile_program};
 use std::{
     fs,
     io::Write,
@@ -18,6 +18,8 @@ use std::{
 pub const BUILD_DIRECTORY: &str = ".build/hmi-toolchain";
 
 pub struct Prepared {
+    pub original: Option<hmi_artifact::original::OriginalBundle>,
+    pub original_path: Option<PathBuf>,
     pub root: PathBuf,
     pub project: ProjectSource,
     pub target: Target,
@@ -58,6 +60,7 @@ pub fn init(directory: &Path, config: &TargetConfig) -> Result<()> {
         ));
     }
     let project = ProjectSource {
+        original: None,
         schema: "hmi.project/1".into(),
         name: "Panel".into(),
         target: config.clone(),
@@ -107,9 +110,17 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         return Err(error("page_count", "工程至少需要一个页面"));
     }
     let target = Target::resolve(&project.target)?;
+    let original_path = project.original.as_ref().map(|o| root.join(&o.bundle));
+    let original = original_path
+        .as_deref()
+        .map(hmi_artifact::original::OriginalBundle::read)
+        .transpose()?;
     let program = compile_program(&root.join(&project.program.source), &target)?;
     let mut inputs = vec![manifest];
     inputs.extend(program.inputs.iter().cloned());
+    if let Some(path) = &original_path {
+        inputs.push(path.clone());
+    }
     let mut pages = Vec::new();
     let mut assets = Vec::new();
     let mut keys = std::collections::BTreeSet::new();
@@ -134,7 +145,8 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         if !paths.insert(canonical) {
             return Err(error("page_source", format!("页面输入 {source} 重复")));
         }
-        let compilation = compile_page(&path, &target)?;
+        let compilation =
+            hmi_page_compiler::compile_page_with_original(&path, &target, original.as_ref())?;
         inputs.extend(compilation.inputs.iter().cloned());
         pages.push(compilation);
     }
@@ -154,6 +166,8 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         });
     }
     Ok(Prepared {
+        original,
+        original_path,
         root,
         project,
         target,
@@ -191,7 +205,7 @@ impl Prepared {
             .iter()
             .map(|asset| (asset.key.clone(), asset.probe.info.clone()))
             .collect::<Vec<(String, AssetInfo)>>();
-        hmi_linker::check(
+        hmi_linker::check_with_original(
             &self.target,
             &self.program.object,
             &self
@@ -201,10 +215,11 @@ impl Prepared {
                 .collect::<Vec<_>>(),
             &images,
             deny_warnings,
+            self.original.as_ref(),
         )
     }
     pub fn link(&self, deny_warnings: bool) -> Result<hmi_linker::Linked> {
-        hmi_linker::link_with_assets(
+        hmi_linker::link_with_original(
             &self.target,
             &self.program.object,
             &self
@@ -214,6 +229,7 @@ impl Prepared {
                 .collect::<Vec<_>>(),
             &self.encode_assets()?,
             deny_warnings,
+            self.original.as_ref(),
         )
     }
 
@@ -247,6 +263,9 @@ impl Prepared {
             directory.join("jobs.json"),
             directory.join("obj/program.hmo"),
         ];
+        if self.original.is_some() {
+            paths.push(directory.join("original.hpo"));
+        }
         paths.extend((0..self.pages.len()).map(|id| directory.join(format!("obj/p{id:05}.hmo"))));
         paths.extend(
             (0..self.assets.len()).map(|id| directory.join(format!("assets/a{id:05}.hma"))),
@@ -285,6 +304,9 @@ impl Prepared {
         let target = directory.join("target.json");
         let program = directory.join("obj/program.hmo");
         let manifest = LinkSource {
+            original: self.original.as_ref().map(|_| OriginalConfig {
+                bundle: "original.hpo".into(),
+            }),
             schema: "hmi.link/1".into(),
             name: self.project.name.clone(),
             target: "target.json".into(),
@@ -311,7 +333,18 @@ impl Prepared {
         ];
         for (id, source) in self.project.pages.sources.iter().enumerate() {
             let output = directory.join(format!("obj/p{id:05}.hmo"));
-            jobs.push(serde_json::json!({"command":"hmi-compile","args":["page",self.root.join(source),"--target",target,"-o",output]}));
+            let mut args = vec![
+                serde_json::json!("page"),
+                serde_json::json!(self.root.join(source)),
+                serde_json::json!("--target"),
+                serde_json::json!(target),
+                serde_json::json!("-o"),
+                serde_json::json!(output),
+            ];
+            if let Some(path) = &self.original_path {
+                args.extend([serde_json::json!("--original"), serde_json::json!(path)]);
+            }
+            jobs.push(serde_json::json!({"command":"hmi-compile","args":args}));
             if write_objects {
                 self.pages[id].object.write(&output, &protected)?;
             }
@@ -329,6 +362,9 @@ impl Prepared {
         let output = self.output_path(requested_output)?;
         jobs.push(serde_json::json!({"command":"hmi-link","args":[directory.join("link.toml"),"-o",output]}));
         file::write_atomic(&target, &file::json(&self.target)?, &protected)?;
+        if let Some(original) = &self.original {
+            original.write(&directory.join("original.hpo"), &protected)?;
+        }
         file::write_atomic(
             &directory.join("link.toml"),
             &file::toml(&manifest)?,
@@ -354,7 +390,7 @@ pub fn build(
 ) -> Result<(PathBuf, hmi_linker::Linked)> {
     let prepared = prepare(root)?;
     let assets = prepared.encode_assets()?;
-    let linked = hmi_linker::link_with_assets(
+    let linked = hmi_linker::link_with_original(
         &prepared.target,
         &prepared.program.object,
         &prepared
@@ -364,6 +400,7 @@ pub fn build(
             .collect::<Vec<_>>(),
         &assets,
         deny_warnings,
+        prepared.original.as_ref(),
     )?;
     let output = prepared.output_path(requested)?;
     let map = output.parent().unwrap().join("link-map.json");

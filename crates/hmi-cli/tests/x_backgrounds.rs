@@ -113,6 +113,7 @@ fn widget(kind: &str, mode: i64) -> ObjectFile {
         }
     }
     ObjectFile {
+        original_record: None,
         name: format!("o{}", KINDS.iter().position(|k| *k == kind).unwrap()),
         type_name: kind.into(),
         properties: p,

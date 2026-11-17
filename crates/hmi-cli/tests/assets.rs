@@ -139,6 +139,7 @@ fn widget(
 ) -> ObjectFile {
     let (x, y, w, h) = geometry;
     ObjectFile {
+        original_record: None,
         name: name.into(),
         type_name: kind.into(),
         properties: BTreeMap::from([

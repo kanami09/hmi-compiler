@@ -71,6 +71,7 @@ fn widget(kind: &str, name: &str) -> ObjectFile {
         }
     }
     ObjectFile {
+        original_record: None,
         name: name.into(),
         type_name: kind.into(),
         properties: p,

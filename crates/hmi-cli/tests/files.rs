@@ -72,6 +72,7 @@ fn setup() -> tempfile::TempDir {
 }
 fn browser() -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: "fbrowser0".into(),
         type_name: "file_browser".into(),
         properties: BTreeMap::from([
@@ -89,6 +90,7 @@ fn browser() -> ObjectFile {
 }
 fn stream(name: &str) -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: name.into(),
         type_name: "file_stream".into(),
         properties: BTreeMap::new(),

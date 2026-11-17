@@ -70,6 +70,7 @@ fn compile(
         .object;
     let mut p = hmi_page_compiler::empty_page("p_video");
     p.objects.push(ObjectFile {
+        original_record: None,
         name: "v0".into(),
         type_name: "video".into(),
         properties: BTreeMap::from([

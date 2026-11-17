@@ -66,6 +66,16 @@ pub fn object(
 
 /// 页面索引偏移以页头之后的 +56 为基址，不以索引末尾为基址。
 pub fn page(name: &str, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
+    page_preserved(name, objects, None, &[])
+}
+
+/// 页头未知字节和各记录索引的第三字随原始记录保留，偏移、长度、名称与CRC重新生成。
+pub fn page_preserved(
+    name: &str,
+    objects: &[Vec<u8>],
+    original_header: Option<&[u8]>,
+    index_unknown: &[u32],
+) -> Result<Vec<u8>> {
     if objects.is_empty() || objects.len() > 251 {
         return Err(error(
             "object_count",
@@ -79,10 +89,22 @@ pub fn page(name: &str, objects: &[Vec<u8>]) -> Result<Vec<u8>> {
     output[24..40].copy_from_slice(&field(name, 16)?);
     // 当前 ver21234 配置的已观察固定字段，与对象记录分别保存。
     output[40..44].copy_from_slice(&[0x01, 0x44, 0x02, 0x18]);
+    if let Some(header) = original_header {
+        if header.len() != 56 || header[21..23] != [0x55, 0x21] {
+            return Err(error("original_page", "原始页头格式无效"));
+        }
+        output[..56].copy_from_slice(header);
+        put_u32(&mut output, 8, 56)?;
+        put_u32(&mut output, 12, objects.len())?;
+        output[24..40].copy_from_slice(&field(name, 16)?);
+    }
     for (i, object) in objects.iter().enumerate() {
         let offset = output.len() - 56;
         put_u32(&mut output, 56 + i * 12, offset)?;
         put_u32(&mut output, 60 + i * 12, object.len())?;
+        if let Some(value) = index_unknown.get(i) {
+            output[64 + i * 12..68 + i * 12].copy_from_slice(&value.to_le_bytes());
+        }
         output.extend(object);
     }
     let length = output.len();
@@ -173,4 +195,39 @@ pub fn container(resources: &[(String, Vec<u8>)]) -> Result<Vec<u8>> {
     }
     Container::parse(output.clone())?.strict()?;
     Ok(output)
+}
+
+/// 活动目录项的未知字段与资源绑定，不保留原目录位置或删除标志。
+pub fn container_preserved(
+    resources: &[(String, Vec<u8>)],
+    unknown: &std::collections::BTreeMap<String, [u8; 3]>,
+) -> Result<Vec<u8>> {
+    let mut bytes = container(resources)?;
+    for base in [0, BACKUP_START] {
+        for (index, (name, _)) in resources.iter().enumerate() {
+            if let Some(value) = unknown.get(name) {
+                bytes[base + 4 + index * 28 + 25..base + 4 + index * 28 + 28]
+                    .copy_from_slice(value);
+            }
+        }
+        let end = base + 4 + resources.len() * 28;
+        let crc = directory_crc(&bytes[base..end])?;
+        bytes[end..end + 4].copy_from_slice(&crc.to_le_bytes());
+    }
+    Container::parse(bytes.clone())?.strict()?;
+    Ok(bytes)
+}
+
+pub fn main_preserved(mut generated: Vec<u8>, original: &[u8]) -> Result<Vec<u8>> {
+    if original.len() < 96 || usize32(original, 24)? != 96 {
+        return Err(error("original_main", "原始主工程头格式不受支持"));
+    }
+    let known = generated[..96].to_vec();
+    generated[..96].copy_from_slice(&original[..96]);
+    for (start, end) in [(4, 8), (11, 14), (16, 20), (24, 32)] {
+        generated[start..end].copy_from_slice(&known[start..end]);
+    }
+    let crc = main_crc(&generated)?;
+    generated[..4].copy_from_slice(&crc.to_le_bytes());
+    Ok(generated)
 }

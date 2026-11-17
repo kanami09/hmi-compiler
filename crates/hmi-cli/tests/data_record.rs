@@ -44,6 +44,7 @@ fn setup() -> tempfile::TempDir {
 
 fn record(name: &str, path: &str) -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: name.into(),
         type_name: "data_record".into(),
         properties: BTreeMap::from([

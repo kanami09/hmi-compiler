@@ -164,7 +164,7 @@ impl Container {
         if !contiguous {
             diagnostics.push(Diagnostic::warning(
                 "resource_layout",
-                "资源不是连续完整布局，首版仅支持诊断，不支持导出回编",
+                "资源存在非连续布局或未使用字节",
             ));
         }
         Ok(Self {

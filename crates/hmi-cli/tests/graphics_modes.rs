@@ -81,6 +81,7 @@ fn widget(kind: &str, sta: i64) -> ObjectFile {
         }
     }
     ObjectFile {
+        original_record: None,
         name: match kind {
             "gauge" => "z0",
             "waveform" => "s0",

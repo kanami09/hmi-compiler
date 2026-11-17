@@ -20,6 +20,7 @@ fn compiler_cli_preserves_event_lines_and_cannot_overwrite_sources() {
     let mut page = hmi_page_compiler::empty_page("page0");
     page.events.insert("load".into(), "load.s".into());
     let mut variable = hmi_core::model::ObjectFile {
+        original_record: None,
         name: "va0".into(),
         type_name: "variable".into(),
         properties: Default::default(),
@@ -30,6 +31,7 @@ fn compiler_cli_preserves_event_lines_and_cannot_overwrite_sources() {
     variable.properties.insert("txt".into(), "测试A".into());
     page.objects.push(variable);
     page.objects.push(hmi_core::model::ObjectFile {
+        original_record: None,
         name: "exp0".into(),
         type_name: "external_picture".into(),
         properties: std::collections::BTreeMap::from([

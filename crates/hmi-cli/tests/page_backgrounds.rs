@@ -156,6 +156,7 @@ fn page_mode_changes_preserve_picture_and_colour_fields() {
 fn page_and_control_relocations_reorder_and_link_without_sources() {
     let tmp = setup();
     let picture = ObjectFile {
+        original_record: None,
         name: "p0".into(),
         type_name: "picture".into(),
         properties: BTreeMap::from([
@@ -268,6 +269,7 @@ fn transparent_controls_are_allowed_on_x_and_rejected_by_known_t_k_rules() {
             props.insert("txt".into(), "ABC".into());
         }
         let o = ObjectFile {
+            original_record: None,
             name: "w0".into(),
             type_name: kind.into(),
             properties: props,

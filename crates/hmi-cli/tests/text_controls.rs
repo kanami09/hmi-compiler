@@ -47,6 +47,7 @@ fn reference(field: &str, value: toml::Value) -> toml::Value {
 }
 fn widget(kind: &str, txt: &str) -> ObjectFile {
     ObjectFile {
+        original_record: None,
         name: if kind == "text" { "t0" } else { "b0" }.into(),
         type_name: kind.into(),
         properties: BTreeMap::from([
