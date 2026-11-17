@@ -328,10 +328,19 @@ impl Session {
                         human::completed(&message, &value, &self.command, self.sink.color);
                     }
                 } else {
+                    let operation = match self.command.as_str() {
+                        "build" | "rebuild" => "构建未完成",
+                        "page" | "program" => "编译未完成",
+                        "encode" | "builtin" => "媒体处理未完成",
+                        "import" => "导入未完成",
+                        "export" | "plan" | "target.export" => "导出未完成",
+                        "clean" => "清理未完成",
+                        _ => "命令未完成",
+                    };
                     human::line(
                         "失败",
                         &format!(
-                            "命令未完成（用时 {:.2} 秒）",
+                            "{operation}（用时 {:.2} 秒）",
                             self.report.elapsed_ms() as f64 / 1000.0
                         ),
                         self.sink.color,
@@ -340,12 +349,14 @@ impl Session {
                         for output in outputs {
                             let label = if output["state"] == "written" {
                                 "已写入"
+                            } else if output["kind"] == "hmi" {
+                                "HMI 输出未更新"
                             } else {
-                                "未写入"
+                                "未完成写入"
                             };
                             eprintln!(
                                 "         {label}：{}",
-                                output["path"].as_str().unwrap_or("")
+                                human::display_path(output["path"].as_str().unwrap_or(""))
                             );
                         }
                     }

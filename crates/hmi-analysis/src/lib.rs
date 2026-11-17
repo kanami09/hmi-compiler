@@ -178,23 +178,31 @@ impl ScriptFacts {
             if let Some(id) = number(&self.tokens[i + 1..end])
                 && (id < 0 || id as u64 >= page_count as u64)
             {
-                diagnostics.push(
-                    Diagnostic::error(
-                        "script_page",
-                        format!("页面 ID {id} 不存在，当前工程共有 {page_count} 个页面"),
-                    )
-                    .at(Location {
-                        file: Some(self.source.file.clone()),
-                        line: Some(token.line),
-                        column: self.tokens[i + 1].column,
-                        end_column: self.tokens[end - 1]
-                            .column
-                            .map(|column| column + self.tokens[end - 1].text.chars().count()),
-                        offset: self.tokens[i + 1].offset,
-                        event: self.source.event.clone(),
-                        ..Default::default()
-                    }),
-                );
+                let mut diagnostic = Diagnostic::error(
+                    "script_page",
+                    format!("页面 ID {id} 不存在，当前工程共有 {page_count} 个页面"),
+                )
+                .at(Location {
+                    file: Some(self.source.file.clone()),
+                    line: Some(token.line),
+                    column: self.tokens[i + 1].column,
+                    end_column: self.tokens[end - 1]
+                        .column
+                        .map(|column| column + self.tokens[end - 1].text.chars().count()),
+                    offset: self.tokens[i + 1].offset,
+                    event: self.source.event.clone(),
+                    ..Default::default()
+                });
+                diagnostic
+                    .details
+                    .insert("value".into(), serde_json::json!(id));
+                diagnostic
+                    .details
+                    .insert("page_count".into(), page_count.into());
+                diagnostic
+                    .details
+                    .insert("reference_kind".into(), "page_id".into());
+                diagnostics.push(diagnostic);
             }
         }
         diagnostics

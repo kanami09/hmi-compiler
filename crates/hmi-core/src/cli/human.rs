@@ -122,7 +122,7 @@ pub fn event(event: &Value, options: &OutputOptions, color: bool) {
         _ => {}
     }
 }
-fn display_path(path: &str) -> String {
+pub(super) fn display_path(path: &str) -> String {
     let path = Path::new(path);
     let current = std::env::current_dir()
         .ok()
