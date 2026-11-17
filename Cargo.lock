@@ -305,6 +305,7 @@ dependencies = [
  "hmi-linker",
  "hmi-media",
  "hmi-page-compiler",
+ "hmi-parser",
  "image",
  "serde_json",
  "tempfile",
@@ -392,6 +393,20 @@ dependencies = [
  "hmi-format",
  "serde_json",
  "tempfile",
+]
+
+[[package]]
+name = "hmi-parser"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "hmi-artifact",
+ "hmi-core",
+ "hmi-format",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "toml",
 ]
 
 [[package]]

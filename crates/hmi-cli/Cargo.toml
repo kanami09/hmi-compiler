@@ -10,6 +10,7 @@ name = "hmi"
 path = "src/main.rs"
 
 [dependencies]
+hmi-parser = { path = "../hmi-parser" }
 hmi-core = { path = "../hmi-core" }
 hmi-page-compiler = { path = "../hmi-compiler" }
 hmi-linker = { path = "../hmi-linker" }

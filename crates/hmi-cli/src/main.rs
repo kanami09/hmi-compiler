@@ -19,6 +19,14 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
+    /// 从已有HMI导入新版工程；当前首批支持无嵌入媒体工程。
+    Import {
+        file: PathBuf,
+        #[arg(short, long)]
+        output: PathBuf,
+    },
+    /// 查看已有HMI的目标、页面与活动资源。
+    Inspect { file: PathBuf },
     /// 新建不含字体或图片的空白工程。
     Init {
         directory: PathBuf,
@@ -79,6 +87,14 @@ fn target(profile: &str, orientation: u16) -> TargetConfig {
 }
 fn run(args: &Args) -> Result<CommandResult> {
     match &args.command {
+        Command::Import { file, output } => Ok(cli::success(
+            serde_json::json!(hmi_parser::export(file, output)?),
+            format!("新版工程已导入：{}", output.display()),
+        )),
+        Command::Inspect { file } => Ok(cli::success(
+            hmi_parser::inspect(file)?,
+            "HMI结构检查通过。",
+        )),
         Command::Init {
             directory,
             target: profile,
