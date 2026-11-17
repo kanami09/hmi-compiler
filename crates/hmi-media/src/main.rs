@@ -50,30 +50,24 @@ enum Command {
     Inspect { file: PathBuf },
 }
 fn timing_note(info: &hmi_artifact::asset::AssetInfo) -> String {
-    match info {
-        hmi_artifact::asset::AssetInfo::Audio { audio: a } => format!(
-            " 音频：{}Hz，{} 声道，{} 个采样，{}ms。",
-            a.sample_rate, a.channels, a.sample_frames, a.duration_ms
-        ),
-        hmi_artifact::asset::AssetInfo::Video { video: v } => format!(
-            " 视频：{} 帧，{}fps，{}ms；源音轨 {} 条，音轨策略 {}。",
-            v.frame_count, v.fps, v.duration_ms, v.source_audio_streams, v.audio_mode
-        ),
-        hmi_artifact::asset::AssetInfo::Animation { animation: a } => format!(
-            " 动画：{} 帧／{}ms → {} 帧／{}ms。",
-            a.source_frames, a.source_duration_ms, a.frame_count, a.duration_ms
-        ),
-        _ => String::new(),
-    }
+    format!(" {}。", hmi_media::describe_info(info))
 }
+
 fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
-    let _ = session;
     match &args.command {
-        Command::Backend => Ok(cli::success(
-            serde_json::json!({"directory":hmi_media::ffmpeg::directory()?,"backend":hmi_media::ffmpeg::backend_info()?}),
-            "FFmpeg 后端检查通过。",
-        )),
+        Command::Backend => {
+            let task = session.report.task("media", None, "check", "FFmpeg 后端");
+            let result = serde_json::json!({"directory":hmi_media::ffmpeg::directory()?,"backend":hmi_media::ffmpeg::backend_info()?});
+            task.finish(false);
+            Ok(cli::success(result, "FFmpeg 后端检查通过。"))
+        }
         Command::Builtin { id, target, output } => {
+            session.report.plan("media", 1);
+            session.report.plan_output("asset_object", output)?;
+            let task =
+                session
+                    .report
+                    .task("media", Some("media"), "encode", format!("内置图片 {id}"));
             let builtin = hmi_core::builtin::BuiltinImage::from_id(id).ok_or_else(|| {
                 hmi_core::error(
                     "builtin_asset",
@@ -83,24 +77,40 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
             let config: Target = file::read_json(target)?;
             let encoded = hmi_media::builtin::encode(builtin, &config)?;
             encoded.object.write(output, &[target])?;
+            session
+                .report
+                .written("asset_object", output, Some(&encoded.object.encode()?))?;
+            task.finish(false);
             Ok(cli::success(
                 serde_json::json!({"output":output,"asset":encoded.object.metadata.info,"input_action":"builtin","builtin":id}),
                 format!("内置图标已生成：{}", output.display()),
             ))
         }
         Command::Inspect { file } => {
+            let task = session.report.task(
+                "inspect",
+                None,
+                "validate",
+                format!("资产目标 {}", file.display()),
+            );
             let asset = AssetObject::read(file)?;
+            task.finish(false);
             Ok(cli::success(
                 serde_json::json!({"metadata":asset.metadata,"payload_size":asset.payload.len()}),
                 "资产目标校验通过。",
             ))
         }
         Command::Probe { source, target } => {
+            let task =
+                session
+                    .report
+                    .task("media", None, "check", format!("媒体 {}", source.display()));
             let target: Target = file::read_json(target)?;
             let probe = hmi_media::probe(source, &target)?;
             let message = format!("媒体输入检查通过。{}", timing_note(&probe.info));
             let mut value = serde_json::json!(probe.info);
             value["input_action"] = probe.action.into();
+            task.finish(false);
             Ok(cli::success(value, message))
         }
         Command::Encode {
@@ -108,6 +118,15 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
             target,
             output,
         } => {
+            session.report.plan("media", 1);
+            session.report.plan_output("asset_object", output)?;
+            let task = session.report.task(
+                "media",
+                Some("media"),
+                "process",
+                format!("媒体 {}", source.display()),
+            );
+            session.report.note(format!("输入：{}", source.display()));
             let config: Target = file::read_json(target)?;
             let encoded = hmi_media::encode(source, &config)?;
             let mut inputs = encoded
@@ -117,6 +136,16 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
                 .collect::<Vec<_>>();
             inputs.push(target);
             encoded.object.write(output, &inputs)?;
+            task.action(match encoded.action {
+                "original" => "reuse_original",
+                "native" => "preserve_native",
+                "encoded" => "package_encoded",
+                _ => "encode",
+            });
+            session
+                .report
+                .written("asset_object", output, Some(&encoded.object.encode()?))?;
+            task.finish(false);
             let note = timing_note(&encoded.object.metadata.info);
             Ok(cli::success(
                 serde_json::json!({"output":output,"asset":encoded.object.metadata.info,"input_action":encoded.action}),

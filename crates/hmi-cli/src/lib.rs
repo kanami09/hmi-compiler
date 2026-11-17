@@ -16,7 +16,7 @@ use std::{
 };
 
 mod cache;
-pub use cache::{BuildStats, clean};
+pub use cache::{BuildStats, clean, clean_with_report};
 
 pub const BUILD_DIRECTORY: &str = ".build/hmi-toolchain";
 
@@ -56,6 +56,20 @@ pub fn locate_root(directory: Option<&Path>) -> Result<PathBuf> {
 }
 
 pub fn init(directory: &Path, config: &TargetConfig) -> Result<()> {
+    init_with_report(directory, config, &hmi_core::report::Report::default())
+}
+
+pub fn init_with_report(
+    directory: &Path,
+    config: &TargetConfig,
+    report: &hmi_core::report::Report,
+) -> Result<()> {
+    let creating = report.task(
+        "init",
+        None,
+        "init",
+        format!("空白工程 {}", directory.display()),
+    );
     Target::resolve(config)?;
     if directory.exists() && fs::read_dir(directory)?.next().is_some() {
         return Err(error(
@@ -85,6 +99,10 @@ pub fn init(directory: &Path, config: &TargetConfig) -> Result<()> {
             file::toml(&hmi_page_compiler::empty_page("page0"))?,
         ),
     ];
+    report.project(&project.name, directory)?;
+    for (relative, _) in &files {
+        report.plan_output("project_source", &directory.join(relative))?;
+    }
     // 使用 create_new，目录检查后的并发文件创建也不能导致原文件被覆盖。
     for (relative, bytes) in files {
         let path = directory.join(relative);
@@ -98,7 +116,9 @@ pub fn init(directory: &Path, config: &TargetConfig) -> Result<()> {
             .write_all(&bytes)
             .map_err(|e| file::at_file(e.into(), &path))?;
         output.sync_all()?;
+        report.written("project_source", &path, Some(&bytes))?;
     }
+    creating.finish(false);
     Ok(())
 }
 
@@ -253,10 +273,23 @@ fn prepare_inner(
             .as_deref_mut()
             .map(|cache| cache.encode_builtin(builtin, &target))
             .transpose()?;
+        let probe = if encoded.is_some() {
+            hmi_media::builtin::probe(builtin, &target)?
+        } else {
+            let task = report.task(
+                "media",
+                Some("media"),
+                "check",
+                format!("内置图片 {}", builtin.id()),
+            );
+            let probe = hmi_media::builtin::probe(builtin, &target)?;
+            task.finish(false);
+            probe
+        };
         assets.push(AssetInput {
             key: builtin.key().into(),
             source: AssetOrigin::Builtin(builtin),
-            probe: hmi_media::builtin::probe(builtin, &target)?,
+            probe,
             encoded: encoded.map(|e| e.object),
         });
     }
@@ -387,7 +420,25 @@ impl Prepared {
         } else {
             Vec::new()
         };
-        self.save_plan_inner(directory, write_objects, requested_output, &assets)
+        self.save_plan_inner(directory, write_objects, requested_output, &assets, None)
+    }
+
+    pub fn save_plan_with_report(
+        &self,
+        directory: &Path,
+        requested_output: Option<&Path>,
+        report: &hmi_core::report::Report,
+    ) -> Result<()> {
+        let task = report.task(
+            "plan",
+            None,
+            "export",
+            format!("独立工具执行计划 {}", directory.display()),
+        );
+        self.save_plan_inner(directory, false, requested_output, &[], Some(report))
+            .map_err(|e| task.error(e))?;
+        task.finish(false);
+        Ok(())
     }
 
     fn save_plan_inner(
@@ -396,6 +447,7 @@ impl Prepared {
         write_objects: bool,
         requested_output: Option<&Path>,
         assets: &[(String, EncodedAsset)],
+        report: Option<&hmi_core::report::Report>,
     ) -> Result<()> {
         let directory = file::absolute(directory)?;
         let protected: Vec<_> = self.inputs.iter().map(|p| p.as_path()).collect();
@@ -403,6 +455,28 @@ impl Prepared {
         for path in &paths {
             file::protect_output(path, &protected)?;
         }
+        let kind = |path: &Path| match path.file_name().and_then(|p| p.to_str()).unwrap_or("") {
+            "target.json" => "target",
+            "jobs.json" => "build_plan",
+            "link.toml" => "link_description",
+            "original.hpo" => "original_bundle",
+            "program.hmo" => "program_object",
+            _ if path.extension().is_some_and(|e| e == "hma") => "asset_object",
+            _ => "page_object",
+        };
+        if let Some(report) = report {
+            for path in &paths {
+                if write_objects || !path.extension().is_some_and(|e| e == "hmo" || e == "hma") {
+                    report.plan_output(kind(path), path)?;
+                }
+            }
+        }
+        let recorded = |path: &Path| -> Result<()> {
+            if let Some(report) = report {
+                report.written(kind(path), path, Some(&file::read(path)?))?;
+            }
+            Ok(())
+        };
         let target = directory.join("target.json");
         let program = directory.join("obj/program.hmo");
         let manifest = LinkSource {
@@ -449,6 +523,7 @@ impl Prepared {
             jobs.push(serde_json::json!({"command":"hmi-compile","args":args}));
             if write_objects {
                 self.pages[id].object.write(&output, &protected)?;
+                recorded(&output)?;
             }
         }
         for (id, asset) in self.assets.iter().enumerate() {
@@ -459,26 +534,32 @@ impl Prepared {
             });
             if write_objects {
                 assets[id].1.write(&output, &protected)?;
+                recorded(&output)?;
             }
         }
         let output = self.output_path(requested_output)?;
         jobs.push(serde_json::json!({"command":"hmi-link","args":[directory.join("link.toml"),"-o",output]}));
         file::write_atomic(&target, &file::json(&self.target)?, &protected)?;
+        recorded(&target)?;
         if let Some(original) = &self.original {
             original.write(&directory.join("original.hpo"), &protected)?;
+            recorded(&directory.join("original.hpo"))?;
         }
         file::write_atomic(
             &directory.join("link.toml"),
             &file::toml(&manifest)?,
             &protected,
         )?;
+        recorded(&directory.join("link.toml"))?;
         file::write_atomic(
             &directory.join("jobs.json"),
             &file::json(&serde_json::json!({"schema":"hmi.build-plan/1","jobs":jobs}))?,
             &protected,
         )?;
+        recorded(&directory.join("jobs.json"))?;
         if write_objects {
             self.program.object.write(&program, &protected)?;
+            recorded(&program)?;
         }
         Ok(())
     }
@@ -584,10 +665,13 @@ pub fn build_with_report(
     protected_paths.extend(cache.protected_paths());
     protected_paths.extend(prepared.plan_paths(&build_directory));
     let protected: Vec<_> = protected_paths.iter().map(|p| p.as_path()).collect();
+    report.set_stage("publish");
     let publication =
         hmi_linker::publish::Publication::prepare(&linked, &output, Some(&map), &protected)?;
     cache.verify_inputs()?;
-    prepared.save_plan_inner(&build_directory, true, Some(&output), &assets)?;
+    report.set_stage("plan");
+    report.note("保存独立工具执行计划");
+    prepared.save_plan_inner(&build_directory, true, Some(&output), &assets, None)?;
     cache.record(&prepared.plan_paths(&build_directory))?;
     report.stage(
         "publish",

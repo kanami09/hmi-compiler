@@ -23,18 +23,31 @@ struct Args {
     warnings: Option<String>,
 }
 fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
-    let _ = session;
-    let linked =
-        hmi_linker::from_manifest(&args.source, args.deny_warnings || args.warnings.is_some())?;
+    if let Some(output) = &args.output {
+        session.report.plan_output("hmi", output)?;
+    }
+    if let Some(map) = &args.map {
+        session.report.plan_output("link_map", map)?;
+    }
+    let linked = hmi_linker::from_manifest_with_report(
+        &args.source,
+        args.deny_warnings || args.warnings.is_some(),
+        &session.report,
+    )?;
     let inputs: Vec<_> = linked.inputs.iter().map(|p| p.as_path()).collect();
     if let Some(output) = &args.output {
+        session.report.stage(
+            "publish",
+            "publish",
+            format!("{} 及配套文件", output.display()),
+        );
         hmi_linker::publish::Publication::prepare(&linked, output, args.map.as_deref(), &inputs)?
-            .write()?;
+            .write_with_report(&session.report)?;
     }
     Ok(CommandResult {
         result: serde_json::json!({"output":args.output,"output_written":args.output.is_some(),"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes),"map":linked.map,"external_files":linked.external_files.iter().map(|f| &f.path).collect::<Vec<_>>()}),
         message: if args.check {
-            "链接检查通过。".into()
+            "HMI 链接结果，未写入文件".into()
         } else {
             format!("重建完成：{}", args.output.as_ref().unwrap().display())
         },
@@ -49,7 +62,7 @@ fn main() -> ExitCode {
     let session = cli::Session::new(
         "hmi-link",
         env!("CARGO_PKG_VERSION"),
-        &cli::command_name::<Args>(),
+        if args.check { "check" } else { "link" },
         &args.reporting,
     );
     let outcome = run(&args, &session);

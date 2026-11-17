@@ -375,6 +375,12 @@ impl Cache {
             input: Option<String>,
             original: Option<String>,
         }
+        let task = self.report.task(
+            "media",
+            Some("media"),
+            "cache_check",
+            format!("媒体 {name}"),
+        );
         let kind: Kind = file::read_toml(path)?;
         let subject = format!(
             "{} {name}",
@@ -387,6 +393,7 @@ impl Cache {
                 _ => "媒体",
             }
         );
+        task.subject(subject);
         let media_target = serde_json::json!({
             "format": target.format, "encoding": target.encoding,
             "orientation": if kind.kind == "audio" { 0 } else { target.orientation },
@@ -411,14 +418,10 @@ impl Cache {
             && object.validate_for(target).is_ok()
         {
             self.stats.reused_assets += 1;
+            task.action("cache_hit");
+            task.finish(true);
             self.report
-                .task(
-                    "media",
-                    Some("media"),
-                    "cache_hit",
-                    format!("{subject}（构建缓存）"),
-                )
-                .finish(true);
+                .note(hmi_media::describe_info(&object.metadata.info));
             return Ok(hmi_media::EncodingResult {
                 action: "cache",
                 object,
@@ -431,9 +434,11 @@ impl Cache {
             _ if kind.original.is_some() => "process",
             _ => "encode",
         };
-        let task = self.report.task("media", Some("media"), action, subject);
+        task.action(action);
         self.report.note(format!("输入：{}", path.display()));
         let result = hmi_media::encode(path, target)?;
+        self.report
+            .note(hmi_media::describe_info(&result.object.metadata.info));
         task.action(match result.action {
             "original" => "reuse_original",
             "native" => "preserve_native",
@@ -562,6 +567,10 @@ fn input_path(path: &Path) -> Result<PathBuf> {
 
 /// 只删除登记过且内容未被修改的派生文件；不递归删除目录，不接触 dist 或原始附件。
 pub fn clean(root: &Path) -> Result<usize> {
+    clean_with_report(root, &hmi_core::report::Report::default())
+}
+
+pub fn clean_with_report(root: &Path, report: &hmi_core::report::Report) -> Result<usize> {
     let root = fs::canonicalize(root)?;
     let inputs = declared_inputs(&root)?;
     let _lock = ProjectLock::acquire(&root, &inputs)?;
@@ -594,6 +603,8 @@ pub fn clean(root: &Path) -> Result<usize> {
             if sha256(&file::read(&path)?) == digest {
                 paths.push(path);
             } else {
+                report.retained(&path);
+                report.note(format!("保留已修改文件：{}", path.display()));
                 retained.files.insert(relative, digest);
             }
         }
@@ -601,6 +612,8 @@ pub fn clean(root: &Path) -> Result<usize> {
     // 所有路径先通过检查，再开始删除；修改过的产物和未登记文件保留。
     for path in &paths {
         fs::remove_file(path).map_err(|e| file::at_file(e.into(), path))?;
+        report.removed(path);
+        report.note(format!("删除：{}", path.display()));
     }
     file::write_atomic(&state_path, &file::json(&retained)?, &protected)?;
     for relative in [

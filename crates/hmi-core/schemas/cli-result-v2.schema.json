@@ -1,0 +1,277 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HMI工具链命令结果 v2",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "tool": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "enum": [
+            "hmi",
+            "hmi-parse",
+            "hmi-compile",
+            "hmi-media",
+            "hmi-link"
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version"
+      ],
+      "additionalProperties": false
+    },
+    "command": {
+      "type": "string"
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "project": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "root": {
+          "$ref": "#/$defs/absolute_path"
+        }
+      },
+      "required": [
+        "name",
+        "root"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "elapsed_ms": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/counts"
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/output"
+          }
+        },
+        "removed_files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/absolute_path"
+          }
+        },
+        "retained_files": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/absolute_path"
+          }
+        }
+      },
+      "additionalProperties": true,
+      "description": "保留命令本身的结果字段；失败时保留已经获得的统计和产物状态。无法确定任何执行结果时为null。"
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/diagnostic"
+      }
+    }
+  },
+  "required": [
+    "schema_version",
+    "tool",
+    "command",
+    "ok",
+    "project",
+    "result",
+    "diagnostics"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "absolute_path": {
+      "type": "string",
+      "pattern": "^(?:[A-Za-z]:[\\\\/]|/|\\\\\\\\)",
+      "description": "构建机上的绝对文件系统路径；不用于HMI设备路径。"
+    },
+    "counts": {
+      "type": "object",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "processed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "reused": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "not_run": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total",
+        "processed",
+        "reused",
+        "failed",
+        "not_run"
+      ],
+      "additionalProperties": false,
+      "description": "各状态互斥，total等于其余四项之和；processed仅统计成功实际处理，reused仅统计构建缓存。"
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "path": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "state": {
+          "enum": [
+            "written",
+            "unchanged",
+            "not_written"
+          ]
+        },
+        "size_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "sha256": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "required": [
+        "kind",
+        "path",
+        "state",
+        "size_bytes",
+        "sha256"
+      ],
+      "additionalProperties": false,
+      "description": "not_written不表示文件不存在；大小与摘要只描述本次完成发布或确认复用的产物，目录为null。"
+    },
+    "location": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "$ref": "#/$defs/absolute_path"
+        },
+        "page": {
+          "type": "string"
+        },
+        "object": {
+          "type": "string"
+        },
+        "property": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string"
+        },
+        "object_index": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "end_column": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "offset": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "description": "行、列从1开始，列按Unicode字符计数，end_column为不包含末端；文本offset按UTF-8字节从0开始。无精确位置时省略字段。"
+    },
+    "diagnostic": {
+      "type": "object",
+      "properties": {
+        "severity": {
+          "enum": [
+            "error",
+            "warning"
+          ]
+        },
+        "code": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "stage": {
+          "type": "string"
+        },
+        "category": {
+          "type": "string"
+        },
+        "original_severity": {
+          "enum": [
+            "error",
+            "warning"
+          ]
+        },
+        "details": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "severity",
+        "code",
+        "message",
+        "location"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

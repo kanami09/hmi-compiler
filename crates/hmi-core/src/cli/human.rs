@@ -8,6 +8,12 @@ fn plain(text: &str) -> String {
     text.replace(['\r', '\n', '\u{1b}'], " ")
 }
 pub fn line(action: &str, subject: &str, color: bool) {
+    let subject = match action {
+        "preserve_native" => format!("{subject}（原生资产包）"),
+        "package_encoded" => format!("{subject}（已编码输入）"),
+        "reuse_original" => format!("{subject}（原始编码）"),
+        _ => subject.to_owned(),
+    };
     let action = match action {
         "compile" => "编译",
         "encode" => "编码",
@@ -16,17 +22,25 @@ pub fn line(action: &str, subject: &str, color: bool) {
         "preserve_native" => "保留",
         "reuse_original" => "复用",
         "check" => "检查",
+        "cache_check" => "检查缓存",
+        "cache_hit" => "复用",
         "link" => "链接",
         "validate" => "校验",
         "publish" => "写入",
         "import" => "导入",
+        "parse" => "解析",
         "export" => "导出",
         "init" => "创建",
         "clean" => "清理",
         "build" => "构建",
         other => other,
     };
-    let subject = plain(subject);
+    let subject = if Path::new(&subject).is_absolute() {
+        display_path(&subject)
+    } else {
+        subject
+    };
+    let subject = plain(&subject);
     if color {
         let code = match action {
             "错误" | "失败" => "31",
@@ -48,7 +62,7 @@ pub fn event(event: &Value, options: &OutputOptions, color: bool) {
         "task_started" => {
             let task = &event["task"];
             let action = text(task, "action");
-            if action != "cache_hit" || options.verbose {
+            if !matches!(action.as_str(), "cache_hit" | "cache_check") || options.verbose {
                 line(
                     if action == "cache_hit" {
                         "复用"
@@ -75,6 +89,25 @@ pub fn event(event: &Value, options: &OutputOptions, color: bool) {
                 );
             }
         }
+        "task_action"
+            if matches!(
+                event["task"]["action"].as_str(),
+                Some(
+                    "reuse_original" | "preserve_native" | "package_encoded" | "encode" | "process"
+                )
+            ) =>
+        {
+            line(
+                &text(&event["task"], "action"),
+                &text(&event["task"], "subject"),
+                color,
+            );
+        }
+        "task_action" if options.verbose && event["task"]["action"] == "cache_hit" => line(
+            "复用",
+            &format!("{}（构建缓存）", text(&event["task"], "subject")),
+            color,
+        ),
         "task_progress" => line(
             "进度",
             &format!(
@@ -164,10 +197,10 @@ pub fn diagnostic(d: &Diagnostic, color: bool) {
         eprintln!("   = 位置：{}", context.join("，"));
     }
     if d.original_severity == Some(Severity::Warning) && d.severity == Severity::Error {
-        eprintln!("   = 此警告按错误处理。");
+        eprintln!("   = 此警告因警告策略按错误处理。");
     }
 }
-pub fn completed(message: &str, result: &Value, color: bool) {
+pub fn completed(message: &str, result: &Value, command: &str, color: bool) {
     let mut messages = message.lines();
     let message = messages.next().unwrap_or("");
     let message = [
@@ -182,10 +215,30 @@ pub fn completed(message: &str, result: &Value, color: bool) {
     .iter()
     .find_map(|prefix| message.strip_prefix(prefix))
     .unwrap_or(message);
+    let message = if Path::new(message).is_absolute() {
+        display_path(message)
+    } else {
+        message.to_owned()
+    };
+    let size = result["size"]
+        .as_u64()
+        .map(|bytes| {
+            if bytes >= 1024 * 1024 {
+                format!("{:.2} MiB，", bytes as f64 / (1024.0 * 1024.0))
+            } else {
+                format!("{:.2} KiB，", bytes as f64 / 1024.0)
+            }
+        })
+        .unwrap_or_default();
+    let checking = matches!(command, "check" | "plan");
     line(
-        "完成",
+        if command == "check" {
+            "通过"
+        } else {
+            "完成"
+        },
         &format!(
-            "{}（用时 {:.2} 秒）",
+            "{}（{size}用时 {:.2} 秒）",
             message.trim_end_matches('。'),
             result["elapsed_ms"].as_u64().unwrap_or(0) as f64 / 1000.0
         ),
@@ -202,10 +255,24 @@ pub fn completed(message: &str, result: &Value, color: bool) {
         ("media", "媒体", "项"),
     ] {
         if let Some(count) = result["summary"].get(group) {
-            eprintln!(
-                "         {label}：处理 {} {unit}，复用 {} {unit}",
-                count["processed"], count["reused"]
-            );
+            if count["total"] == 0 {
+                continue;
+            }
+            let verb = if checking {
+                "检查"
+            } else if group == "media" {
+                "处理"
+            } else {
+                "编译"
+            };
+            let mut parts = vec![];
+            if count["processed"].as_u64().unwrap_or(0) > 0 {
+                parts.push(format!("{verb} {} {unit}", count["processed"]));
+            }
+            if count["reused"].as_u64().unwrap_or(0) > 0 {
+                parts.push(format!("复用 {} {unit}", count["reused"]));
+            }
+            eprintln!("         {label}：{}", parts.join("，"));
         }
     }
 }
@@ -234,7 +301,11 @@ pub fn query(command: &str, value: &Value) -> String {
             format!("编码      {}", target["encoding"].as_str().unwrap_or("")),
             format!("方向      {}°", target["orientation"]),
         ];
-        if let Some(canvas) = target.get("canvas") {
+        if let Some(canvas) = value
+            .get("canvas")
+            .filter(|c| c.is_object())
+            .or_else(|| target.get("canvas"))
+        {
             lines.push(format!(
                 "尺寸      {}×{}",
                 canvas["width"], canvas["height"]

@@ -54,23 +54,38 @@ pub fn script_lines(text: &str) -> Result<Vec<Vec<u8>>> {
 }
 
 pub fn at_file(error: Error, path: &Path) -> Error {
-    let mut diagnostic = error
-        .as_diagnostic()
-        .cloned()
-        .unwrap_or_else(|| crate::diagnostic::Diagnostic::error("io", error.to_string()));
-    if diagnostic.location.file.is_none() {
-        diagnostic.location.file = Some(
-            absolute(path)
-                .unwrap_or_else(|_| path.to_path_buf())
-                .display()
-                .to_string(),
-        );
+    let mut diagnostics = if error.as_diagnostic().is_some() {
+        error.diagnostics()
+    } else {
+        vec![crate::diagnostic::Diagnostic::error(
+            "io",
+            error.to_string(),
+        )]
+    };
+    for diagnostic in &mut diagnostics {
+        if diagnostic.location.file.is_none() {
+            diagnostic.location.file = Some(
+                absolute(path)
+                    .unwrap_or_else(|_| path.to_path_buf())
+                    .display()
+                    .to_string(),
+            );
+        }
     }
-    diagnostic.into()
+    if diagnostics.len() == 1 {
+        diagnostics.remove(0).into()
+    } else {
+        Error::Diagnostics(diagnostics)
+    }
 }
 
 pub fn read(path: &Path) -> Result<Vec<u8>> {
-    fs::read(path).map_err(|e| at_file(error("read_file", format!("无法读取文件：{e}")), path))
+    fs::read(path).map_err(|e| {
+        at_file(
+            crate::io_error("read_file", format!("无法读取文件：{e}"), &e),
+            path,
+        )
+    })
 }
 
 pub fn text(path: &Path) -> Result<String> {
@@ -135,7 +150,7 @@ impl StagedFile {
         protect_output(&self.path, inputs)?;
         self.temporary.persist(&self.path).map_err(|e| {
             at_file(
-                error("write_file", format!("无法写入文件：{}", e.error)),
+                crate::io_error("write_file", format!("无法写入文件：{}", e.error), &e.error),
                 &self.path,
             )
         })?;

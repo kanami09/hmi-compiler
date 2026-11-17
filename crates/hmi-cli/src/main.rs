@@ -90,19 +90,30 @@ fn target(profile: &str, orientation: u16) -> TargetConfig {
 fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
     match &args.command {
         Command::Import { file, output } => Ok(cli::success(
-            serde_json::json!(hmi_parser::export(file, output)?),
+            serde_json::json!(hmi_parser::export_with_report(
+                file,
+                output,
+                &session.report
+            )?),
             format!("新版工程已导入：{}", output.display()),
         )),
-        Command::Inspect { file } => Ok(cli::success(
-            hmi_parser::inspect(file)?,
-            "HMI结构检查通过。",
-        )),
+        Command::Inspect { file } => {
+            let task = session.report.task(
+                "inspect",
+                None,
+                "validate",
+                format!("HMI {}", file.display()),
+            );
+            let result = hmi_parser::inspect(file).map_err(|e| task.error(e))?;
+            task.finish(false);
+            Ok(cli::success(result, "HMI结构检查通过。"))
+        }
         Command::Init {
             directory,
             target: profile,
             orientation,
         } => {
-            hmi_cli::init(directory, &target(profile, *orientation))?;
+            hmi_cli::init_with_report(directory, &target(profile, *orientation), &session.report)?;
             Ok(cli::success(
                 serde_json::json!({"directory":directory}),
                 format!("空白工程已创建：{}", directory.display()),
@@ -119,7 +130,7 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
             checking.finish(false);
             Ok(CommandResult {
                 result: serde_json::json!({"pages":prepared.pages.len(),"output_written":false}),
-                message: "工程检查通过。".into(),
+                message: prepared.project.name.clone(),
                 diagnostics,
             })
         }
@@ -148,18 +159,37 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
         }
         Command::Clean { directory } => {
             let root = hmi_cli::locate_root(directory.as_deref())?;
-            let removed = hmi_cli::clean(&root)?;
+            let project: hmi_core::model::ProjectSource = file::read_toml(&root.join("hmi.toml"))?;
+            session.report.project(&project.name, &root)?;
+            let task = session.report.task(
+                "clean",
+                None,
+                "clean",
+                format!("{} 下已登记的构建产物", root.display()),
+            );
+            let removed =
+                hmi_cli::clean_with_report(&root, &session.report).map_err(|e| task.error(e))?;
+            task.finish(false);
             Ok(cli::success(
                 serde_json::json!({"removed":removed}),
-                format!("清理完成，删除 {removed} 个构建产物。"),
+                format!(
+                    "清理 {removed} 个构建产物，保留 {} 个已修改文件",
+                    session.report.retained_count()
+                ),
             ))
         }
         Command::Plan { directory, output } => {
             let root = hmi_cli::locate_root(directory.as_deref())?;
-            hmi_cli::prepare(&root)?.save_plan(output, false, None)?;
+            session.report.stage("load", "check", "工程配置与输入文件");
+            let prepared = hmi_cli::prepare_with_report(&root, &session.report)?;
+            prepared.save_plan_with_report(output, None, &session.report)?;
             Ok(cli::success(
                 serde_json::json!({"directory":output}),
-                format!("构建计划已导出：{}", output.display()),
+                format!(
+                    "构建计划已导出：{}（{} 项任务）",
+                    output.display(),
+                    prepared.pages.len() + prepared.assets.len() + 2
+                ),
             ))
         }
         Command::Target { action } => match action {
@@ -172,8 +202,17 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
                 orientation,
                 output,
             } => {
+                session.report.plan_output("target", output)?;
+                let exporting =
+                    session
+                        .report
+                        .task("export", None, "export", format!("目标配置 {profile}"));
                 let target = Target::resolve(&target(profile, *orientation))?;
                 file::write_atomic(output, &file::json(&target)?, &[])?;
+                session
+                    .report
+                    .written("target", output, Some(&file::json(&target)?))?;
+                exporting.finish(false);
                 Ok(cli::success(
                     serde_json::json!({"output":output}),
                     format!("目标配置已导出：{}", output.display()),

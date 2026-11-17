@@ -168,6 +168,9 @@ impl Publication {
                     ),
                 );
                 diagnostic.stage = Some("publish".into());
+                diagnostic
+                    .details
+                    .insert("causes".into(), serde_json::json!(e.diagnostics()));
                 diagnostic.location.file = Some(path.display().to_string());
                 diagnostic
                     .details

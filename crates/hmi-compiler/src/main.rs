@@ -40,10 +40,15 @@ enum Command {
     Inspect { file: PathBuf },
 }
 fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
-    let _ = session;
     match &args.command {
         Command::Inspect { file } => {
-            let object = CompiledObject::read(file)?;
+            let inspecting = session.report.task(
+                "inspect",
+                None,
+                "validate",
+                format!("目标文件 {}", file.display()),
+            );
+            let object = CompiledObject::read(file).map_err(|e| inspecting.error(e))?;
             let mut records = Vec::new();
             if let Some(layout) = &object.metadata.layout {
                 for (index, record) in layout.objects.iter().enumerate() {
@@ -89,6 +94,7 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
                     records.push(serde_json::json!({"record":index,"name":record.name,"type":hmi_format::page::type_name(record.type_code),"properties":properties,"id_pending":index>0}));
                 }
             }
+            inspecting.finish(false);
             Ok(cli::success(
                 serde_json::json!({"metadata":object.metadata,"objects":records,"payload_size":object.payload.len(),"payload_sha256":hmi_core::sha256(&object.payload),"implicit_assets":object.implicit_images().iter().map(|b|serde_json::json!({"key":b.key(),"builtin":b.id()})).collect::<Vec<_>>()}),
                 "目标文件校验通过。",
@@ -105,6 +111,30 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
             target,
             output,
         } => {
+            let is_page = matches!(args.command, Command::Page { .. });
+            let group = if is_page { "pages" } else { "program" };
+            let kind = if is_page {
+                "page_object"
+            } else {
+                "program_object"
+            };
+            session.report.plan(group, 1);
+            session.report.plan_output(kind, output)?;
+            if is_page {
+                session.report.page_sources(source);
+            } else {
+                session.report.source(source, None, None, None);
+            }
+            let compiling = session.report.task(
+                "compile",
+                Some(group),
+                "compile",
+                format!(
+                    "{} {}",
+                    if is_page { "页面" } else { "全局代码" },
+                    source.display()
+                ),
+            );
             let config: Target = file::read_json(target)?;
             let original_path = match &args.command {
                 Command::Page { original, .. } => original.as_deref(),
@@ -124,6 +154,10 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
                 inputs.push(path);
             }
             compilation.object.write(output, &inputs)?;
+            session
+                .report
+                .written(kind, output, Some(&compilation.object.encode()?))?;
+            compiling.finish(false);
             Ok(cli::success(
                 serde_json::json!({"output":output,"kind":compilation.object.metadata.kind}),
                 format!("编译完成：{}", output.display()),

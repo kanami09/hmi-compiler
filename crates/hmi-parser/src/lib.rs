@@ -87,7 +87,7 @@ pub fn read(path: &Path) -> Result<Parsed> {
 pub fn inspect(path: &Path) -> Result<serde_json::Value> {
     let p = read(path)?;
     Ok(
-        serde_json::json!({"target":p.target,"pages":p.project.pages.iter().enumerate().map(|(id,(_,page))|serde_json::json!({"id":id,"name":page.name,"objects":page.objects.iter().map(|o|serde_json::json!({"id":o.id,"name":o.name,"type":hmi_format::page::type_name(o.type_code)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),"active_resources":p.container.entries.iter().filter(|e|!e.deleted).collect::<Vec<_>>() }),
+        serde_json::json!({"target":p.target,"canvas":p.project.pages.first().and_then(|(_,page)|page.objects.first()).and_then(|o|Some(serde_json::json!({"width":o.integer("w")?,"height":o.integer("h")?}))),"pages":p.project.pages.iter().enumerate().map(|(id,(_,page))|serde_json::json!({"id":id,"name":page.name,"objects":page.objects.iter().map(|o|serde_json::json!({"id":o.id,"name":o.name,"type":hmi_format::page::type_name(o.type_code)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),"active_resources":p.container.entries.iter().filter(|e|!e.deleted).collect::<Vec<_>>() }),
     )
 }
 fn events(
@@ -125,7 +125,30 @@ fn events(
     Ok(result)
 }
 pub fn export(path: &Path, output: &Path) -> Result<ImportReport> {
-    let parsed = read(path)?;
+    export_with_report(path, output, &hmi_core::report::Report::default())
+}
+
+pub fn export_with_report(
+    path: &Path,
+    output: &Path,
+    report: &hmi_core::report::Report,
+) -> Result<ImportReport> {
+    report.plan_output("project", output)?;
+    let parsing = report.task("import", None, "parse", format!("HMI {}", path.display()));
+    let parsed = read(path).map_err(|e| parsing.error(e))?;
+    parsing.finish(false);
+    report.project(
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Imported"),
+        output,
+    )?;
+    let exporting = report.task(
+        "export",
+        None,
+        "export",
+        format!("工程 {}", output.display()),
+    );
     let target = Target::resolve(&parsed.target)?;
     if output.exists() && (!output.is_dir() || fs::read_dir(output)?.next().is_some()) {
         return Err(error(
@@ -258,6 +281,8 @@ pub fn export(path: &Path, output: &Path) -> Result<ImportReport> {
         fs::remove_dir(&output)?;
     }
     fs::rename(stage.path(), &output)?;
+    report.written("project", &output, None)?;
+    exporting.finish(false);
     Ok(ImportReport {
         directory: output,
         target: parsed.target,

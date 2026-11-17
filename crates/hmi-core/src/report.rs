@@ -125,6 +125,9 @@ impl Report {
             json!({"event":"stage_started","stage":stage,"action":action,"subject":subject.into()}),
         );
     }
+    pub fn set_stage(&self, stage: &str) {
+        self.inner.lock().unwrap().stage = stage.into();
+    }
     pub fn task(
         &self,
         stage: &str,
@@ -168,7 +171,7 @@ impl Report {
         for task in tasks {
             self.emit(
                 json!({"event":"task_progress","task_id":task.id,"stage":task.stage,
-                "subject":task.subject,"elapsed_ms":milliseconds(task.started.elapsed())}),
+                "subject":task.subject,"action":task.action,"elapsed_ms":milliseconds(task.started.elapsed())}),
             );
         }
     }
@@ -208,6 +211,9 @@ impl Report {
     }
     pub fn retained(&self, path: &Path) {
         self.inner.lock().unwrap().retained.push(path.into());
+    }
+    pub fn retained_count(&self) -> usize {
+        self.inner.lock().unwrap().retained.len()
     }
     pub fn source(
         &self,
@@ -307,7 +313,11 @@ impl Report {
             return value;
         }
         if !value.is_object() {
-            value = json!({"value":value});
+            value = if value.is_null() {
+                json!({})
+            } else {
+                json!({"value":value})
+            };
         }
         let mut summary = serde_json::Map::new();
         for (group, total) in &state.planned {
@@ -345,6 +355,16 @@ pub struct Task {
     done: bool,
 }
 impl Task {
+    pub fn subject(&self, subject: impl Into<String>) {
+        self.report.inner.lock().unwrap().tasks[self.id].subject = subject.into();
+    }
+    /// 错误绑定产生它的任务，后续并行执行也不依赖全局“最近阶段”。
+    pub fn error(&self, error: crate::Error) -> crate::Error {
+        let stage = self.report.inner.lock().unwrap().tasks[self.id]
+            .stage
+            .clone();
+        error.with_stage(&stage)
+    }
     /// 缓存复用与成功处理互斥计数；原始编码复用仍属于一次实际媒体处理。
     pub fn finish(mut self, reused: bool) {
         self.end(if reused { "reused" } else { "processed" });
@@ -353,7 +373,17 @@ impl Task {
         self.end("failed");
     }
     pub fn action(&self, action: &str) {
-        self.report.inner.lock().unwrap().tasks[self.id].action = action.into();
+        let record = {
+            let mut state = self.report.inner.lock().unwrap();
+            let task = &mut state.tasks[self.id];
+            if task.action == action {
+                return;
+            }
+            task.action = action.into();
+            task.clone()
+        };
+        self.report
+            .emit(json!({"event":"task_action","task":record}));
     }
     fn end(&mut self, status: &str) {
         let record = {

@@ -24,14 +24,24 @@ enum Action {
     },
 }
 fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
-    let _ = session;
     match &args.command {
-        Action::Inspect { file } => Ok(cli::success(
-            hmi_parser::inspect(file)?,
-            "HMI结构检查通过。",
-        )),
+        Action::Inspect { file } => {
+            let task = session.report.task(
+                "inspect",
+                None,
+                "validate",
+                format!("HMI {}", file.display()),
+            );
+            let result = hmi_parser::inspect(file).map_err(|e| task.error(e))?;
+            task.finish(false);
+            Ok(cli::success(result, "HMI结构检查通过。"))
+        }
         Action::Export { file, output } => Ok(cli::success(
-            serde_json::json!(hmi_parser::export(file, output)?),
+            serde_json::json!(hmi_parser::export_with_report(
+                file,
+                output,
+                &session.report
+            )?),
             format!("新版工程已导出：{}", output.display()),
         )),
     }

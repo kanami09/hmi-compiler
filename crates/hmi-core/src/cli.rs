@@ -164,13 +164,16 @@ pub fn parse<T: clap::Parser>() -> std::result::Result<T, ExitCode> {
                     }
                     _ => "arguments",
                 };
-                let diagnostics = if code == 0 {
+                let mut diagnostics = if code == 0 {
                     vec![]
                 } else {
                     vec![Diagnostic::error("arguments", error.to_string())]
                 };
+                for diagnostic in &mut diagnostics {
+                    diagnostic.stage = Some("arguments".into());
+                }
                 let value = json!({"schema_version":2,"tool":{"name":name,"version":command.get_version().unwrap_or("")},
-                    "command":info,"ok":code==0,"project":null,
+                    "command":if code==0 {info.to_owned()}else{command_name::<T>()},"ok":code==0,"project":null,
                     "result":if code==0 {json!({if info=="version" {"version"} else {"help_text"}:if info=="version" {command.get_version().unwrap_or("").to_owned()}else{error.to_string()}})}else{Value::Null},
                     "diagnostics":diagnostics});
                 if matches!(options.format(), MessageFormat::Jsonl) {
@@ -193,14 +196,14 @@ struct Sink {
     color: bool,
 }
 impl Sink {
-    fn event(&self, event: Value) {
+    fn event(&self, mut event: Value) {
         let _guard = self.lock.lock().unwrap();
         match self.options.format() {
             MessageFormat::Json => {}
-            MessageFormat::Jsonl => println!(
-                "{}",
-                json!({"schema_version":2,"event":event["event"],"data":event})
-            ),
+            MessageFormat::Jsonl => {
+                let name = event.as_object_mut().unwrap().remove("event").unwrap();
+                println!("{}", json!({"schema_version":2,"event":name,"data":event}));
+            }
             MessageFormat::Human => human::event(&event, &self.options, self.color),
         }
     }
@@ -322,7 +325,7 @@ impl Session {
                     }) {
                         println!("{query}");
                     } else if !self.sink.options.quiet {
-                        human::completed(&message, &value, self.sink.color);
+                        human::completed(&message, &value, &self.command, self.sink.color);
                     }
                 } else {
                     human::line(

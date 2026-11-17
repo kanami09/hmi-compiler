@@ -27,6 +27,54 @@ pub mod ffmpeg;
 mod video;
 
 const MAX_RGBA_BYTES: u64 = 64 * 1024 * 1024;
+
+/// 只说明资产包中已知的输出信息；不把原生包缺失的源参数推测为零或默认值。
+pub fn describe_info(info: &AssetInfo) -> String {
+    match info {
+        AssetInfo::Image { image } => format!(
+            "图片：{}×{}，{}，方向 {}°{}",
+            image.width,
+            image.height,
+            image.codec,
+            image.orientation,
+            image
+                .jpeg
+                .as_ref()
+                .and_then(|j| j.quality)
+                .map(|q| format!("，JPEG 质量 {q}"))
+                .unwrap_or_default()
+        ),
+        AssetInfo::Font { font } => format!(
+            "字库：字高 {}，{} 个字形，ZI v{}，方向 {}°",
+            font.height, font.glyph_count, font.version, font.orientation
+        ),
+        AssetInfo::Animation { animation } => format!(
+            "动画：{}×{}，{} 帧，{} 毫秒，方向 {}°",
+            animation.width,
+            animation.height,
+            animation.frame_count,
+            animation.duration_ms,
+            animation.orientation
+        ),
+        AssetInfo::Video { video } => format!(
+            "视频：{}×{}，{} 帧，{}fps，{} 毫秒，{}",
+            video.width,
+            video.height,
+            video.frame_count,
+            video.fps,
+            video.duration_ms,
+            if video.audio_applied {
+                "含内嵌音频"
+            } else {
+                "无内嵌音频"
+            }
+        ),
+        AssetInfo::Audio { audio } => format!(
+            "音频：{}Hz，{} 声道，{} 个采样，{} 毫秒",
+            audio.sample_rate, audio.channels, audio.sample_frames, audio.duration_ms
+        ),
+    }
+}
 pub struct AssetProbe {
     pub action: &'static str,
     pub info: AssetInfo,

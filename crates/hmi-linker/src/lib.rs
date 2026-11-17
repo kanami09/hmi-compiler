@@ -831,9 +831,6 @@ fn layout(
                 | "property_resource"
                 | "script_facts"
         ) {
-            if diagnostic.severity == Severity::Warning {
-                diagnostic.original_severity = Some(Severity::Warning);
-            }
             diagnostic.severity = Severity::Error;
         }
     }
@@ -844,6 +841,9 @@ fn layout(
         for diagnostic in &mut diagnostics {
             if diagnostic.severity == Severity::Warning {
                 diagnostic.original_severity = Some(Severity::Warning);
+                diagnostic
+                    .details
+                    .insert("warning_policy".into(), "error".into());
                 diagnostic.severity = Severity::Error;
             }
         }
@@ -900,6 +900,20 @@ pub fn check_with_original(
 }
 
 pub fn from_manifest(path: &Path, deny_warnings: bool) -> Result<Linked> {
+    from_manifest_with_report(path, deny_warnings, &hmi_core::report::Report::default())
+}
+
+pub fn from_manifest_with_report(
+    path: &Path,
+    deny_warnings: bool,
+    report: &hmi_core::report::Report,
+) -> Result<Linked> {
+    let loading = report.task(
+        "load",
+        None,
+        "check",
+        format!("链接描述 {}", path.display()),
+    );
     let source: LinkSource = file::read_toml(path)?;
     check_schema(&source.schema, "hmi.link/1")?;
     let directory = path.parent().unwrap_or(Path::new("."));
@@ -928,13 +942,15 @@ pub fn from_manifest(path: &Path, deny_warnings: bool) -> Result<Linked> {
     if let Some(path) = original_path {
         inputs.push(path);
     }
-    let mut linked = link_with_original(
+    loading.finish(false);
+    let mut linked = link_with_original_and_report(
         &target,
         &program,
         &pages,
         &assets,
         deny_warnings,
         original.as_ref(),
+        report,
     )?;
     linked.inputs = inputs;
     Ok(linked)

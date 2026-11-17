@@ -35,8 +35,27 @@ pub fn error(code: &str, message: impl Into<String>) -> Error {
 
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
-        Self::Message(value.to_string())
+        io_error("io", value.to_string(), &value)
     }
+}
+
+/// 操作系统错误保留可判定的类别和原始错误号，调用方无须解析本地化说明。
+pub fn io_error(code: &str, message: String, cause: &std::io::Error) -> Error {
+    let mut diagnostic = diagnostic::Diagnostic::error(code, message);
+    let kind = match cause.kind() {
+        std::io::ErrorKind::NotFound => "not_found",
+        std::io::ErrorKind::PermissionDenied => "permission_denied",
+        std::io::ErrorKind::AlreadyExists => "already_exists",
+        std::io::ErrorKind::InvalidInput => "invalid_input",
+        _ => "other",
+    };
+    diagnostic.details.insert("io_kind".into(), kind.into());
+    if let Some(code) = cause.raw_os_error() {
+        diagnostic
+            .details
+            .insert("os_error_code".into(), code.into());
+    }
+    diagnostic.into()
 }
 
 impl From<diagnostic::Diagnostic> for Error {
@@ -65,6 +84,14 @@ impl Error {
             Self::Diagnostics(diagnostics) => diagnostics.clone(),
             Self::Message(message) => vec![diagnostic::Diagnostic::error("execution", message)],
         }
+    }
+
+    pub fn with_stage(self, stage: &str) -> Self {
+        let mut diagnostics = self.diagnostics();
+        for diagnostic in &mut diagnostics {
+            diagnostic.stage.get_or_insert_with(|| stage.into());
+        }
+        Self::Diagnostics(diagnostics)
     }
 }
 

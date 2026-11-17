@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HMI工具链JSONL事件 v2",
+  "type": "object",
+  "properties": {
+    "schema_version": {
+      "const": 2
+    },
+    "event": {
+      "enum": [
+        "command_started",
+        "stage_started",
+        "task_started",
+        "task_action",
+        "task_finished",
+        "task_progress",
+        "detail",
+        "output_written",
+        "diagnostic",
+        "result"
+      ]
+    },
+    "data": {
+      "type": "object"
+    }
+  },
+  "required": [
+    "schema_version",
+    "event",
+    "data"
+  ],
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "$ref": "cli-result-v2.schema.json"
+          }
+        }
+      }
+    }
+  ]
+}

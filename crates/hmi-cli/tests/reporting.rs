@@ -228,3 +228,183 @@ fn build_jsonl_exposes_task_events_without_interleaving_human_logs() {
         1
     );
 }
+
+#[test]
+fn source_columns_use_unicode_characters_and_repeated_errors_on_one_line_survive() {
+    let tmp = project();
+    let text = "// 中文\n    page 99; page 98\n";
+    std::fs::write(tmp.path().join("program.s"), text).unwrap();
+    let output = project_run(tmp.path(), &["--json", "check"]);
+    assert_eq!(output.status.code(), Some(1));
+    let result = parse(&output);
+    let diagnostics = result["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 2);
+    assert_eq!(diagnostics[0]["location"]["column"], 10);
+    assert_eq!(diagnostics[1]["location"]["column"], 19);
+    for diagnostic in diagnostics {
+        assert!(
+            std::path::Path::new(diagnostic["location"]["file"].as_str().unwrap()).is_absolute()
+        );
+        let offset = diagnostic["location"]["offset"].as_u64().unwrap() as usize;
+        assert_eq!(&text[offset..offset + 1], "9");
+    }
+    let human = project_run(tmp.path(), &["--color", "never", "check"]);
+    assert!(human.stdout.is_empty());
+    let stderr = String::from_utf8(human.stderr).unwrap();
+    assert!(stderr.contains("program.s:2:10"));
+    assert!(stderr.contains("^^"));
+    assert!(stderr.contains("page 98"));
+}
+
+#[test]
+fn init_plan_import_and_clean_report_their_actual_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().join("source");
+    let output = Command::new(env!("CARGO_BIN_EXE_hmi"))
+        .args(["--json", "init"])
+        .arg(&root)
+        .args(["--target", "TJC4827X543_011"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let result = parse(&output);
+    assert_eq!(result["result"]["outputs"].as_array().unwrap().len(), 3);
+    for output in result["result"]["outputs"].as_array().unwrap() {
+        assert_eq!(output["state"], "written");
+    }
+    let plan = tmp.path().join("plan");
+    let output = Command::new(env!("CARGO_BIN_EXE_hmi"))
+        .args(["--json", "plan"])
+        .arg(&root)
+        .arg("-o")
+        .arg(&plan)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        parse(&output)["result"]["outputs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    let built = parse(&project_run(&root, &["--json", "build"]));
+    let hmi = built["result"]["output"].as_str().unwrap();
+    let imported = tmp.path().join("imported");
+    let output = Command::new(env!("CARGO_BIN_EXE_hmi"))
+        .args(["--json", "import", hmi, "-o"])
+        .arg(&imported)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let result = parse(&output);
+    assert_eq!(result["result"]["outputs"][0]["state"], "written");
+    assert_eq!(result["result"]["outputs"][0]["kind"], "project");
+    let output = project_run(&root, &["--json", "clean"]);
+    assert!(output.status.success());
+    let result = parse(&output);
+    assert_eq!(
+        result["result"]["removed"].as_u64().unwrap() as usize,
+        result["result"]["removed_files"].as_array().unwrap().len()
+    );
+    assert!(std::path::Path::new(hmi).is_file());
+}
+
+#[test]
+fn partial_publication_reports_only_files_that_really_were_published() {
+    let tmp = project();
+    let linked = hmi_cli::prepare(tmp.path()).unwrap().link(true).unwrap();
+    let output = tmp.path().join("out.HMI");
+    let map = tmp.path().join("map.json");
+    let conflict = output.clone();
+    let report = hmi_core::report::Report::new(Some(std::sync::Arc::new(move |event| {
+        // 故障注入发生在映射已发布、HMI尚未发布之间，不依赖权限或调度时机。
+        if event["event"] == "output_written" && event["output"]["kind"] == "link_map" {
+            std::fs::create_dir(&conflict).unwrap();
+        }
+    })));
+    let publication =
+        hmi_linker::publish::Publication::prepare(&linked, &output, Some(&map), &[]).unwrap();
+    let error = publication.write_with_report(&report).unwrap_err();
+    let diagnostic = error.as_diagnostic().unwrap();
+    assert_eq!(diagnostic.code, "publish_partial");
+    assert_eq!(
+        diagnostic.details["published_files"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    let result = report.result(Value::Null);
+    let outputs = result["outputs"].as_array().unwrap();
+    assert_eq!(
+        outputs.iter().find(|o| o["kind"] == "link_map").unwrap()["state"],
+        "written"
+    );
+    assert_eq!(
+        outputs.iter().find(|o| o["kind"] == "hmi").unwrap()["state"],
+        "not_written"
+    );
+    assert!(map.is_file());
+    assert!(output.is_dir());
+}
+
+#[test]
+fn implicit_browser_media_are_counted_during_check_and_build() {
+    use hmi_core::{
+        file,
+        model::{AssetSource, ObjectFile, PageSource, ProjectSource},
+    };
+    mod zi {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../tests/support/zi.rs"
+        ));
+    }
+    let tmp = project();
+    let root = tmp.path();
+    std::fs::create_dir(root.join("assets")).unwrap();
+    std::fs::write(root.join("assets/font.zi"), zi::font()).unwrap();
+    std::fs::write(
+        root.join("assets/font.toml"),
+        "schema='hmi.asset/1'\nkind='font'\nsource='font.zi'\n",
+    )
+    .unwrap();
+    let mut p: ProjectSource = file::read_toml(&root.join("hmi.toml")).unwrap();
+    p.assets.items.push(AssetSource {
+        key: "ui".into(),
+        source: "assets/font.toml".into(),
+    });
+    std::fs::write(root.join("hmi.toml"), file::toml(&p).unwrap()).unwrap();
+    let page_path = root.join("pages/page0/page.toml");
+    let mut page: PageSource = file::read_toml(&page_path).unwrap();
+    page.objects.push(ObjectFile {
+        original_record: None,
+        name: "fb0".into(),
+        type_name: "file_browser".into(),
+        events: Default::default(),
+        properties: std::collections::BTreeMap::from([
+            ("x".into(), 20.into()),
+            ("y".into(), 20.into()),
+            ("w".into(), 200.into()),
+            ("h".into(), 120.into()),
+            (
+                "font".into(),
+                toml::Value::Table(toml::map::Map::from_iter([("ref".into(), "ui".into())])),
+            ),
+        ]),
+    });
+    std::fs::write(page_path, file::toml(&page).unwrap()).unwrap();
+    for command in ["check", "build"] {
+        let output = project_run(root, &["--json", command]);
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_eq!(
+            parse(&output)["result"]["summary"]["media"],
+            json!({"total":3,"processed":3,"reused":0,"failed":0,"not_run":0})
+        );
+    }
+}

@@ -144,6 +144,10 @@ impl Context {
 struct Token {
     text: String,
     line: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    column: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    offset: Option<usize>,
 }
 
 /// 编译阶段保存词法分析结果；链接阶段结合最终名称和 ID 检查引用。
@@ -182,6 +186,11 @@ impl ScriptFacts {
                     .at(Location {
                         file: Some(self.source.file.clone()),
                         line: Some(token.line),
+                        column: self.tokens[i + 1].column,
+                        end_column: self.tokens[end - 1]
+                            .column
+                            .map(|column| column + self.tokens[end - 1].text.chars().count()),
+                        offset: self.tokens[i + 1].offset,
                         event: self.source.event.clone(),
                         ..Default::default()
                     }),
@@ -193,11 +202,17 @@ impl ScriptFacts {
 
     /// 拒绝损坏的事实记录，避免空标记进入引用检查。
     pub fn validate(&self) -> hmi_core::Result<()> {
-        if self
-            .tokens
-            .iter()
-            .any(|token| token.text.is_empty() || token.line == 0)
-        {
+        if self.tokens.iter().any(|token| {
+            token.text.is_empty()
+                || token.line == 0
+                || token.column == Some(0)
+                || token.offset.is_some_and(|offset| {
+                    self.source
+                        .text
+                        .get(offset..offset.saturating_add(token.text.len()))
+                        != Some(token.text.as_str())
+                })
+        }) {
             return Err(hmi_core::error(
                 "script_facts",
                 "目标文件中的脚本分析数据无效",
@@ -218,11 +233,13 @@ fn tokenize(text: &str) -> Vec<Token> {
     let bytes = text.as_bytes();
     let mut tokens = Vec::new();
     let (mut i, mut line) = (0, 1);
+    let mut line_start = 0;
     while i < bytes.len() {
         match bytes[i] {
             b'\n' => {
                 line += 1;
                 i += 1;
+                line_start = i;
             }
             b'/' if bytes.get(i + 1) == Some(&b'/') => {
                 while i < bytes.len() && bytes[i] != b'\n' {
@@ -234,6 +251,7 @@ fn tokenize(text: &str) -> Vec<Token> {
                 while i < bytes.len() {
                     if bytes[i] == b'\n' {
                         line += 1;
+                        line_start = i + 1;
                     }
                     if bytes[i] == b'*' && bytes.get(i + 1) == Some(&b'/') {
                         i += 2;
@@ -247,8 +265,13 @@ fn tokenize(text: &str) -> Vec<Token> {
                 while i < bytes.len() {
                     if bytes[i] == b'\n' {
                         line += 1;
+                        line_start = i + 1;
                     }
                     if bytes[i] == b'\\' {
+                        if bytes.get(i + 1) == Some(&b'\n') {
+                            line += 1;
+                            line_start = i + 2;
+                        }
                         i = (i + 2).min(bytes.len());
                     } else if bytes[i] == quote {
                         i += 1;
@@ -266,6 +289,8 @@ fn tokenize(text: &str) -> Vec<Token> {
                 tokens.push(Token {
                     text: text[start..i].into(),
                     line,
+                    column: Some(text[line_start..start].chars().count() + 1),
+                    offset: Some(start),
                 });
             }
             b if b.is_ascii_whitespace() => i += 1,
@@ -273,6 +298,8 @@ fn tokenize(text: &str) -> Vec<Token> {
                 tokens.push(Token {
                     text: (b as char).to_string(),
                     line,
+                    column: Some(text[line_start..i].chars().count() + 1),
+                    offset: Some(i),
                 });
                 i += 1;
             }
@@ -341,27 +368,49 @@ struct Checker<'a> {
     event: Option<&'a str>,
     file: &'a str,
     diagnostics: &'a mut Vec<Diagnostic>,
-    seen: BTreeSet<(String, usize)>,
+    seen: BTreeSet<(String, usize, Option<usize>)>,
+    current: Option<Token>,
     check_modes: bool,
 }
 
 impl Checker<'_> {
     fn warn(&mut self, code: &str, message: String, line: usize) {
-        if !self.seen.insert((code.into(), line)) {
+        let column = self
+            .current
+            .as_ref()
+            .filter(|token| token.line == line)
+            .and_then(|token| token.column);
+        if !self.seen.insert((code.into(), line, column)) {
             return;
         }
         let page = self.page.and_then(|i| self.project.pages.get(i));
         let object = page.and_then(|p| self.object.and_then(|i| p.objects.get(i)));
-        self.diagnostics
-            .push(Diagnostic::warning(code, message).at(Location {
+        self.diagnostics.push(
+            Diagnostic::warning(code, message).at(Location {
                 file: Some(self.file.into()),
                 page: page.map(|p| p.name.clone()),
                 object: object.map(|o| o.name.clone()),
                 event: self.event.map(str::to_owned),
                 object_index: self.object,
                 line: Some(line),
+                column,
+                end_column: self
+                    .current
+                    .as_ref()
+                    .filter(|token| token.line == line)
+                    .and_then(|token| {
+                        token
+                            .column
+                            .map(|column| column + token.text.chars().count())
+                    }),
+                offset: self
+                    .current
+                    .as_ref()
+                    .filter(|token| token.line == line)
+                    .and_then(|token| token.offset),
                 ..Location::default()
-            }));
+            }),
+        );
     }
 
     fn reference(
@@ -409,6 +458,22 @@ impl Checker<'_> {
                 ),
                 line,
             );
+            if let Some(diagnostic) = self
+                .diagnostics
+                .last_mut()
+                .filter(|d| d.code == "script_readonly" && d.location.line == Some(line))
+            {
+                diagnostic
+                    .details
+                    .insert("target_page".into(), page.name.clone().into());
+                diagnostic
+                    .details
+                    .insert("target_object".into(), object.name.clone().into());
+                diagnostic
+                    .details
+                    .insert("property".into(), field.unwrap().into());
+                diagnostic.details.insert("access".into(), "write".into());
+            }
         }
         if let Some(field) = field
             && object.attribute(field).is_none()
@@ -548,6 +613,7 @@ impl Checker<'_> {
         let mut i = 0;
         while i < tokens.len() {
             let t = &tokens[i];
+            self.current = Some(t.clone());
             if t.text == "p"
                 && let Some((expression, end)) = bracket(tokens, i + 1)
             {
@@ -774,6 +840,7 @@ fn check_facts_inner(
             file: &source.file,
             diagnostics: &mut diagnostics,
             seen: BTreeSet::new(),
+            current: None,
             check_modes,
         }
         .scan(&facts.tokens);
