@@ -7,8 +7,8 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "hmi-parse", version, about = "检查已有HMI并导出新版工程")]
 struct Args {
-    #[arg(long, global = true)]
-    json: bool,
+    #[command(flatten)]
+    reporting: cli::OutputOptions,
     #[command(subcommand)]
     command: Action,
 }
@@ -23,7 +23,8 @@ enum Action {
         output: PathBuf,
     },
 }
-fn run(args: &Args) -> Result<CommandResult> {
+fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
+    let _ = session;
     match &args.command {
         Action::Inspect { file } => Ok(cli::success(
             hmi_parser::inspect(file)?,
@@ -40,5 +41,12 @@ fn main() -> std::process::ExitCode {
         Ok(v) => v,
         Err(c) => return c,
     };
-    cli::finish(run(&args), args.json)
+    let session = cli::Session::new(
+        "hmi-parse",
+        env!("CARGO_PKG_VERSION"),
+        &cli::command_name::<Args>(),
+        &args.reporting,
+    );
+    let outcome = run(&args, &session);
+    session.finish(outcome)
 }

@@ -10,8 +10,8 @@ use std::{path::PathBuf, process::ExitCode};
 #[derive(Parser)]
 #[command(name = "hmi", version, about = "HMI 工程管理与构建")]
 struct Args {
-    #[arg(long, global = true)]
-    json: bool,
+    #[command(flatten)]
+    reporting: cli::OutputOptions,
     #[arg(short='W', global=true, value_parser=["error"], help="将警告作为错误：-Werror")]
     warnings: Option<String>,
     #[command(subcommand)]
@@ -87,7 +87,7 @@ fn target(profile: &str, orientation: u16) -> TargetConfig {
         orientation,
     }
 }
-fn run(args: &Args) -> Result<CommandResult> {
+fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
     match &args.command {
         Command::Import { file, output } => Ok(cli::success(
             serde_json::json!(hmi_parser::export(file, output)?),
@@ -110,8 +110,13 @@ fn run(args: &Args) -> Result<CommandResult> {
         }
         Command::Check { directory } => {
             let root = hmi_cli::locate_root(directory.as_deref())?;
-            let prepared = hmi_cli::prepare(&root)?;
+            session.report.stage("load", "check", "工程配置与输入文件");
+            let prepared = hmi_cli::prepare_with_report(&root, &session.report)?;
+            let checking = session
+                .report
+                .task("analysis", None, "check", "页面、脚本及资源引用");
             let diagnostics = prepared.check(args.warnings.is_some())?;
+            checking.finish(false);
             Ok(CommandResult {
                 result: serde_json::json!({"pages":prepared.pages.len(),"output_written":false}),
                 message: "工程检查通过。".into(),
@@ -121,11 +126,12 @@ fn run(args: &Args) -> Result<CommandResult> {
         Command::Build { directory, output } | Command::Rebuild { directory, output } => {
             let root = hmi_cli::locate_root(directory.as_deref())?;
             let force = matches!(args.command, Command::Rebuild { .. });
-            let (output, linked, stats) = hmi_cli::build_with_options(
+            let (output, linked, stats) = hmi_cli::build_with_report(
                 &root,
                 output.as_deref(),
                 args.warnings.is_some(),
                 force,
+                &session.report,
             )?;
             Ok(CommandResult {
                 result: serde_json::json!({"output":output,"output_written":true,"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes),"external_files":linked.external_files.iter().map(|f| &f.path).collect::<Vec<_>>(),"build":stats}),
@@ -194,5 +200,12 @@ fn main() -> ExitCode {
         Ok(args) => args,
         Err(code) => return code,
     };
-    cli::finish(run(&args), args.json)
+    let session = cli::Session::new(
+        "hmi",
+        env!("CARGO_PKG_VERSION"),
+        &cli::command_name::<Args>(),
+        &args.reporting,
+    );
+    let outcome = run(&args, &session);
+    session.finish(outcome)
 }

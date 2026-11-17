@@ -103,10 +103,35 @@ pub fn init(directory: &Path, config: &TargetConfig) -> Result<()> {
 }
 
 pub fn prepare(root: &Path) -> Result<Prepared> {
-    prepare_inner(root, None)
+    prepare_inner(root, None, &hmi_core::report::Report::default())
 }
 
-fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Prepared> {
+pub fn prepare_with_report(root: &Path, report: &hmi_core::report::Report) -> Result<Prepared> {
+    prepare_inner(root, None, report)
+}
+
+fn describe_project(
+    root: &Path,
+    project: &ProjectSource,
+    report: &hmi_core::report::Report,
+) -> Result<()> {
+    report.project(&project.name, root)?;
+    report.plan("program", 1);
+    report.plan("pages", project.pages.sources.len());
+    report.plan("media", project.assets.items.len());
+    report.source(&root.join("hmi.toml"), None, None, None);
+    report.source(&root.join(&project.program.source), None, None, None);
+    for source in &project.pages.sources {
+        report.page_sources(&root.join(source));
+    }
+    Ok(())
+}
+
+fn prepare_inner(
+    root: &Path,
+    mut cache: Option<&mut cache::Cache>,
+    report: &hmi_core::report::Report,
+) -> Result<Prepared> {
     let root = fs::canonicalize(root)?;
     let manifest = root.join("hmi.toml");
     let project: ProjectSource = file::read_toml(&manifest)?;
@@ -117,6 +142,7 @@ fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Pr
     if project.pages.sources.is_empty() {
         return Err(error("page_count", "工程至少需要一个页面"));
     }
+    describe_project(&root, &project, report)?;
     let target = Target::resolve(&project.target)?;
     let original_path = project.original.as_ref().map(|o| root.join(&o.bundle));
     let original = original_path
@@ -126,7 +152,17 @@ fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Pr
     let program_path = root.join(&project.program.source);
     let program = match cache.as_deref_mut() {
         Some(cache) => cache.compile(&program_path, &target, None, None, true)?,
-        None => compile_program(&program_path, &target)?,
+        None => {
+            let task = report.task(
+                "compile",
+                Some("program"),
+                "check",
+                format!("全局代码 {}", project.program.source),
+            );
+            let result = compile_program(&program_path, &target)?;
+            task.finish(false);
+            result
+        }
     };
     let mut inputs = vec![manifest];
     inputs.extend(program.inputs.iter().cloned());
@@ -144,7 +180,7 @@ fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Pr
         let source = root.join(&asset.source);
         let (probe, encoded) = match cache.as_deref_mut() {
             Some(cache) => {
-                let encoded = cache.encode(&source, &target)?;
+                let encoded = cache.encode(&source, &target, &asset.key)?;
                 (
                     hmi_media::AssetProbe {
                         action: encoded.action,
@@ -154,7 +190,17 @@ fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Pr
                     Some(encoded.object),
                 )
             }
-            None => (hmi_media::probe(&source, &target)?, None),
+            None => {
+                let task = report.task(
+                    "media",
+                    Some("media"),
+                    "check",
+                    format!("媒体 {}", asset.key),
+                );
+                let result = hmi_media::probe(&source, &target)?;
+                task.finish(false);
+                (result, None)
+            }
         };
         inputs.extend(probe.inputs.iter().cloned());
         assets.push(AssetInput {
@@ -180,7 +226,14 @@ fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Pr
                 false,
             )?,
             None => {
-                hmi_page_compiler::compile_page_with_original(&path, &target, original.as_ref())?
+                let task = report.task("compile", Some("pages"), "check", format!("页面 {source}"));
+                let result = hmi_page_compiler::compile_page_with_original(
+                    &path,
+                    &target,
+                    original.as_ref(),
+                )?;
+                task.finish(false);
+                result
             }
         };
         inputs.extend(compilation.inputs.iter().cloned());
@@ -195,6 +248,7 @@ fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Pr
         .into_iter()
         .filter(|b| needed.contains(b))
     {
+        report.add_planned("media", 1);
         let encoded = cache
             .as_deref_mut()
             .map(|cache| cache.encode_builtin(builtin, &target))
@@ -217,6 +271,29 @@ fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Pr
         inputs,
         assets,
     })
+}
+
+fn project_output(
+    root: &Path,
+    project: &ProjectSource,
+    requested: Option<&Path>,
+) -> Result<PathBuf> {
+    if let Some(path) = requested {
+        return file::absolute(path);
+    }
+    if let Some(path) = &project.build.output {
+        return Ok(root.join(path));
+    }
+    let name = &project.name;
+    if name.contains(['/', '\\', ':', '\0', '<', '>', '"', '|', '?', '*'])
+        || matches!(name.as_str(), "." | "..")
+    {
+        return Err(error(
+            "output_path",
+            "工程名称不能用作默认输出路径，请在 build.output 中指定合法路径",
+        ));
+    }
+    Ok(root.join("dist").join(name).join(format!("{name}.HMI")))
 }
 
 impl Prepared {
@@ -278,26 +355,7 @@ impl Prepared {
     }
 
     pub fn output_path(&self, requested: Option<&Path>) -> Result<PathBuf> {
-        if let Some(path) = requested {
-            return file::absolute(path);
-        }
-        if let Some(path) = &self.project.build.output {
-            return Ok(self.root.join(path));
-        }
-        let name = &self.project.name;
-        if name.contains(['/', '\\', ':', '\0', '<', '>', '"', '|', '?', '*'])
-            || matches!(name.as_str(), "." | "..")
-        {
-            return Err(error(
-                "output_path",
-                "工程名称不能用作默认输出路径，请在 build.output 中指定合法路径",
-            ));
-        }
-        Ok(self
-            .root
-            .join("dist")
-            .join(name)
-            .join(format!("{name}.HMI")))
+        project_output(&self.root, &self.project, requested)
     }
 
     fn plan_paths(&self, directory: &Path) -> Vec<PathBuf> {
@@ -443,7 +501,45 @@ pub fn build_with_options(
     deny_warnings: bool,
     force: bool,
 ) -> Result<(PathBuf, hmi_linker::Linked, BuildStats)> {
+    build_with_report(
+        root,
+        requested,
+        deny_warnings,
+        force,
+        &hmi_core::report::Report::default(),
+    )
+}
+
+pub fn build_with_report(
+    root: &Path,
+    requested: Option<&Path>,
+    deny_warnings: bool,
+    force: bool,
+    report: &hmi_core::report::Report,
+) -> Result<(PathBuf, hmi_linker::Linked, BuildStats)> {
     let root = fs::canonicalize(root)?;
+    let project: ProjectSource = file::read_toml(&root.join("hmi.toml"))?;
+    describe_project(&root, &project, report)?;
+    let planned_output = project_output(&root, &project, requested)?;
+    report.plan_output("hmi", &planned_output)?;
+    report.plan_output(
+        "link_map",
+        &planned_output.parent().unwrap().join("link-map.json"),
+    )?;
+    report.stage(
+        "load",
+        "build",
+        format!(
+            "{}（{}）",
+            project.name,
+            if force {
+                "全量重建"
+            } else {
+                "增量构建"
+            }
+        ),
+    );
+    let input_task = report.task("load", None, "check", "工程配置与输入文件");
     let declared = cache::declared_inputs(&root)?;
     let _lock = cache::ProjectLock::acquire(&root, &declared)?;
     let mut cache = match cache::Cache::new(&root, force, &declared) {
@@ -460,9 +556,11 @@ pub fn build_with_options(
         }
         Err(e) => return Err(e),
     };
-    let prepared = prepare_inner(&root, Some(&mut cache))?;
+    cache.reporting(report);
+    input_task.finish(false);
+    let prepared = prepare_inner(&root, Some(&mut cache), report)?;
     let assets = prepared.encode_assets()?;
-    let linked = hmi_linker::link_with_original(
+    let linked = hmi_linker::link_with_original_and_report(
         &prepared.target,
         &prepared.program.object,
         &prepared
@@ -473,8 +571,10 @@ pub fn build_with_options(
         &assets,
         deny_warnings,
         prepared.original.as_ref(),
+        report,
     )?;
     let output = prepared.output_path(requested)?;
+    report.plan_output("hmi", &output)?;
     let map = output.parent().unwrap().join("link-map.json");
     if file::absolute(&output)? == file::absolute(&map)? {
         return Err(error("output_path", "HMI 与链接映射不能使用同一输出路径"));
@@ -489,6 +589,11 @@ pub fn build_with_options(
     cache.verify_inputs()?;
     prepared.save_plan_inner(&build_directory, true, Some(&output), &assets)?;
     cache.record(&prepared.plan_paths(&build_directory))?;
-    publication.write()?;
+    report.stage(
+        "publish",
+        "publish",
+        format!("{} 及配套文件", output.display()),
+    );
+    publication.write_with_report(report)?;
     Ok((output, linked, cache.stats))
 }

@@ -15,14 +15,15 @@ struct Args {
     check: bool,
     #[arg(long)]
     map: Option<PathBuf>,
-    #[arg(long)]
-    json: bool,
+    #[command(flatten)]
+    reporting: cli::OutputOptions,
     #[arg(long = "deny-warnings")]
     deny_warnings: bool,
     #[arg(short='W', value_parser=["error"], help="将警告作为错误：-Werror")]
     warnings: Option<String>,
 }
-fn run(args: &Args) -> Result<CommandResult> {
+fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
+    let _ = session;
     let linked =
         hmi_linker::from_manifest(&args.source, args.deny_warnings || args.warnings.is_some())?;
     let inputs: Vec<_> = linked.inputs.iter().map(|p| p.as_path()).collect();
@@ -45,5 +46,12 @@ fn main() -> ExitCode {
         Ok(args) => args,
         Err(code) => return code,
     };
-    cli::finish(run(&args), args.json)
+    let session = cli::Session::new(
+        "hmi-link",
+        env!("CARGO_PKG_VERSION"),
+        &cli::command_name::<Args>(),
+        &args.reporting,
+    );
+    let outcome = run(&args, &session);
+    session.finish(outcome)
 }

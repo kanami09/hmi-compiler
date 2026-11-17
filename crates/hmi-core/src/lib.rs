@@ -10,6 +10,7 @@ pub mod diagnostic;
 pub mod file;
 pub mod icon_map;
 pub mod model;
+pub mod report;
 pub mod target;
 
 use sha2::{Digest, Sha256};
@@ -21,6 +22,8 @@ pub enum Error {
     Message(String),
     #[error("{0}")]
     Structured(Box<diagnostic::Diagnostic>),
+    #[error("{}", .0.first().map(|d| d.message.as_str()).unwrap_or("执行失败"))]
+    Diagnostics(Vec<diagnostic::Diagnostic>),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
@@ -47,7 +50,20 @@ impl Error {
     pub fn as_diagnostic(&self) -> Option<&diagnostic::Diagnostic> {
         match self {
             Self::Structured(diagnostic) => Some(diagnostic),
+            Self::Diagnostics(diagnostics) => diagnostics
+                .iter()
+                .find(|d| d.severity == diagnostic::Severity::Error)
+                .or_else(|| diagnostics.first()),
             _ => None,
+        }
+    }
+
+    /// 阶段边界保留全部诊断，避免失败时只剩首条错误、丢失此前警告。
+    pub fn diagnostics(&self) -> Vec<diagnostic::Diagnostic> {
+        match self {
+            Self::Structured(diagnostic) => vec![diagnostic.as_ref().clone()],
+            Self::Diagnostics(diagnostics) => diagnostics.clone(),
+            Self::Message(message) => vec![diagnostic::Diagnostic::error("execution", message)],
         }
     }
 }

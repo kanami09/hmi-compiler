@@ -805,11 +805,19 @@ fn layout(
         .collect::<Vec<_>>();
     for (id, facts) in facts_by_page.iter().enumerate() {
         diagnostics.extend(check_linked_facts(&context, Some(id), facts));
-        static_errors.extend(facts.iter().flat_map(|f| f.static_page_errors(pages.len())));
+        for facts in facts {
+            for mut diagnostic in facts.static_page_errors(pages.len()) {
+                diagnostic.location.page = Some(context.pages[id].name.clone());
+                diagnostic.location.object = facts
+                    .source
+                    .object
+                    .and_then(|index| context.pages[id].objects.get(index))
+                    .map(|o| o.name.clone());
+                static_errors.push(diagnostic);
+            }
+        }
     }
-    if let Some(error) = static_errors.into_iter().next() {
-        return Err(error.into());
-    }
+    diagnostics.extend(static_errors);
     for diagnostic in &mut diagnostics {
         if matches!(
             diagnostic.code.as_str(),
@@ -823,18 +831,25 @@ fn layout(
                 | "property_resource"
                 | "script_facts"
         ) {
-            diagnostic.original_severity = Some(diagnostic.severity.clone());
+            if diagnostic.severity == Severity::Warning {
+                diagnostic.original_severity = Some(Severity::Warning);
+            }
             diagnostic.severity = Severity::Error;
         }
     }
-    if let Some(d) = diagnostics.iter().find(|d| d.severity == Severity::Error) {
-        return Err(d.clone().into());
+    for diagnostic in &mut diagnostics {
+        diagnostic.stage.get_or_insert_with(|| "analysis".into());
     }
-    if deny_warnings && let Some(d) = diagnostics.first() {
-        let mut d = d.clone();
-        d.original_severity = Some(d.severity);
-        d.severity = Severity::Error;
-        return Err(d.into());
+    if deny_warnings {
+        for diagnostic in &mut diagnostics {
+            if diagnostic.severity == Severity::Warning {
+                diagnostic.original_severity = Some(Severity::Warning);
+                diagnostic.severity = Severity::Error;
+            }
+        }
+    }
+    if diagnostics.iter().any(|d| d.severity == Severity::Error) {
+        return Err(hmi_core::Error::Diagnostics(diagnostics));
     }
     Ok(Layout {
         pages: native,
@@ -951,6 +966,27 @@ pub fn link_with_original(
     deny_warnings: bool,
     original: Option<&hmi_artifact::original::OriginalBundle>,
 ) -> Result<Linked> {
+    link_with_original_and_report(
+        target,
+        program,
+        pages,
+        assets,
+        deny_warnings,
+        original,
+        &hmi_core::report::Report::default(),
+    )
+}
+
+pub fn link_with_original_and_report(
+    target: &Target,
+    program: &CompiledObject,
+    pages: &[CompiledObject],
+    assets: &[(String, AssetObject)],
+    deny_warnings: bool,
+    original: Option<&hmi_artifact::original::OriginalBundle>,
+    report: &hmi_core::report::Report,
+) -> Result<Linked> {
+    let analysis = report.task("analysis", None, "check", "页面、脚本及资源引用");
     check_original_context(pages, original)?;
     for (_, asset) in assets {
         asset.validate_for(target)?;
@@ -960,6 +996,8 @@ pub fn link_with_original(
         .map(|(key, asset)| (key.clone(), asset.metadata.info.clone()))
         .collect::<Vec<_>>();
     let layout = layout(target, program, pages, &infos, deny_warnings)?;
+    analysis.finish(false);
+    let linking = report.task("link", None, "link", "工程资源");
     let mut resources = vec![("Program.s".into(), program.payload.clone())];
     resources.extend(
         layout
@@ -1067,9 +1105,12 @@ pub fn link_with_original(
     }
     resources.push(("main.HMI".into(), main));
     let bytes = write::container_preserved(&resources, &directory_unknown)?;
+    linking.finish(false);
+    let validation = report.task("validate", None, "validate", "HMI 结构与资源");
     let container = Container::parse(bytes.clone())?;
     let project = Project::parse(&container)?;
     project.strict()?;
+    validation.finish(false);
     for asset in &mut asset_map {
         if let Some(builtin) = asset["key"]
             .as_str()

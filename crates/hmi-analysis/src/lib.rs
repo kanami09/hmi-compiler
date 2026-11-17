@@ -645,7 +645,9 @@ impl Checker<'_> {
                 let valid = number(expression)
                     .is_some_and(|n| n >= 0 && (n as u64) < self.project.pages.len() as u64)
                     || matches!(expression, [token] if self.project.pages.iter().any(|p| p.name == token.text));
-                if !valid {
+                // 已确定的数值越界由 static_page_errors 报错，避免同一位置
+                // 同时出现“目标不存在”和“无法静态确认”两种相矛盾的诊断。
+                if !valid && (!self.check_modes || number(expression).is_none()) {
                     let target = expression
                         .iter()
                         .map(|token| token.text.as_str())

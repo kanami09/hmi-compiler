@@ -8,6 +8,7 @@ use std::{
 
 pub struct Publication {
     outputs: Vec<(PathBuf, Vec<u8>)>,
+    kinds: Vec<&'static str>,
     inputs: Vec<PathBuf>,
 }
 
@@ -75,6 +76,7 @@ impl Publication {
             .ok_or_else(|| error("output_path", "HMI 输出缺少父目录"))?;
         let canonical_root = path_key(&resolved(root)?);
         let mut outputs = Vec::new();
+        let mut kinds = Vec::new();
         for external in &linked.external_files {
             hmi_core::deployment::validate(&external.path)?;
             let path = root.join(&external.path);
@@ -85,11 +87,14 @@ impl Publication {
                 ));
             }
             outputs.push((path, external.bytes.clone()));
+            kinds.push("external_media");
         }
         if let Some(map) = map {
             outputs.push((file::absolute(map)?, file::json(&linked.map)?));
+            kinds.push("link_map");
         }
         outputs.push((output, linked.bytes.clone()));
+        kinds.push("hmi");
         let protected = inputs
             .iter()
             .map(|p| resolved(p).map(|p| path_key(&p)))
@@ -128,31 +133,51 @@ impl Publication {
         }
         Ok(Self {
             outputs,
+            kinds,
             inputs: inputs.iter().map(|p| p.to_path_buf()).collect(),
         })
     }
 
     pub fn write(self) -> Result<()> {
+        self.write_with_report(&hmi_core::report::Report::default())
+    }
+
+    /// 逐项登记实际发布结果；不能根据旧文件存在推断本次写入成功。
+    pub fn write_with_report(self, report: &hmi_core::report::Report) -> Result<()> {
         let inputs = self.inputs.iter().map(PathBuf::as_path).collect::<Vec<_>>();
         let mut staged = Vec::new();
-        for (path, bytes) in &self.outputs {
-            staged.push((path.clone(), file::stage_atomic(path, bytes, &inputs)?));
+        for ((path, _), kind) in self.outputs.iter().zip(&self.kinds) {
+            report.plan_output(kind, path)?;
+        }
+        for ((path, bytes), kind) in self.outputs.into_iter().zip(self.kinds) {
+            let temporary = file::stage_atomic(&path, &bytes, &inputs)?;
+            staged.push((path, temporary, kind, bytes));
         }
         let mut published = Vec::new();
-        for (path, file) in staged {
+        for (path, file, kind, bytes) in staged {
             if let Err(e) = file.publish(&inputs) {
                 if published.is_empty() {
                     return Err(e);
                 }
-                return Err(error(
+                let mut diagnostic = hmi_core::diagnostic::Diagnostic::error(
                     "publish_partial",
                     format!(
                         "写入 {} 失败：{e}。已写入：{}",
                         path.display(),
                         published.join("、")
                     ),
-                ));
+                );
+                diagnostic.stage = Some("publish".into());
+                diagnostic.location.file = Some(path.display().to_string());
+                diagnostic
+                    .details
+                    .insert("published_files".into(), serde_json::json!(published));
+                diagnostic
+                    .details
+                    .insert("failed_path".into(), serde_json::json!(path));
+                return Err(diagnostic.into());
             }
+            report.written(kind, &path, Some(&bytes))?;
             published.push(path.display().to_string());
         }
         Ok(())

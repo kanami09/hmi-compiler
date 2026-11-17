@@ -59,7 +59,12 @@ pub fn at_file(error: Error, path: &Path) -> Error {
         .cloned()
         .unwrap_or_else(|| crate::diagnostic::Diagnostic::error("io", error.to_string()));
     if diagnostic.location.file.is_none() {
-        diagnostic.location.file = Some(path.display().to_string());
+        diagnostic.location.file = Some(
+            absolute(path)
+                .unwrap_or_else(|_| path.to_path_buf())
+                .display()
+                .to_string(),
+        );
     }
     diagnostic.into()
 }
@@ -79,10 +84,20 @@ pub fn read_toml<T: DeserializeOwned>(path: &Path) -> Result<T> {
         let line = e
             .span()
             .map(|span| source[..span.start].bytes().filter(|b| *b == b'\n').count() + 1);
+        let column = e
+            .span()
+            .and_then(|span| source.get(..span.start))
+            .map(|prefix| prefix.rsplit('\n').next().unwrap_or("").chars().count() + 1);
         crate::diagnostic::Diagnostic::error("toml", format!("TOML 格式错误：{e}"))
             .at(Location {
-                file: Some(path.display().to_string()),
+                file: Some(
+                    absolute(path)
+                        .unwrap_or_else(|_| path.to_path_buf())
+                        .display()
+                        .to_string(),
+                ),
                 line,
+                column,
                 ..Default::default()
             })
             .into()

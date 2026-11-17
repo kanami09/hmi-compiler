@@ -23,6 +23,10 @@ pub struct Location {
     pub object_index: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub column: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_column: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<usize>,
 }
@@ -37,6 +41,10 @@ pub struct Diagnostic {
     pub category: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub original_severity: Option<Severity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stage: Option<String>,
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub details: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Diagnostic {
@@ -48,6 +56,8 @@ impl Diagnostic {
             location: Location::default(),
             category: None,
             original_severity: None,
+            stage: None,
+            details: serde_json::Map::new(),
         }
     }
     pub fn warning(code: &str, message: impl Into<String>) -> Self {

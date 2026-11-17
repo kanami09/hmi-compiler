@@ -11,8 +11,8 @@ use std::{path::PathBuf, process::ExitCode};
 #[derive(Parser)]
 #[command(name = "hmi-compile", version, about = "编译 HMI 页面和全局代码")]
 struct Args {
-    #[arg(long, global = true)]
-    json: bool,
+    #[command(flatten)]
+    reporting: cli::OutputOptions,
     #[command(subcommand)]
     command: Command,
 }
@@ -39,7 +39,8 @@ enum Command {
     /// 查看目标文件描述及载荷摘要。
     Inspect { file: PathBuf },
 }
-fn run(args: &Args) -> Result<CommandResult> {
+fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
+    let _ = session;
     match &args.command {
         Command::Inspect { file } => {
             let object = CompiledObject::read(file)?;
@@ -135,5 +136,12 @@ fn main() -> ExitCode {
         Ok(args) => args,
         Err(code) => return code,
     };
-    cli::finish(run(&args), args.json)
+    let session = cli::Session::new(
+        "hmi-compile",
+        env!("CARGO_PKG_VERSION"),
+        &cli::command_name::<Args>(),
+        &args.reporting,
+    );
+    let outcome = run(&args, &session);
+    session.finish(outcome)
 }

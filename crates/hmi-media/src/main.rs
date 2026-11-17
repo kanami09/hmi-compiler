@@ -15,8 +15,8 @@ use std::{path::PathBuf, process::ExitCode};
     about = "处理 HMI 图片、字库、动画、视频和音频资产"
 )]
 struct Args {
-    #[arg(long, global = true)]
-    json: bool,
+    #[command(flatten)]
+    reporting: cli::OutputOptions,
     #[command(subcommand)]
     command: Command,
 }
@@ -66,7 +66,8 @@ fn timing_note(info: &hmi_artifact::asset::AssetInfo) -> String {
         _ => String::new(),
     }
 }
-fn run(args: &Args) -> Result<CommandResult> {
+fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
+    let _ = session;
     match &args.command {
         Command::Backend => Ok(cli::success(
             serde_json::json!({"directory":hmi_media::ffmpeg::directory()?,"backend":hmi_media::ffmpeg::backend_info()?}),
@@ -139,5 +140,12 @@ fn main() -> ExitCode {
         Ok(a) => a,
         Err(code) => return code,
     };
-    cli::finish(run(&args), args.json)
+    let session = cli::Session::new(
+        "hmi-media",
+        env!("CARGO_PKG_VERSION"),
+        &cli::command_name::<Args>(),
+        &args.reporting,
+    );
+    let outcome = run(&args, &session);
+    session.finish(outcome)
 }

@@ -160,6 +160,7 @@ pub struct Cache {
     snapshots: BTreeMap<PathBuf, String>,
     owned: Ownership,
     pub stats: BuildStats,
+    report: hmi_core::report::Report,
 }
 
 impl Cache {
@@ -185,6 +186,7 @@ impl Cache {
             snapshots: BTreeMap::new(),
             owned: file::read_json(&root.join(STATE)).unwrap_or_default(),
             stats: BuildStats::default(),
+            report: hmi_core::report::Report::default(),
         };
         for path in inputs {
             cache.snapshot(path)?;
@@ -200,6 +202,10 @@ impl Cache {
                 .insert(path.clone(), sha256(&file::read(&path)?));
         }
         Ok(())
+    }
+
+    pub fn reporting(&mut self, report: &hmi_core::report::Report) {
+        self.report = report.clone();
     }
 
     fn key(&self, kind: &str, source: &Path, target: &impl Serialize) -> Result<String> {
@@ -303,6 +309,19 @@ impl Cache {
         original_path: Option<&Path>,
         program: bool,
     ) -> Result<Compilation> {
+        let group = if program { "program" } else { "pages" };
+        let name = if program {
+            format!(
+                "全局代码 {}",
+                path.file_name().unwrap_or_default().to_string_lossy()
+            )
+        } else {
+            let name = file::read_toml::<PageSource>(path)
+                .ok()
+                .map(|p| p.name)
+                .unwrap_or_else(|| path.display().to_string());
+            format!("页面 {name}")
+        };
         let key = self.key(
             if program { "program" } else { "page" },
             path,
@@ -317,8 +336,18 @@ impl Cache {
                 .is_none_or(|p| inputs.contains(&p))
         {
             self.stats.reused_objects += 1;
+            self.report
+                .task(
+                    "compile",
+                    Some(group),
+                    "cache_hit",
+                    format!("{name}（构建缓存）"),
+                )
+                .finish(true);
             return Ok(Compilation { object, inputs });
         }
+        let task = self.report.task("compile", Some(group), "compile", name);
+        self.report.note(format!("输入：{}", path.display()));
         let mut result = if program {
             hmi_page_compiler::compile_program(path, target)?
         } else {
@@ -329,17 +358,35 @@ impl Cache {
         }
         self.store(&key, "hmo", &result.object.encode()?, &result.inputs)?;
         self.stats.compiled += 1;
+        task.finish(false);
         Ok(result)
     }
 
-    pub fn encode(&mut self, path: &Path, target: &Target) -> Result<hmi_media::EncodingResult> {
+    pub fn encode(
+        &mut self,
+        path: &Path,
+        target: &Target,
+        name: &str,
+    ) -> Result<hmi_media::EncodingResult> {
         // 控件模板、画布和资源符号顺序不影响编码；音频也不依赖屏幕方向。
         #[derive(Deserialize)]
         struct Kind {
             kind: String,
             input: Option<String>,
+            original: Option<String>,
         }
         let kind: Kind = file::read_toml(path)?;
+        let subject = format!(
+            "{} {name}",
+            match kind.kind.as_str() {
+                "image" => "图片",
+                "font" => "字库",
+                "animation" => "动画",
+                "video" => "视频",
+                "audio" => "音频",
+                _ => "媒体",
+            }
+        );
         let media_target = serde_json::json!({
             "format": target.format, "encoding": target.encoding,
             "orientation": if kind.kind == "audio" { 0 } else { target.orientation },
@@ -364,15 +411,38 @@ impl Cache {
             && object.validate_for(target).is_ok()
         {
             self.stats.reused_assets += 1;
+            self.report
+                .task(
+                    "media",
+                    Some("media"),
+                    "cache_hit",
+                    format!("{subject}（构建缓存）"),
+                )
+                .finish(true);
             return Ok(hmi_media::EncodingResult {
                 action: "cache",
                 object,
                 inputs,
             });
         }
+        let action = match kind.input.as_deref().unwrap_or("source") {
+            "native" => "preserve_native",
+            "encoded" => "package_encoded",
+            _ if kind.original.is_some() => "process",
+            _ => "encode",
+        };
+        let task = self.report.task("media", Some("media"), action, subject);
+        self.report.note(format!("输入：{}", path.display()));
         let result = hmi_media::encode(path, target)?;
+        task.action(match result.action {
+            "original" => "reuse_original",
+            "native" => "preserve_native",
+            "encoded" => "package_encoded",
+            _ => "encode",
+        });
         self.store(&key, "hma", &result.object.encode()?, &result.inputs)?;
         self.stats.encoded += 1;
+        task.finish(false);
         Ok(result)
     }
 
@@ -397,15 +467,30 @@ impl Cache {
             && object.validate_for(target).is_ok()
         {
             self.stats.reused_assets += 1;
+            self.report
+                .task(
+                    "media",
+                    Some("media"),
+                    "cache_hit",
+                    format!("内置图片 {}（构建缓存）", id.id()),
+                )
+                .finish(true);
             return Ok(hmi_media::EncodingResult {
                 action: "cache",
                 object,
                 inputs,
             });
         }
+        let task = self.report.task(
+            "media",
+            Some("media"),
+            "encode",
+            format!("内置图片 {}", id.id()),
+        );
         let result = hmi_media::builtin::encode(id, target)?;
         self.store(&key, "hma", &result.object.encode()?, &[])?;
         self.stats.encoded += 1;
+        task.finish(false);
         Ok(result)
     }
 
