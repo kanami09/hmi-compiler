@@ -314,22 +314,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hmi-compiler"
-version = "0.1.0"
-dependencies = [
- "anstream",
- "anstyle",
- "clap",
- "hmi-analysis",
- "hmi-core",
- "hmi-format",
- "serde",
- "serde_json",
- "tempfile",
- "toml",
-]
-
-[[package]]
 name = "hmi-core"
 version = "0.1.0"
 dependencies = [

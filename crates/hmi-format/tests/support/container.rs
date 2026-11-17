@@ -1,6 +1,6 @@
-#![allow(dead_code)]
-use hmi_compiler::binary::{directory_crc, main_crc, page_crc, put_u32};
-use hmi_compiler::container::{BACKUP_START, DATA_START};
+//! 带未知字段、删除记录和备用目录的容器样本，仅用于格式边界测试。
+use hmi_format::binary::{directory_crc, main_crc, page_crc, put_u32};
+use hmi_format::container::{BACKUP_START, DATA_START};
 
 fn record(out: &mut Vec<u8>, bytes: &[u8]) {
     out.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
@@ -107,22 +107,6 @@ pub fn fixture() -> Vec<u8> {
     fixture_with_pages(1)
 }
 
-pub fn fixture_with_control(kind: u8) -> Vec<u8> {
-    use hmi_compiler::{container::Container, page::Page};
-    use std::collections::BTreeMap;
-    let container = Container::parse(fixture()).unwrap();
-    let entry = container.active("39.pa").unwrap();
-    let page = Page::parse(container.data(entry).unwrap()).unwrap();
-    let mut objects: Vec<_> = page.objects.iter().map(|o| o.raw.clone()).collect();
-    objects[1] = object("b0", kind, 1);
-    container
-        .rebuild(&BTreeMap::from([(
-            entry.index,
-            page.rebuild(&objects).unwrap(),
-        )]))
-        .unwrap()
-}
-
 pub fn fixture_with_pages(count: usize) -> Vec<u8> {
     let mut main = vec![0; 96 + (count + 2) * 16];
     put_u32(&mut main, 4, 96).unwrap();
@@ -185,51 +169,10 @@ pub fn fixture_with_pages(count: usize) -> Vec<u8> {
 }
 
 pub fn fix_directory(bytes: &mut [u8]) {
-    let count = hmi_compiler::binary::usize32(bytes, 0).unwrap();
+    let count = hmi_format::binary::usize32(bytes, 0).unwrap();
     for base in [0, BACKUP_START] {
         let end = base + 4 + count * 28;
         let crc = directory_crc(&bytes[base..end]).unwrap();
         bytes[end..end + 4].copy_from_slice(&crc.to_le_bytes());
-    }
-}
-
-pub struct Workspace {
-    pub temporary: tempfile::TempDir,
-    pub root: std::path::PathBuf,
-    pub bytes: Vec<u8>,
-}
-
-impl Workspace {
-    pub fn new() -> Self {
-        Self::with_pages(1)
-    }
-    pub fn with_pages(count: usize) -> Self {
-        Self::from_bytes(fixture_with_pages(count))
-    }
-    pub fn from_bytes(bytes: Vec<u8>) -> Self {
-        let temporary = tempfile::tempdir().unwrap();
-        let input = temporary.path().join("input.HMI");
-        std::fs::write(&input, &bytes).unwrap();
-        let root = temporary.path().join("project");
-        hmi_compiler::workspace::export(&input, &root, false).unwrap();
-        std::fs::remove_file(input).unwrap();
-        Self {
-            temporary,
-            root,
-            bytes,
-        }
-    }
-    pub fn page_path(&self) -> std::path::PathBuf {
-        self.root.join("pages/p000_page0/page.toml")
-    }
-    pub fn read_page(&self) -> hmi_compiler::workspace::PageFile {
-        toml::from_str(&std::fs::read_to_string(self.page_path()).unwrap()).unwrap()
-    }
-    pub fn write_page(&self, page: &hmi_compiler::workspace::PageFile) {
-        std::fs::write(
-            self.page_path(),
-            hmi_compiler::workspace::page_to_toml(page).unwrap(),
-        )
-        .unwrap();
     }
 }
