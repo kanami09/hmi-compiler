@@ -42,6 +42,8 @@ pub struct ExtraResource {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct OriginalMetadata {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub managed_resources: Vec<String>,
     pub schema: String,
     pub target: TargetConfig,
     pub source_sha256: String,
@@ -67,6 +69,14 @@ fn push(payload: &mut Vec<u8>, bytes: &[u8]) -> Blob {
 }
 impl OriginalBundle {
     pub fn capture(container: &Container, project: &Project, target: TargetConfig) -> Result<Self> {
+        Self::capture_managed(container, project, target, &BTreeSet::new())
+    }
+    pub fn capture_managed(
+        container: &Container,
+        project: &Project,
+        target: TargetConfig,
+        managed: &BTreeSet<String>,
+    ) -> Result<Self> {
         let mut payload = Vec::new();
         let main = container.active("main.HMI").unwrap();
         let main_blob = push(&mut payload, container.data(main)?);
@@ -85,7 +95,7 @@ impl OriginalBundle {
         for entry in container
             .entries
             .iter()
-            .filter(|e| !e.deleted && !used.contains(&e.index))
+            .filter(|e| !e.deleted && !used.contains(&e.index) && !managed.contains(&e.name))
         {
             extras.push(ExtraResource {
                 name: entry.name.clone(),
@@ -95,6 +105,7 @@ impl OriginalBundle {
         }
         let result = Self {
             metadata: OriginalMetadata {
+                managed_resources: managed.iter().cloned().collect(),
                 schema: "hmi.original/1".into(),
                 target,
                 source_sha256: sha256(&container.bytes),

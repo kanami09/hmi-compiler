@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 pub mod asset;
 mod envelope;
+pub mod native;
 pub mod original;
 
 const MAGIC: &[u8; 8] = b"HMIOBJ02";

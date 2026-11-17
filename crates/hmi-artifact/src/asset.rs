@@ -209,12 +209,17 @@ pub enum MemberRole {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Member {
+    #[serde(default, skip_serializing_if = "directory_is_zero")]
+    pub directory_unknown: [u8; 3],
     pub role: MemberRole,
     pub extension: String,
     pub reference_kind: Option<[u8; 8]>,
     pub offset: u32,
     pub length: u32,
     pub sha256: String,
+}
+fn directory_is_zero(value: &[u8; 3]) -> bool {
+    *value == [0; 3]
 }
 /// 可复用原始编码所依据的有效请求；不记录本机路径或资产符号名。
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -241,9 +246,44 @@ pub struct AssetObject {
     pub payload: Vec<u8>,
 }
 
+pub type NativeMember = (MemberRole, String, Option<[u8; 8]>, Vec<u8>);
+
 impl AssetObject {
+    /// 原生封装不重新生成运行数据或编辑源，只建立并校验自包含的成员清单。
+    pub fn native(info: AssetInfo, entries: Vec<NativeMember>) -> Result<Self> {
+        let mut payload = Vec::new();
+        let mut members = Vec::new();
+        for (role, extension, reference_kind, bytes) in entries {
+            members.push(Member {
+                directory_unknown: [0; 3],
+                role,
+                extension,
+                reference_kind,
+                offset: u32::try_from(payload.len())
+                    .map_err(|_| error("asset_length", "原生资源偏移超出u32"))?,
+                length: u32::try_from(bytes.len())
+                    .map_err(|_| error("asset_length", "原生资源长度超出u32"))?,
+                sha256: sha256(&bytes),
+            });
+            payload.extend(bytes);
+        }
+        let object = Self {
+            metadata: AssetMetadata {
+                schema: "hmi.asset-object/1".into(),
+                format: "ver21234".into(),
+                producer: format!("hmi-native/{}", env!("CARGO_PKG_VERSION")),
+                info,
+                members,
+                source_request: None,
+            },
+            payload,
+        };
+        object.validate()?;
+        Ok(object)
+    }
     pub fn audio(info: AudioInfo, bytes: Vec<u8>) -> Result<Self> {
         let member = Member {
+            directory_unknown: [0; 3],
             role: MemberRole::Runtime,
             extension: "wav".into(),
             reference_kind: info.delivery.is_embedded().then_some(*b"wav\0\0\0\0\0"),
@@ -268,6 +308,7 @@ impl AssetObject {
     }
     pub fn video(info: VideoInfo, bytes: Vec<u8>) -> Result<Self> {
         let member = Member {
+            directory_unknown: [0; 3],
             role: MemberRole::Runtime,
             extension: "v".into(),
             reference_kind: info.delivery.is_embedded().then_some(*b"v\0\0\0\0\0\0\0"),
@@ -296,6 +337,7 @@ impl AssetObject {
         payload.extend(&source);
         let members = vec![
             Member {
+                directory_unknown: [0; 3],
                 role: MemberRole::Runtime,
                 extension: "gmov".into(),
                 reference_kind: info.delivery.is_embedded().then_some(*b"gmov\0\0\0\0"),
@@ -305,6 +347,7 @@ impl AssetObject {
                 sha256: sha256(&payload[..split]),
             },
             Member {
+                directory_unknown: [0; 3],
                 role: MemberRole::Source,
                 extension: "gmovs".into(),
                 reference_kind: None,
@@ -363,6 +406,7 @@ impl AssetObject {
         };
         for (role, extension, reference_kind, bytes) in entries {
             members.push(Member {
+                directory_unknown: [0; 3],
                 role,
                 extension: extension.into(),
                 reference_kind,
@@ -390,6 +434,7 @@ impl AssetObject {
     }
     pub fn font(info: FontInfo, bytes: Vec<u8>) -> Result<Self> {
         let member = Member {
+            directory_unknown: [0; 3],
             role: MemberRole::Runtime,
             extension: "zi".into(),
             reference_kind: Some([b'z', b'i', 0, 0, 0, 0, 0, 0]),
@@ -458,6 +503,11 @@ impl AssetObject {
             {
                 vec![(MemberRole::Runtime, "gmov", None)]
             }
+            AssetInfo::Animation { animation } if animation.timing == "native-runtime" => vec![(
+                MemberRole::Runtime,
+                "gmov",
+                embedded.then_some(*b"gmov\0\0\0\0"),
+            )],
             AssetInfo::Animation { .. } => vec![
                 (
                     MemberRole::Runtime,
@@ -660,6 +710,51 @@ impl AssetObject {
             }
             return Err(error("asset_metadata", "保留运行GMOV的描述与载荷不一致"));
         }
+        if matches!(info.timing.as_str(), "native-preserved" | "native-runtime") {
+            let source = if info.timing == "native-preserved" {
+                Some(hmi_format::gmov::inspect_source(self.member(1)?)?)
+            } else {
+                None
+            };
+            if (
+                info.width,
+                info.height,
+                info.orientation,
+                info.quality,
+                info.frame_count,
+                info.duration_ms,
+            ) != (
+                runtime.width,
+                runtime.height,
+                runtime.orientation,
+                runtime.quality,
+                runtime.frames.len() as u32,
+                runtime.duration_ms,
+            ) || info.delays_ms
+                != runtime
+                    .frames
+                    .iter()
+                    .map(|f| f.delay_ms)
+                    .collect::<Vec<_>>()
+                || !info.frame_indices.is_empty()
+                || info.has_alpha != runtime.frames.iter().any(|f| f.alpha_offset != 0)
+                || (info.alpha == Alpha::Preserve) != runtime.alpha_enabled
+                || info.source_sha256 != sha256(self.member(0)?)
+            {
+                return Err(error("asset_metadata", "原生动画描述与运行载荷不一致"));
+            }
+            if let Some(source) = source {
+                if (source.width, source.height) != (info.width, info.height)
+                    || info.source_frames != source.delays.len() as u32
+                    || info.source_duration_ms != source.delays.iter().sum::<u32>()
+                {
+                    return Err(error("asset_metadata", "原生GIF编辑源与描述不一致"));
+                }
+            } else if info.source_frames != 0 || info.source_duration_ms != 0 {
+                return Err(error("asset_metadata", "缺少编辑源时不能声明原始GIF信息"));
+            }
+            return Ok(());
+        }
         let source = hmi_format::gmov::inspect_source(self.member(1)?)?;
         let indices = &info.frame_indices;
         let expected = hmi_format::gmov::normalize_timing(&source.delays);
@@ -713,7 +808,10 @@ impl AssetObject {
         if !matches!(info.codec.as_str(), "rgb565" | "jpeg")
             || info.width == 0
             || info.height == 0
-            || !matches!(info.editor_source_format.as_str(), "bmp" | "png" | "none")
+            || !matches!(
+                info.editor_source_format.as_str(),
+                "bmp" | "png" | "jpg" | "none"
+            )
             || !matches!(info.orientation, 0 | 90 | 180 | 270)
         {
             return Err(error(
@@ -726,7 +824,7 @@ impl AssetObject {
                 if info.jpeg.is_some() {
                     return Err(error("asset_metadata", "RGB565 目标不能声明 JPEG 参数"));
                 }
-                if info.editor_source_format != "bmp" {
+                if !matches!(info.editor_source_format.as_str(), "bmp" | "none") {
                     return Err(error("asset_format", "RGB565 使用 BMP 编辑源"));
                 }
                 if matches!(info.orientation, 90 | 270) {
@@ -748,7 +846,7 @@ impl AssetObject {
                     return Err(error("asset_metadata", "JPEG 质量、补齐尺寸或采样格式无效"));
                 }
                 if settings.has_alpha
-                    && (!matches!(info.editor_source_format.as_str(), "png" | "none")
+                    && (!matches!(info.editor_source_format.as_str(), "png" | "jpg" | "none")
                         || info.alpha != Alpha::Preserve)
                 {
                     return Err(error(
@@ -797,6 +895,14 @@ impl AssetObject {
                 return Err(error("asset_metadata", "外部 XI 与资产描述不一致"));
             }
             return Ok(());
+        }
+        if info.codec == "rgb565" && info.editor_source_format == "none" {
+            return hmi_format::picture::validate_rgb565_runtime(
+                self.member(0)?,
+                info.width,
+                info.height,
+                info.orientation,
+            );
         }
         if info.codec == "jpeg" && info.editor_source_format == "none" {
             let parts = hmi_format::picture::jpeg::parts(

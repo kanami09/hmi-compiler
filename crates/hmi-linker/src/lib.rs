@@ -972,6 +972,7 @@ pub fn link_with_original(
     let mut references = Vec::new();
     let mut asset_map = Vec::new();
     let mut external_files = Vec::new();
+    let mut directory_unknown = BTreeMap::new();
     for (key, asset) in assets {
         if asset.metadata.info.is_external() {
             let path = asset
@@ -996,6 +997,7 @@ pub fn link_with_original(
         let id = next_id.entry(kind).or_insert(0usize);
         for (index, member) in asset.metadata.members.iter().enumerate() {
             let name = format!("{id}.{}", member.extension);
+            directory_unknown.insert(name.clone(), member.directory_unknown);
             resources.push((name.clone(), asset.member(index)?.to_vec()));
             if let Some(reference_kind) = member.reference_kind {
                 let end = reference_kind.iter().position(|&b| b == 0).unwrap_or(8);
@@ -1010,7 +1012,6 @@ pub fn link_with_original(
         *id += 1;
     }
     references.extend((0..pages.len()).map(|id| ("pa".to_string(), format!("{id}.pa"))));
-    let mut directory_unknown = BTreeMap::new();
     if let Some(original) = original {
         original.validate()?;
         directory_unknown.insert("main.HMI".into(), original.metadata.main_directory_unknown);
@@ -1035,7 +1036,7 @@ pub fn link_with_original(
         for i in 0..count {
             let kind = hmi_format::binary::name(&main[start + i * 16..start + i * 16 + 8])?;
             let name = hmi_format::binary::name(&main[start + i * 16 + 8..start + i * 16 + 16])?;
-            if kind != "pa" {
+            if kind != "pa" && !original.metadata.managed_resources.contains(&name) {
                 if !resources.iter().any(|(n, _)| n == &name) {
                     return Err(error(
                         "original_resource",

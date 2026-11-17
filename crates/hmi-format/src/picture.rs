@@ -69,6 +69,16 @@ pub fn validate(
     height: u16,
     orientation: u16,
 ) -> Result<()> {
+    validate_rgb565_runtime(runtime, width, height, orientation)?;
+    validate_bmp_source(source, width, height)
+}
+
+pub fn validate_rgb565_runtime(
+    runtime: &[u8],
+    width: u16,
+    height: u16,
+    orientation: u16,
+) -> Result<()> {
     let invalid = || error("image_layout", "图片资源头、尺寸或载荷长度无效");
     if width == 0 || height == 0 {
         return Err(invalid());
@@ -86,7 +96,7 @@ pub fn validate(
     {
         return Err(invalid());
     }
-    validate_bmp_source(source, width, height)
+    Ok(())
 }
 
 fn validate_header(
@@ -152,11 +162,21 @@ pub fn validate_source(source: &[u8], width: u16, height: u16, format: &str) -> 
             }
             validate_png(&source[27..], width, height)
         }
+        "jpg" => {
+            validate_header(source, [10, 0x64, 1, 1], width, height, 27)?;
+            if source[20..24] != [0; 4] || source[24..27] != *b"jpg" {
+                return Err(error("image_layout", "JPEG编辑源包装无效"));
+            }
+            if source_jpeg_dimensions(&source[27..])? != (width, height) {
+                return Err(error("image_dimensions", "JPEG编辑源尺寸不一致"));
+            }
+            Ok(())
+        }
         _ => Err(error("image_format", "未知的编辑源格式")),
     }
 }
 
-/// 只检查规范化 RGBA8 PNG 的尺寸、块边界和 CRC，不在链接器解压图像。
+/// 检查标准PNG的尺寸、合法色型／位深、块边界和CRC，不在链接器解压图像。
 fn validate_png(bytes: &[u8], width: u16, height: u16) -> Result<()> {
     let invalid = || error("png_layout", "PNG 编辑源的尺寸、块布局或 CRC 无效");
     if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
@@ -184,7 +204,13 @@ fn validate_png(bytes: &[u8], width: u16, height: u16) -> Result<()> {
                 || length != 13
                 || chunk[8..12] != u32::from(width).to_be_bytes()
                 || chunk[12..16] != u32::from(height).to_be_bytes()
-                || chunk[16..21] != [8, 6, 0, 0, 0]
+                || !matches!(
+                    (chunk[16], chunk[17]),
+                    (1 | 2 | 4 | 8 | 16, 0) | (8 | 16, 2) | (1 | 2 | 4 | 8, 3) | (8 | 16, 4 | 6)
+                )
+                || chunk[18] != 0
+                || chunk[19] != 0
+                || chunk[20] > 1
             {
                 return Err(invalid());
             }
@@ -204,4 +230,46 @@ fn validate_png(bytes: &[u8], width: u16, height: u16) -> Result<()> {
         }
         pos = end;
     }
+}
+
+fn source_jpeg_dimensions(bytes: &[u8]) -> Result<(u16, u16)> {
+    let invalid = || error("jpeg_layout", "JPEG编辑源的标记或尺寸无效");
+    if !bytes.starts_with(&[255, 216]) || !bytes.ends_with(&[255, 217]) {
+        return Err(invalid());
+    }
+    let mut pos = 2;
+    while pos < bytes.len() {
+        if bytes.get(pos) != Some(&255) {
+            return Err(invalid());
+        }
+        while bytes.get(pos) == Some(&255) {
+            pos += 1;
+        }
+        let marker = *bytes.get(pos).ok_or_else(invalid)?;
+        pos += 1;
+        if matches!(marker, 0 | 1 | 0xD0..=0xD9 | 0xDA) {
+            return Err(invalid());
+        }
+        let length = bytes.get(pos..pos + 2).ok_or_else(invalid)?;
+        let length = usize::from(u16::from_be_bytes([length[0], length[1]]));
+        if length < 2 {
+            return Err(invalid());
+        }
+        let segment = bytes
+            .get(pos..pos.checked_add(length).ok_or_else(invalid)?)
+            .ok_or_else(invalid)?;
+        if matches!(marker, 0xC0..=0xC2) {
+            if segment.len() < 8 || segment[2] != 8 {
+                return Err(invalid());
+            }
+            let height = u16::from_be_bytes([segment[3], segment[4]]);
+            let width = u16::from_be_bytes([segment[5], segment[6]]);
+            if width == 0 || height == 0 {
+                return Err(invalid());
+            }
+            return Ok((width, height));
+        }
+        pos += length;
+    }
+    Err(invalid())
 }

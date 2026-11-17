@@ -1,8 +1,7 @@
 //! 输入层只检查、复用或重新封装已知格式；source 的实际编码仍由各后端负责。
 use super::{AssetProbe, EncodingResult};
 use hmi_artifact::asset::{
-    AnimationInfo, AssetInfo, AssetObject, AudioInfo, AudioTrackInfo, FontInfo, ImageInfo,
-    JpegInfo, SourceRequest, VideoInfo,
+    AnimationInfo, AssetInfo, AssetObject, ImageInfo, JpegInfo, SourceRequest,
 };
 use hmi_core::{
     Result,
@@ -299,99 +298,9 @@ fn encoded(kind: &str, bytes: &[u8], delivery: Delivery) -> Result<AssetObject> 
                 Vec::new(),
             )
         }
-        "font" => {
-            let h = hmi_format::font::inspect(bytes)?;
-            AssetObject::font(
-                FontInfo {
-                    version: 6,
-                    encoding: "utf-8".into(),
-                    height: h.height,
-                    glyph_count: h.glyph_count,
-                    orientation: h.orientation,
-                    source_orientation: h.orientation,
-                    source_sha256: digest,
-                    backend: "hmi-zi-preserve/1".into(),
-                },
-                bytes.to_vec(),
-            )
-        }
-        "audio" => {
-            let w = hmi_format::wave::inspect_native(bytes)?;
-            AssetObject::audio(
-                AudioInfo {
-                    delivery,
-                    source_codec: "native-pcm-s16le".into(),
-                    sample_rate: w.sample_rate,
-                    channels: w.channels,
-                    sample_frames: w.samples,
-                    content_samples: w.samples,
-                    padding_samples: 0,
-                    duration_ms: ((u64::from(w.samples) * 1000) / u64::from(w.sample_rate)) as u32,
-                    source_rate: w.sample_rate,
-                    source_channels: w.channels,
-                    source_bits: 16,
-                    source_samples: w.samples,
-                    clip_start_ms: 0,
-                    source_sha256: digest,
-                    encoder: "hmi-wave-preserve/1".into(),
-                    backend: None,
-                },
-                bytes.to_vec(),
-            )
-        }
-        "video" => {
-            let v = hmi_format::video::inspect(bytes)?;
-            let audio = v
-                .audio
-                .map(|b| -> Result<AudioTrackInfo> {
-                    let w = hmi_format::wave::inspect_native(b)?;
-                    let content =
-                        (u64::from(v.duration_ms) * u64::from(w.sample_rate) / 1000) as u32;
-                    let padding = w
-                        .samples
-                        .checked_sub(content)
-                        .filter(|n| *n <= 1)
-                        .ok_or_else(|| error("asset_metadata", "VIDEO音轨采样数与时长不一致"))?;
-                    Ok(AudioTrackInfo {
-                        source_codec: "native-pcm-s16le".into(),
-                        sample_rate: w.sample_rate,
-                        channels: w.channels,
-                        content_samples: content,
-                        sample_frames: w.samples,
-                        padding_samples: padding as u8,
-                        leading_silence_samples: 0,
-                        trailing_silence_samples: 0,
-                        source_rate: w.sample_rate,
-                        source_channels: w.channels,
-                    })
-                })
-                .transpose()?;
-            AssetObject::video(
-                VideoInfo {
-                    delivery,
-                    width: v.width,
-                    height: v.height,
-                    orientation: v.orientation,
-                    quality: v.quality,
-                    fps: v.fps,
-                    frame_count: v.frames.len() as u32,
-                    duration_ms: v.duration_ms,
-                    source_fps_num: u32::from(v.fps),
-                    source_fps_den: 1,
-                    source_frames: v.frames.len() as u32,
-                    clip_start_ms: 0,
-                    source_audio_streams: u32::from(audio.is_some()),
-                    audio_mode: "if-present".into(),
-                    audio_applied: audio.is_some(),
-                    audio,
-                    codec: "video".into(),
-                    source_sha256: digest,
-                    backend: None,
-                    encoder: "hmi-video-preserve/1".into(),
-                },
-                bytes.to_vec(),
-            )
-        }
+        "font" => hmi_artifact::native::font(bytes),
+        "audio" => hmi_artifact::native::audio(bytes, delivery),
+        "video" => hmi_artifact::native::video(bytes, delivery),
         "animation" => {
             if delivery.is_embedded() {
                 return Err(error(
