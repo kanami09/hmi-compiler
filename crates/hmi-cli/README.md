@@ -2,7 +2,7 @@
 
 当前可从零新建工程，使用下表列出的 30 类控件，编译页面、控件事件和全局代码，再链接为 HMI。具体型号开放的控件以 target 的 control_types 为准。媒体支持图片、ZI 字库、GIF 动画、WAV 音频和有声／无声视频编码。构建过程不需要已有 HMI 或逆向资料。
 
-当前支持的型号和方向见根目录 `data/profiles/README.md`。尚未覆盖的控件模式、新格式导入、原始数据附件和增量缓存仍待接入。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
+当前支持的型号和方向见根目录 `data/profiles/README.md`。尚未覆盖的控件属性、媒体资产导入、非标准几何迁移和增量缓存仍待接入；已有无嵌入媒体工程可导入新版格式。`build` 与 `rebuild` 在此阶段都执行完整构建。原有 `hmi-compiler` 入口保留，迁移期间继续运行原有回归测试。
 
 四个内置型号均可通过 `init --orientation 0/90/180/270` 选择工程方向。新建页面会使用该方向对应的尺寸；方向字段和页面几何分别写入 HMI。
 
@@ -1079,3 +1079,55 @@ python examples/prepare_presentation_acceptance.py --font path/to/ui.zi
 ```
 
 输出位于 `target/acceptance-presentation/`，Visual0／Visual90分别为X543的0°／90°，各六页，包含黑色开机页、拖动、不透明度、八种控件特效、页面特效及组合配置。页底箭头循环切换，资源全部内嵌，不需要虚拟SD或FFmpeg；各编译一次后在模拟器核对动态表现。图片由代码生成，仅需独立ZI，不读已有HMI。每份实际执行14条独立作业，HMI与统一入口相同；已有目录不会覆盖，完整参数及预期见输出README。
+
+
+## 已有工程导入与原始数据附件
+
+统一入口与独立解析器共用实现：
+
+```powershell
+hmi inspect panel.HMI --json
+hmi import panel.HMI -o panel-source
+hmi-parse inspect panel.HMI --json
+hmi-parse export panel.HMI -o panel-source
+hmi build panel-source
+```
+
+首批支持ver21234、UTF-8、已有型号配置及匹配目标画布几何的无嵌入媒体工程，包括页面、变量、热区、定时器、复选框、单选框、单色进度条、单色指针／波形、无LOGO二维码、触摸捕捉、文件流及仅声明运行时外部路径的受支持控件。模型仍按HMI保存的型号代码识别，当前仅能匹配已内置配置，不把四个配置当作格式的型号上限。inspect可查看结构与资源；export遇到嵌入图片、字库、动画或音视频资源时明确拒绝，不会丢弃有效媒体后输出残缺工程。
+
+导入目标必须不存在或为空目录。工具先检查完整输入并在同级暂存目录生成文件，成功后再放到目标目录，不覆盖已有工程。输入允许活动资源间有未使用区及删除历史，只要有效目录、活动区间和页面校验正确；新容器会重新排列有效内容，不保留删除项、无用填充或旧分配历史。
+
+```toml
+# hmi.toml及独立link.toml均可显式声明；路径相对于所在清单。
+[original]
+bundle = ".preserve/origin.hpo"
+```
+
+```toml
+# 页面原始记录只定位附件，不是当前ID或稳定对象key。
+schema = "hmi.page/1"
+name = "home"
+original_record = "pages/0"
+
+[[objects]]
+name = "counter"
+type = "variable"
+original_record = "pages/0/objects/1"
+properties = { sta = 0, val = 42, txt = "newtxt", txt_maxl = 10, vscope = 0 }
+```
+
+导出会完整写出已公开属性，包括非活动值、各已知事件和全局脚本。页面与事件使用编号目录，路径不决定当前ID；sources及objects数组才决定顺序。已知属性始终以当前源码和缺省规则为准：删除val就恢复创建默认值，不能从附件取回旧值。original_record不参与名称、脚本或资产引用解析；重命名和重排不会自动改脚本。
+
+HPO保留原始对象记录、页头与索引未知字、主工程头及额外活动资源，不嵌入整个原HMI。对象中尚未开放的常量字段、额外属性和未知记录会保留；已公开字段、名称、ID、几何派生值、事件代码则按当前源码生成。类型不一致、定位不存在、附件损坏或缺失会报错；未知事件槽、尚未接入的布局或几何差异也会指出具体限制，不假装已支持。
+
+编译产物携带所需原始对象和页面数据，并声明附件摘要，独立链接不能遗漏或换成另一个附件。hmi-compile page可显式加`--original origin.hpo`；hmi plan会给页面作业添加该参数，并复制original.hpo供link.toml使用。持有计划中的HMO/HMA及HPO后，不需要原HMI或源码即可链接。原始附件是工程输入，不是可以随派生缓存清理的文件。
+
+页面头、索引偏移／长度、当前名称、主引用表、资源目录和CRC按当前布局生成；目录项未知字随所属页面或额外资源保留。额外活动资源不会因为未被普通控件引用就删除，原始不识别的引用类型也随资源保留。重建核对的是有效内容及结构，不要求整个文件逐字节一致。后续批次再接入媒体资产与更多原始变体的导入。
+
+生成首批导入验收工程：
+
+```powershell
+python examples/prepare_import_acceptance.py
+```
+
+输出位于 `target/acceptance-import/`，最终只需打开Import0／Import90两份X543工程，各五页。脚本先创建无媒体HMI，分别通过统一入口和独立解析器导入；未修改时对照全部活动资源，再编辑名称、数值、缺省属性和控件顺序后重建。每份七条独立作业的输出与统一入口一致。页底蓝色／绿色条块可辅助切页，核对后各编译一次；无需字库、FFmpeg或虚拟SD，详细预期见输出README。原始输入和未修改重建结果作为参考放在子目录，不是额外必验文件；已有输出目录不会覆盖。
