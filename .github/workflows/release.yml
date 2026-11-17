@@ -81,16 +81,18 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Test
-        run: cargo test --release --locked --target "$env:BUILD_TARGET"
+        run: cargo test --workspace --release --locked --target "$env:BUILD_TARGET"
 
       - name: Build
-        run: cargo build --release --locked --target "$env:BUILD_TARGET" --bin hmi-compiler
+        run: cargo build --workspace --bins --release --locked --target "$env:BUILD_TARGET"
 
       - name: Package
         run: |
           $package = "hmi-compiler-${env:RELEASE_TAG}-windows-${env:BUILD_ARCH}"
           $directory = New-Item -ItemType Directory -Path "target/package/$package" -Force
-          Copy-Item "target/$env:BUILD_TARGET/release/hmi-compiler.exe" $directory
+          foreach ($binary in 'hmi', 'hmi-parse', 'hmi-compile', 'hmi-media', 'hmi-link') {
+            Copy-Item "target/$env:BUILD_TARGET/release/$binary.exe" $directory
+          }
           Copy-Item README.md, LICENSE $directory
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Compress-Archive -Path "$($directory.FullName)/*" -DestinationPath "dist/$package.zip"
