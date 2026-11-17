@@ -446,7 +446,20 @@ pub fn build_with_options(
     let root = fs::canonicalize(root)?;
     let declared = cache::declared_inputs(&root)?;
     let _lock = cache::ProjectLock::acquire(&root, &declared)?;
-    let mut cache = cache::Cache::new(&root, force, &declared)?;
+    let mut cache = match cache::Cache::new(&root, force, &declared) {
+        Ok(cache) => cache,
+        Err(e)
+            if e.as_diagnostic()
+                .is_some_and(|d| matches!(d.code.as_str(), "io" | "read_file")) =>
+        {
+            // 依赖扫描不负责源码语义。比如非法事件槽引用了不存在的脚本时，
+            // 应由编译器报告事件槽错误，不能让预先读取摘要遮蔽真正的问题。
+            // 此分支只读输入，不写计划、缓存或最终输出。
+            prepare(&root)?;
+            return Err(e);
+        }
+        Err(e) => return Err(e),
+    };
     let prepared = prepare_inner(&root, Some(&mut cache))?;
     let assets = prepared.encode_assets()?;
     let linked = hmi_linker::link_with_original(
