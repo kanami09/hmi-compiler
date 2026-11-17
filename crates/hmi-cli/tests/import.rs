@@ -306,14 +306,21 @@ fn missing_corrupt_or_wrong_record_attachments_and_unsupported_media_do_not_repl
         .collect::<Vec<_>>();
     resources.push(("0.i".into(), b"media".to_vec()));
     fs::write(&input, write::container(&resources).unwrap()).unwrap();
+    // 未引用资源可以作为原始活动数据保留；损坏的已引用媒体必须明确拒绝。
+    let main = write::main_resource(
+        "TJC4827X543_011",
+        3,
+        0,
+        &[("pa", "10.pa"), ("bin", "odd.bin"), ("i", "0.i")],
+    )
+    .unwrap();
+    resources
+        .iter_mut()
+        .find(|(name, _)| name == "main.HMI")
+        .unwrap()
+        .1 = main;
+    fs::write(&input, write::container(&resources).unwrap()).unwrap();
     let media_output = tmp.path().join("media-project");
-    assert_eq!(
-        hmi_parser::export(&input, &media_output)
-            .unwrap_err()
-            .as_diagnostic()
-            .unwrap()
-            .code,
-        "import_media"
-    );
+    assert!(hmi_parser::export(&input, &media_output).is_err());
     assert!(!media_output.exists());
 }

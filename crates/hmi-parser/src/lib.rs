@@ -1,13 +1,12 @@
 //! 已有HMI到新版源码的入口。已知属性可编辑，未知记录通过显式附件保留。
 use hmi_artifact::original::OriginalBundle;
 use hmi_core::{
-    Result,
-    controls::{self, Storage},
-    error, file,
+    Result, controls, error, file,
     model::*,
     target::{PROFILES, Target, TargetConfig},
 };
 use hmi_format::{binary, container::Container, page::Object, project::Project};
+mod media;
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -91,44 +90,6 @@ pub fn inspect(path: &Path) -> Result<serde_json::Value> {
         serde_json::json!({"target":p.target,"pages":p.project.pages.iter().enumerate().map(|(id,(_,page))|serde_json::json!({"id":id,"name":page.name,"objects":page.objects.iter().map(|o|serde_json::json!({"id":o.id,"name":o.name,"type":hmi_format::page::type_name(o.type_code)})).collect::<Vec<_>>()})).collect::<Vec<_>>(),"active_resources":p.container.entries.iter().filter(|e|!e.deleted).collect::<Vec<_>>() }),
     )
 }
-fn properties(object: &Object) -> Result<Properties> {
-    let d = controls::record_definition(object.type_code)?;
-    let attrs = object
-        .attributes
-        .iter()
-        .map(|a| (a.name.clone(), a.value.clone()))
-        .collect::<Vec<_>>();
-    let mut p = d.properties_from_record(&attrs)?;
-    for property in d.all_properties() {
-        if matches!(
-            property.storage,
-            Storage::Image | Storage::Font | Storage::Animation | Storage::Video | Storage::Audio
-        ) {
-            let id = p[property.name].as_integer().unwrap();
-            if id == 65535 && property.allows_none() {
-                p.insert(
-                    property.name.into(),
-                    toml::Value::Table(toml::map::Map::from_iter([("none".into(), true.into())])),
-                );
-            } else {
-                return Err(error(
-                    "import_media",
-                    format!(
-                        "{}.{}含媒体引用{id}，本批尚未接入媒体资产导入",
-                        object.name, property.name
-                    ),
-                ));
-            }
-        }
-        if matches!(property.storage, Storage::ImageMap) {
-            let entries = hmi_core::icon_map::parse_native(p[property.name].as_str().unwrap())?;
-            if !entries.is_empty() {
-                return Err(error("import_media", "本批尚未接入自定义图标所引用的媒体"));
-            }
-        }
-    }
-    Ok(p)
-}
 fn events(
     object: &Object,
     prefix: &str,
@@ -166,29 +127,20 @@ fn events(
 pub fn export(path: &Path, output: &Path) -> Result<ImportReport> {
     let parsed = read(path)?;
     let target = Target::resolve(&parsed.target)?;
-    // 首批明确拒绝媒体，不能把未导入的有效资源丢掉后伪装成成功。
-    for entry in parsed.container.entries.iter().filter(|e| !e.deleted) {
-        if entry.name.rsplit_once('.').is_some_and(|(_, ext)| {
-            matches!(ext, "i" | "is" | "zi" | "gmov" | "gmovs" | "v" | "wav")
-        }) {
-            return Err(error(
-                "import_media",
-                format!(
-                    "活动媒体资源 {} 需由下一批媒体导入处理，当前未写出工程",
-                    entry.name
-                ),
-            ));
-        }
-    }
     if output.exists() && (!output.is_dir() || fs::read_dir(output)?.next().is_some()) {
         return Err(error(
             "import_output",
             "导入目标须不存在或为空目录，不覆盖已有工程",
         ));
     }
-    let bundle =
-        OriginalBundle::capture(&parsed.container, &parsed.project, parsed.target.clone())?;
-    let mut files = BTreeMap::new();
+    let media = media::collect(&parsed.container, &parsed.project, &target)?;
+    let bundle = OriginalBundle::capture_managed(
+        &parsed.container,
+        &parsed.project,
+        parsed.target.clone(),
+        &media.managed,
+    )?;
+    let mut files = media.files.clone();
     files.insert(PathBuf::from(".preserve/origin.hpo"), bundle.encode()?);
     let program = parsed
         .container
@@ -222,7 +174,7 @@ pub fn export(path: &Path, output: &Path) -> Result<ImportReport> {
         let raw_props = controls::PAGE.properties_from_record(&raw_attrs)?;
         let checked = controls::PAGE.attributes(&page.name, &raw_props)?;
         target.check_control_properties(121, &checked)?;
-        let mut own = properties(&page.objects[0])?;
+        let mut own = media::properties(&page.objects[0], &media)?;
         own.retain(|key, _| matches!(key.as_str(), "sta" | "bco" | "pic" | "effect"));
         let mut objects = Vec::new();
         for (object_index, object) in page.objects.iter().enumerate().skip(1) {
@@ -239,34 +191,10 @@ pub fn export(path: &Path, output: &Path) -> Result<ImportReport> {
                     format!("当前目标未开放控件类型 {}", definition.name),
                 ));
             }
-            let props = properties(object)?;
+            let props = media::properties(object, &media)?;
             // 校验已公开属性的范围，未知字段仍留在原始记录中。
-            let generated = definition.attributes(
-                &object.name,
-                &props
-                    .iter()
-                    .map(|(k, v)| {
-                        (
-                            k.clone(),
-                            if matches!(
-                                definition
-                                    .all_properties()
-                                    .find(|p| p.name == k)
-                                    .unwrap()
-                                    .storage,
-                                Storage::Image
-                                    | Storage::Animation
-                                    | Storage::Video
-                                    | Storage::Audio
-                            ) {
-                                65535.into()
-                            } else {
-                                v.clone()
-                            },
-                        )
-                    })
-                    .collect(),
-            )?;
+            let generated = definition
+                .attributes(&object.name, &media::native_properties(definition, &props)?)?;
             target.check_control_properties(object.type_code, &generated)?;
             objects.push(ObjectFile {
                 original_record: Some(format!("pages/{index}/objects/{object_index}")),
@@ -308,7 +236,9 @@ pub fn export(path: &Path, output: &Path) -> Result<ImportReport> {
         },
         build: BuildConfig::default(),
         pages: PageSources { sources },
-        assets: AssetSources::default(),
+        assets: AssetSources {
+            items: media.assets.clone(),
+        },
     };
     files.insert(PathBuf::from("hmi.toml"), file::toml(&project)?);
     let output = file::absolute(output)?;
