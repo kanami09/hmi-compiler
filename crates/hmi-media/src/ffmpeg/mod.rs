@@ -4,6 +4,23 @@ use std::path::{Path, PathBuf};
 
 pub use hmi_core::asset::FfmpegInfo as BackendInfo;
 
+const LIBRARIES: [(&str, u32, u32, u32); 5] = [
+    ("avutil", 61, 1, 102),
+    ("swresample", 7, 1, 102),
+    ("avcodec", 63, 1, 102),
+    ("avformat", 63, 1, 102),
+    ("swscale", 10, 1, 102),
+];
+
+/// 返回可能使用的后端输入，不加载 DLL；实际依赖仍以编码结果的 inputs 为准。
+pub fn dependency_paths() -> Result<Vec<PathBuf>> {
+    let directory = directory()?;
+    Ok(LIBRARIES
+        .iter()
+        .map(|(name, major, _, _)| directory.join(format!("{name}-{major}.dll")))
+        .collect())
+}
+
 pub(crate) struct DecodedVideo {
     pub frames: Vec<image::RgbaImage>,
     pub fps_num: u32,

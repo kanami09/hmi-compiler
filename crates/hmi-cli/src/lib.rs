@@ -15,6 +15,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+mod cache;
+pub use cache::{BuildStats, clean};
+
 pub const BUILD_DIRECTORY: &str = ".build/hmi-toolchain";
 
 pub struct Prepared {
@@ -32,6 +35,7 @@ pub struct AssetInput {
     pub key: String,
     pub source: AssetOrigin,
     pub probe: hmi_media::AssetProbe,
+    encoded: Option<EncodedAsset>,
 }
 pub enum AssetOrigin {
     File(PathBuf),
@@ -99,6 +103,10 @@ pub fn init(directory: &Path, config: &TargetConfig) -> Result<()> {
 }
 
 pub fn prepare(root: &Path) -> Result<Prepared> {
+    prepare_inner(root, None)
+}
+
+fn prepare_inner(root: &Path, mut cache: Option<&mut cache::Cache>) -> Result<Prepared> {
     let root = fs::canonicalize(root)?;
     let manifest = root.join("hmi.toml");
     let project: ProjectSource = file::read_toml(&manifest)?;
@@ -115,7 +123,11 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         .as_deref()
         .map(hmi_artifact::original::OriginalBundle::read)
         .transpose()?;
-    let program = compile_program(&root.join(&project.program.source), &target)?;
+    let program_path = root.join(&project.program.source);
+    let program = match cache.as_deref_mut() {
+        Some(cache) => cache.compile(&program_path, &target, None, None, true)?,
+        None => compile_program(&program_path, &target)?,
+    };
     let mut inputs = vec![manifest];
     inputs.extend(program.inputs.iter().cloned());
     if let Some(path) = &original_path {
@@ -130,12 +142,26 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
             return Err(error("asset_key", format!("资产符号 {} 重复", asset.key)));
         }
         let source = root.join(&asset.source);
-        let probe = hmi_media::probe(&source, &target)?;
+        let (probe, encoded) = match cache.as_deref_mut() {
+            Some(cache) => {
+                let encoded = cache.encode(&source, &target)?;
+                (
+                    hmi_media::AssetProbe {
+                        action: encoded.action,
+                        info: encoded.object.metadata.info.clone(),
+                        inputs: encoded.inputs,
+                    },
+                    Some(encoded.object),
+                )
+            }
+            None => (hmi_media::probe(&source, &target)?, None),
+        };
         inputs.extend(probe.inputs.iter().cloned());
         assets.push(AssetInput {
             key: asset.key.clone(),
             source: AssetOrigin::File(source),
             probe,
+            encoded,
         });
     }
     let mut paths = std::collections::BTreeSet::new();
@@ -145,8 +171,18 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         if !paths.insert(canonical) {
             return Err(error("page_source", format!("页面输入 {source} 重复")));
         }
-        let compilation =
-            hmi_page_compiler::compile_page_with_original(&path, &target, original.as_ref())?;
+        let compilation = match cache.as_deref_mut() {
+            Some(cache) => cache.compile(
+                &path,
+                &target,
+                original.as_ref(),
+                original_path.as_deref(),
+                false,
+            )?,
+            None => {
+                hmi_page_compiler::compile_page_with_original(&path, &target, original.as_ref())?
+            }
+        };
         inputs.extend(compilation.inputs.iter().cloned());
         pages.push(compilation);
     }
@@ -159,10 +195,15 @@ pub fn prepare(root: &Path) -> Result<Prepared> {
         .into_iter()
         .filter(|b| needed.contains(b))
     {
+        let encoded = cache
+            .as_deref_mut()
+            .map(|cache| cache.encode_builtin(builtin, &target))
+            .transpose()?;
         assets.push(AssetInput {
             key: builtin.key().into(),
             source: AssetOrigin::Builtin(builtin),
             probe: hmi_media::builtin::probe(builtin, &target)?,
+            encoded: encoded.map(|e| e.object),
         });
     }
     Ok(Prepared {
@@ -183,6 +224,9 @@ impl Prepared {
         self.assets
             .iter()
             .map(|asset| {
+                if let Some(encoded) = &asset.encoded {
+                    return Ok((asset.key.clone(), encoded.clone()));
+                }
                 let encoded = match &asset.source {
                     AssetOrigin::File(path) => hmi_media::encode(path, &self.target)?,
                     AssetOrigin::Builtin(id) => hmi_media::builtin::encode(*id, &self.target)?,
@@ -382,13 +426,28 @@ impl Prepared {
     }
 }
 
-/// 第一阶段没有增量缓存：所有阶段完成并通过检查后才更新最终 HMI。
+/// 默认按内容摘要复用编译及编码产物，所有阶段通过后才更新最终 HMI。
 pub fn build(
     root: &Path,
     requested: Option<&Path>,
     deny_warnings: bool,
 ) -> Result<(PathBuf, hmi_linker::Linked)> {
-    let prepared = prepare(root)?;
+    let (output, linked, _) = build_with_options(root, requested, deny_warnings, false)?;
+    Ok((output, linked))
+}
+
+/// force 忽略派生缓存，不改变显式原始附件的输入语义。
+pub fn build_with_options(
+    root: &Path,
+    requested: Option<&Path>,
+    deny_warnings: bool,
+    force: bool,
+) -> Result<(PathBuf, hmi_linker::Linked, BuildStats)> {
+    let root = fs::canonicalize(root)?;
+    let declared = cache::declared_inputs(&root)?;
+    let _lock = cache::ProjectLock::acquire(&root, &declared)?;
+    let mut cache = cache::Cache::new(&root, force, &declared)?;
+    let prepared = prepare_inner(&root, Some(&mut cache))?;
     let assets = prepared.encode_assets()?;
     let linked = hmi_linker::link_with_original(
         &prepared.target,
@@ -409,11 +468,14 @@ pub fn build(
     }
     let build_directory = prepared.root.join(BUILD_DIRECTORY);
     let mut protected_paths = prepared.inputs.clone();
+    protected_paths.extend(cache.protected_paths());
     protected_paths.extend(prepared.plan_paths(&build_directory));
     let protected: Vec<_> = protected_paths.iter().map(|p| p.as_path()).collect();
     let publication =
         hmi_linker::publish::Publication::prepare(&linked, &output, Some(&map), &protected)?;
+    cache.verify_inputs()?;
     prepared.save_plan_inner(&build_directory, true, Some(&output), &assets)?;
+    cache.record(&prepared.plan_paths(&build_directory))?;
     publication.write()?;
-    Ok((output, linked))
+    Ok((output, linked, cache.stats))
 }

@@ -199,18 +199,11 @@ impl Api {
     }
     fn load_from(directory: &Path) -> Result<Self> {
         let dir = file::absolute(directory)?;
-        let entries = [
-            ("avutil", 61, 1, 102),
-            ("swresample", 7, 1, 102),
-            ("avcodec", 63, 1, 102),
-            ("avformat", 63, 1, 102),
-            ("swscale", 10, 1, 102),
-        ];
         let mut libraries = Vec::new();
         let mut paths = Vec::new();
         let mut versions = std::collections::BTreeMap::new();
         let mut fingerprint = String::new();
-        for (name, major, minor, patch) in entries {
+        for (name, major, minor, patch) in super::LIBRARIES {
             let path = dir.join(format!("{name}-{major}.dll"));
             // SAFETY: 只加载绝对指定的库路径及该目录的依赖，不改 PATH 或进程 DLL 搜索目录。
             let library = unsafe {

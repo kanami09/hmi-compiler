@@ -19,7 +19,7 @@ struct Args {
 }
 #[derive(Subcommand)]
 enum Command {
-    /// 从已有HMI导入新版工程；当前首批支持无嵌入媒体工程。
+    /// 从已有HMI导入新版工程，包含已识别的五类媒体。
     Import {
         file: PathBuf,
         #[arg(short, long)]
@@ -37,7 +37,7 @@ enum Command {
     },
     /// 检查工程，不写目标文件或构建目录。
     Check { directory: Option<PathBuf> },
-    /// 构建工程；第一阶段执行完整构建，尚无增量缓存。
+    /// 按内容摘要复用编译和编码产物，构建工程。
     Build {
         directory: Option<PathBuf>,
         #[arg(short, long)]
@@ -49,6 +49,8 @@ enum Command {
         #[arg(short, long)]
         output: Option<PathBuf>,
     },
+    /// 清理已登记且未被修改的构建产物，保留源文件和最终输出。
+    Clean { directory: Option<PathBuf> },
     /// 导出独立工具执行计划，不生成 .hmo 或 HMI。
     Plan {
         directory: Option<PathBuf>,
@@ -118,13 +120,33 @@ fn run(args: &Args) -> Result<CommandResult> {
         }
         Command::Build { directory, output } | Command::Rebuild { directory, output } => {
             let root = hmi_cli::locate_root(directory.as_deref())?;
-            let (output, linked) =
-                hmi_cli::build(&root, output.as_deref(), args.warnings.is_some())?;
+            let force = matches!(args.command, Command::Rebuild { .. });
+            let (output, linked, stats) = hmi_cli::build_with_options(
+                &root,
+                output.as_deref(),
+                args.warnings.is_some(),
+                force,
+            )?;
             Ok(CommandResult {
-                result: serde_json::json!({"output":output,"output_written":true,"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes),"external_files":linked.external_files.iter().map(|f| &f.path).collect::<Vec<_>>()}),
-                message: format!("重建完成：{}", output.display()),
+                result: serde_json::json!({"output":output,"output_written":true,"size":linked.bytes.len(),"sha256":hmi_core::sha256(&linked.bytes),"external_files":linked.external_files.iter().map(|f| &f.path).collect::<Vec<_>>(),"build":stats}),
+                message: format!(
+                    "重建完成：{}\n编译 {} 项，复用目标 {} 项；处理媒体 {} 项，复用媒体 {} 项。",
+                    output.display(),
+                    stats.compiled,
+                    stats.reused_objects,
+                    stats.encoded,
+                    stats.reused_assets
+                ),
                 diagnostics: linked.diagnostics,
             })
+        }
+        Command::Clean { directory } => {
+            let root = hmi_cli::locate_root(directory.as_deref())?;
+            let removed = hmi_cli::clean(&root)?;
+            Ok(cli::success(
+                serde_json::json!({"removed":removed}),
+                format!("清理完成，删除 {removed} 个构建产物。"),
+            ))
         }
         Command::Plan { directory, output } => {
             let root = hmi_cli::locate_root(directory.as_deref())?;
