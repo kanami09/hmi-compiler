@@ -1,18 +1,48 @@
 # 媒体编码器
 
-当前支持 BMP、PNG、JPG 图片、UTF-8 ZI v6 字库、GIF 动画、WAV 音频及受支持的视频输入。图片生成 K/T 的 RGB565 或 X543 的 JPEG，X543 可保留七位透明度；动画、视频和音频可生成内嵌资源或外部 GMOV／VIDEO／WAV 文件，图片还可生成外部 XI 文件。视频和部分音频转换使用 FFmpeg DLL，GIF 和原参数 PCM16 WAV 不需要 DLL。
+[项目首页](../../README.md) · [输入与部署](reference/inputs.md) · [FFmpeg 配置](reference/ffmpeg.md) · [通用输出选项](../hmi-cli/reference/automation.md)
 
-现已支持已知XI／ZI／VIDEO／格式化WAV及外部运行GMOV的encoded输入、五类native资产包，以及source加original附件的条件复用。完整媒体描述和视频／音频参数见 [工具链使用说明](../hmi-cli/README.md)。
+`hmi-media` 探测和处理媒体，生成自包含 `.hma` 资产目标供链接器使用。源文件保持不变，实际处理方式由资产描述明确指定。
+
+## 命令
+
+```text
+hmi-media probe SOURCE --target TARGET
+hmi-media encode SOURCE --target TARGET -o OUTPUT
+hmi-media inspect FILE
+hmi-media backend
+hmi-media builtin ID --target TARGET -o OUTPUT
+```
+
+| 命令 | 作用 |
+|---|---|
+| `probe` | 检查资产输入及处理参数，不写文件；源输入可能完整解码 |
+| `encode` | 按输入方式编码、封装或保留媒体，输出 `.hma` |
+| `inspect` | 校验并查看已有 `.hma` 描述及成员 |
+| `backend` | 检查 FFmpeg DLL 目录、版本和兼容性 |
+| `builtin` | 生成受支持的内置图标目标 |
+
+`SOURCE` 为资产 TOML 描述，`TARGET` 为当前工具生成的 `target.json`。`-o/--output` 必须指向与输入不同的位置。
 
 ```powershell
-hmi-media probe image.asset.toml --target target.json
-hmi-media encode image.asset.toml --target target.json -o image.hma
-hmi-media inspect image.hma
+hmi-media probe assets/logo.asset.toml --target build/target.json
+hmi-media encode assets/logo.asset.toml --target build/target.json -o build/logo.hma
+hmi-media inspect build/logo.hma --json
 ```
 
-输入格式根据文件签名识别，不能通过改后缀转换格式。source的probe完整解码并检查处理参数；encoded/native检查已有包装、成员摘要和目标兼容性，original命中时检查源摘要及请求记录，不重新解码。probe不写输出文件。当前解码后的 RGBA 数据最多为 64 MiB。
+## 媒体类型
 
-## 描述文件
+| 类型 | 源输入与输出 | 详细参考 |
+|---|---|---|
+| 图片 | BMP/PNG/JPG；T0/K0 的 RGB565、X543 的 JPEG，X543 可保留透明度 | [图片](reference/images.md) |
+| 字库 | 受支持的 UTF-8 ZI v6，按目标自动适配方向 | [字库](reference/fonts.md) |
+| 动画 | GIF，生成内嵌动画或外部 GMOV | [动画](reference/animation.md) |
+| 视频 | 受支持的固定帧率视频，生成有声或无声 VIDEO | [视频](reference/video.md) |
+| 音频 | WAV，生成 PCM16 运行资源，可转换或截取 | [音频](reference/audio.md) |
+
+已编码运行文件、原生资产包和条件复用也由同一工具处理，见[输入方式](reference/inputs.md#输入方式)。不能通过改文件后缀获得其他编码格式。
+
+## 资产描述
 
 ```toml
 schema = "hmi.asset/1"
@@ -20,85 +50,31 @@ kind = "image"
 source = "images/logo.png"
 
 [encoding]
-codec = "auto"
-alpha = "flatten"
-background = "#FFFFFF"
-
-[resize]
-width = 72
-height = 48
-mode = "stretch"
-```
-
-source 相对于描述文件所在目录。codec 可省略，或设为 auto，由目标选择 K/T 的 rgb565、X543 的 jpeg；也可显式指定该目标支持的编码。RGB565 不接受 quality 参数；JPEG quality 为 1～100、默认 80。delivery 默认 embedded；X543 的图片可选择 external，并指定以 .xi 结尾的运行时路径。动画／视频／音频也支持 external，分别要求 .gmov／.video／.wav 后缀；字体仍为内嵌。
-
-alpha 默认 preserve：X543 保留变换后图像的透明度，RGB565 遇到透明像素仍报错。需要去透明时设置 flatten，并指定 #RRGGBB 背景色。resize 默认不启用，启用时宽高必须同时给出：stretch 拉伸；contain 保持比例并居中填充，且须提供 #RRGGBBAA 背景。填充背景与主体的透明度都按 alpha 策略处理。
-
-处理只生成派生资源，不改写原图。不透明结果使用 BMP 编辑源，无需转换的标准 24 位 BMP 保留原始字节；保留透明度的结果使用 RGBA8 PNG 编辑源。工程 source 仍指原始输入，.hma 中的 source 成员表示上位机编辑源，不保证是原文件的字节副本。
-
-## 目标文件
-
-.hma 包含版本化 JSON 描述、运行图片和编辑源，并对完整内容及成员计算摘要。逻辑宽高不因存储方向改变，90°／270° 的存储光栅宽高单独记录。链接器校验编码、方向和格式兼容性，不要求源文件继续存在。
-
-K/T 的 `.i` 运行数据使用小端 RGB565，颜色转换直接截去低位；X543 使用 JPEG 与可选透明度流。`.is` 保存未旋转、逻辑尺寸的 BMP 或 PNG 编辑源。只有运行成员占用图片 ID，编辑源不会单独占 ID，也不进入主引用表。图片 ID 和内部资源名由链接器分配。
-
-## X543 JPEG 图片
-
-```toml
-schema = "hmi.asset/1"
-kind = "image"
-source = "images/logo.png"
-[encoding]
-codec = "jpeg"
-quality = 80
 alpha = "flatten"
 background = "#FFFFFF"
 ```
 
-使用纯 Rust Baseline JPEG 编码，固定为 YUV420；quality=100 也保持 JPEG，不切换到私有压缩格式，也不保证无损。后端和版本记录在 .hma 元数据中，输出不要求与上位机使用的 JPEG 库逐字节相同。
+描述中的路径相对于描述文件。工程资产表为描述指定 `key`，控件按当前符号引用。`input`、`original` 和 `delivery` 的区别及外部文件部署，集中见[通用参考](reference/inputs.md)。
 
-源图先按 resize 和 alpha 处理，再在右侧／下侧补齐内部画布，最后按工程方向旋转。X543 的补齐尺寸为至少 48 且按 16 对齐；补齐部分不会拉伸原图，也不改变控件使用的逻辑尺寸。四个方向均支持。
+## 后端与进度
 
-| 元数据字段 | 含义 |
-|---|---|
-| width、height | resize 后的逻辑尺寸，控制图片列表和几何检查 |
-| jpeg.padded_width、padded_height | 旋转前补齐画布的尺寸 |
-| storage_width、storage_height | 补齐并旋转后的实际 JPEG 帧尺寸 |
-| jpeg.quality、sampling | source的实际质量值（encoded XI未知时为null）及固定采样 yuv420 |
+图片、GIF、字库和原参数 PCM16 WAV 不需要 FFmpeg。视频及需要采样转换的音频使用 Windows x64 的兼容 FFmpeg shared 库；配置方法见[后端说明](reference/ffmpeg.md)。已有资产包可以在无 FFmpeg 的环境中链接。
 
-运行资源为图片头、帧前缀、JPEG 和可选七位透明度流。补齐后超出 u16 或 64 MiB RGBA 限制会报错。probe 检查输入、变换和尺寸，不执行运行数据编码；链接器检查包装、JPEG 标记、透明流像素数及编辑源结构，实际图像解码由媒体模块测试和上位机完成。
+处理计数来自实际解码、编码或音频转换。未知总量只显示已完成数量和用时；保留包及缓存复用不伪称重新解码。独立命令也支持 JSON 和 JSONL。
 
-## X543 透明图片
+## 内置图标
 
-```toml
-schema = "hmi.asset/1"
-kind = "image"
-source = "images/ring.png"
-[encoding]
-alpha = "preserve"
-quality = 96
+```powershell
+hmi-media builtin browser-folder --target build/target.json -o build/folder.hma
+hmi-media builtin browser-file --target build/target.json -o build/file.hma
 ```
 
-preserve 时不指定编码背景色。变换后的逻辑图像只要存在 alpha 小于 255 的像素，就生成透明度流，jpeg.has_alpha 记录是否实际保存该流。补齐区域在透明路径中保持全透明；颜色帧与透明度使用相同的补齐和旋转顺序。
+用于自行执行含默认文件浏览器图标的工具计划。统一入口会自动补齐所需资源，多页共享。图标配置见[文件控件参考](../hmi-compiler/reference/controls-files.md)。
 
-运行透明度按 `floor(alpha8 × 127 / 255)` 量化，再按七位游程编码；解码为 `floor(alpha7 × 255 / 127)`。透明度有量化损失，质量参数仅控制 JPEG 颜色，不提高透明度位数。编辑源 PNG 保留变换后的八位透明度，不能用运行预览反复覆盖工程原图。
+## Rust 库
 
-图片面板可显示 png-alpha：png 来自编辑源标签，alpha 来自运行透明度偏移。它不表示运行颜色帧改成了 PNG。保持全不透明或使用 flatten 后不写透明度流，继续使用 BMP 编辑源。
+Cargo 包和库分别为 `hmi-media`、`hmi_media`。共享库与命令行使用相同输入处理规则，可通过可选回调收集进度。
 
-所有工具支持 --json。输出不能覆盖声明的输入，编码失败不会更新已有输出。
-
-## ZI 字库
-
-```toml
-schema = "hmi.asset/1"
-kind = "font"
-source = "fonts/ui.zi"
+```powershell
+cargo doc -p hmi-media --no-deps --open
 ```
-
-source 相对于描述文件。输入须为 UTF-8 ZI v6，支持灰度 RLE 字形及透明空白字形；其他版本、非空白单色字形和未识别的布局会报告错误。当前不从 TTF 制作字库。字高和字符集合由 ZI 决定，不能通过改字体 ID 改变字号。
-
-无需配置字库方向。编码器检查内部方向，自动适配工程的 0°、90°、180° 或 270°；同方向保留原字节，需要转换时旋转字形矩阵、重新压缩并重建索引，不改写源 ZI。probe 检查全部索引和压缩流，不生成转换后的文件。字库不接受 quality、alpha、resize 等图片参数。
-
-字库 .hma 只有一个运行成员 `.zi`，无需图片的 `.is` 编辑源。图片和字体分别分配 ID，按清单中各自的相对顺序编号，未引用的显式资源仍保留。链接器不需要原 ZI 或描述文件。完整解析受 64 MiB 输入、128 MiB 解码总像素数限制。
-
-输入模式、原生包保留边界和原始附件复用条件见[工具链媒体输入说明](../hmi-cli/README.md#已编码文件原生资产包与原始编码复用)。encoded/native不接受重新编码参数；输入签名与结构仍须匹配，不能靠改后缀转换格式。
