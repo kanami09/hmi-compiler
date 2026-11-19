@@ -16,6 +16,7 @@ use std::{
 };
 
 mod cache;
+mod link_cache;
 mod parallel;
 pub use cache::{BuildStats, clean, clean_with_report};
 
@@ -626,6 +627,7 @@ pub fn build_with_jobs(
         return Err(error("build_jobs", "并行任务数必须为 1～256"));
     }
     report.parallelism(jobs, jobs.min(2));
+    report.plan("link", 1);
     report.note(format!(
         "并行任务上限：{jobs}；媒体任务上限：{}",
         jobs.min(2)
@@ -673,19 +675,7 @@ pub fn build_with_jobs(
     input_task.finish(false);
     let prepared = parallel::prepare(&root, &mut cache, report, jobs)?;
     let assets = prepared.encode_assets()?;
-    let linked = hmi_linker::link_with_original_and_report(
-        &prepared.target,
-        &prepared.program.object,
-        &prepared
-            .pages
-            .iter()
-            .map(|p| p.object.clone())
-            .collect::<Vec<_>>(),
-        &assets,
-        deny_warnings,
-        prepared.original.as_ref(),
-        report,
-    )?;
+    let linked = link_cache::link(&prepared, &assets, &mut cache, deny_warnings, report)?;
     let output = prepared.output_path(requested)?;
     report.plan_output("hmi", &output)?;
     let map = output.parent().unwrap().join("link-map.json");

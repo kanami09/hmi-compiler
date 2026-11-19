@@ -8,7 +8,7 @@ use hmi_core::{Result, error, file, model::check_schema, target::Target};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 pub mod asset;
-mod envelope;
+pub mod envelope;
 pub mod native;
 pub mod original;
 

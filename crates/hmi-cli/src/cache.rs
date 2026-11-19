@@ -251,6 +251,33 @@ impl Cache {
         self.record(&[])
     }
 
+    pub fn link_key(&self, inputs: &serde_json::Value) -> Result<String> {
+        self.key("link", &self.root.join("hmi.toml"), inputs)
+    }
+    pub fn load_link(&self) -> Option<Vec<u8>> {
+        if self.force {
+            None
+        } else {
+            file::read(&self.root.join(DIRECTORY).join("link-result.hml")).ok()
+        }
+    }
+    pub fn store_link(&mut self, bytes: &[u8]) -> Result<()> {
+        self.verify_inputs()?;
+        // 只保留最近一次有效链接，避免每次编辑都累计一份完整HMI和外部媒体。
+        let path = self.root.join(DIRECTORY).join("link-result.hml");
+        self.protect(&path)?;
+        file::write_atomic(
+            &path,
+            bytes,
+            &self
+                .snapshots
+                .keys()
+                .map(PathBuf::as_path)
+                .collect::<Vec<_>>(),
+        )?;
+        self.record(&[path])
+    }
+
     fn key(&self, kind: &str, source: &Path, target: &impl Serialize) -> Result<String> {
         Ok(sha256(&file::json(&serde_json::json!({
             "schema":SCHEMA,"root":self.root,"tool":self.tool,"kind":kind,

@@ -276,6 +276,7 @@ pub fn completed(message: &str, result: &Value, command: &str, color: bool) {
         ("program", "全局代码", "项"),
         ("pages", "页面", "页"),
         ("media", "媒体", "项"),
+        ("link", "链接", "项"),
     ] {
         if let Some(count) = result["summary"].get(group) {
             if count["total"] == 0 {
@@ -283,6 +284,8 @@ pub fn completed(message: &str, result: &Value, command: &str, color: bool) {
             }
             let verb = if checking {
                 "检查"
+            } else if group == "link" {
+                "生成"
             } else if group == "media" {
                 "处理"
             } else {
