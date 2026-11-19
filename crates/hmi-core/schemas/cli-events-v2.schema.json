@@ -46,6 +46,92 @@
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "const": "task_progress"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "properties": {
+              "progress": {
+                "$ref": "#/$defs/progress"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event": {
+            "enum": [
+              "task_started",
+              "task_finished",
+              "task_action"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "data": {
+            "properties": {
+              "task": {
+                "properties": {
+                  "progress": {
+                    "$ref": "#/$defs/progress"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
-  ]
+  ],
+  "$defs": {
+    "progress": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "phase": {
+          "type": "string"
+        },
+        "current": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "unit": {
+          "enum": [
+            "frames",
+            "sample_frames"
+          ]
+        }
+      },
+      "required": [
+        "phase",
+        "current",
+        "total",
+        "unit"
+      ],
+      "additionalProperties": false,
+      "description": "同一phase内计数递增；phase改变后从0开始。total为null时不推测总量或百分比。"
+    }
+  }
 }

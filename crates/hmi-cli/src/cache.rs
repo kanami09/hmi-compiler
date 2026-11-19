@@ -161,6 +161,7 @@ pub struct Cache {
     owned: Ownership,
     pub stats: BuildStats,
     report: hmi_core::report::Report,
+    deferred: bool,
 }
 
 impl Cache {
@@ -187,6 +188,7 @@ impl Cache {
             owned: file::read_json(&root.join(STATE)).unwrap_or_default(),
             stats: BuildStats::default(),
             report: hmi_core::report::Report::default(),
+            deferred: false,
         };
         for path in inputs {
             cache.snapshot(path)?;
@@ -206,6 +208,47 @@ impl Cache {
 
     pub fn reporting(&mut self, report: &hmi_core::report::Report) {
         self.report = report.clone();
+    }
+
+    /// 工作线程只更新各自的登记增量，工程登记文件由主线程合并后写一次。
+    pub fn fork(&self) -> Self {
+        Self {
+            root: self.root.clone(),
+            force: self.force,
+            tool: self.tool.clone(),
+            snapshots: self.snapshots.clone(),
+            owned: Ownership::default(),
+            stats: BuildStats::default(),
+            report: self.report.clone(),
+            deferred: true,
+        }
+    }
+
+    pub fn absorb(&mut self, worker: Self) -> Result<()> {
+        let mut changed = None;
+        for (path, digest) in worker.snapshots {
+            if self.snapshots.get(&path).is_some_and(|old| old != &digest) {
+                changed = Some(path);
+            } else {
+                self.snapshots.insert(path, digest);
+            }
+        }
+        self.owned.files.extend(worker.owned.files);
+        self.stats.compiled += worker.stats.compiled;
+        self.stats.reused_objects += worker.stats.reused_objects;
+        self.stats.encoded += worker.stats.encoded;
+        self.stats.reused_assets += worker.stats.reused_assets;
+        if let Some(path) = changed {
+            return Err(file::at_file(
+                error("input_changed", "输入在并行构建期间发生变化，请重试"),
+                &path,
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn flush(&mut self) -> Result<()> {
+        self.record(&[])
     }
 
     fn key(&self, kind: &str, source: &Path, target: &impl Serialize) -> Result<String> {
@@ -436,7 +479,8 @@ impl Cache {
         };
         task.action(action);
         self.report.note(format!("输入：{}", path.display()));
-        let result = hmi_media::encode(path, target)?;
+        let result = hmi_media::encode_with_progress(path, target, &task.progress_handle())
+            .map_err(|e| task.error(e))?;
         self.report
             .note(hmi_media::describe_info(&result.object.metadata.info));
         task.action(match result.action {
@@ -534,6 +578,9 @@ impl Cache {
             self.owned
                 .files
                 .insert(relative, sha256(&file::read(path)?));
+        }
+        if self.deferred {
+            return Ok(());
         }
         let state = self.root.join(STATE);
         self.protect(&state)?;

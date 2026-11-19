@@ -27,6 +27,7 @@ struct State {
     sources: Vec<Source>,
     stage: String,
     query: Option<String>,
+    parallelism: Option<Value>,
 }
 #[derive(Clone, Serialize)]
 struct TaskRecord {
@@ -37,6 +38,8 @@ struct TaskRecord {
     action: String,
     state: String,
     elapsed_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    progress: Option<crate::progress::ProgressValue>,
     #[serde(skip)]
     started: Instant,
 }
@@ -74,6 +77,7 @@ impl Report {
                 sources: vec![],
                 stage: "load".into(),
                 query: None,
+                parallelism: None,
             })),
             listener,
         }
@@ -100,6 +104,9 @@ impl Report {
             .unwrap()
             .planned
             .insert(group.into(), total);
+    }
+    pub fn parallelism(&self, jobs: usize, media_jobs: usize) {
+        self.inner.lock().unwrap().parallelism = Some(json!({"jobs":jobs,"media_jobs":media_jobs}));
     }
     pub fn add_planned(&self, group: &str, count: usize) {
         *self
@@ -146,6 +153,7 @@ impl Report {
             subject: subject.into(),
             state: "running".into(),
             elapsed_ms: 0,
+            progress: None,
             started: Instant::now(),
         };
         let event = json!({"event":"task_started","task":record});
@@ -171,7 +179,7 @@ impl Report {
         for task in tasks {
             self.emit(
                 json!({"event":"task_progress","task_id":task.id,"stage":task.stage,
-                "subject":task.subject,"action":task.action,"elapsed_ms":milliseconds(task.started.elapsed())}),
+                "subject":task.subject,"action":task.action,"elapsed_ms":milliseconds(task.started.elapsed()),"progress":task.progress}),
             );
         }
     }
@@ -340,6 +348,9 @@ impl Report {
         value["elapsed_ms"] = milliseconds(state.started.elapsed()).into();
         value["summary"] = summary.into();
         value["outputs"] = json!(state.outputs);
+        if let Some(parallelism) = &state.parallelism {
+            value["parallelism"] = parallelism.clone();
+        }
         if !state.removed.is_empty() {
             value["removed_files"] = json!(state.removed);
         }
@@ -355,6 +366,17 @@ pub struct Task {
     done: bool,
 }
 impl Task {
+    pub fn progress_handle(&self) -> crate::progress::Progress {
+        let report = self.report.clone();
+        let id = self.id;
+        crate::progress::Progress::new(move |progress| {
+            let mut state = report.inner.lock().unwrap();
+            let task = &mut state.tasks[id];
+            if task.state == "running" {
+                task.progress = Some(progress);
+            }
+        })
+    }
     pub fn subject(&self, subject: impl Into<String>) {
         self.report.inner.lock().unwrap().tasks[self.id].subject = subject.into();
     }

@@ -190,7 +190,7 @@ fn failed_build_preserves_partial_statistics_and_does_not_claim_old_outputs() {
     .unwrap();
     project.pages.sources.push("other.toml".into());
     std::fs::write(tmp.path().join("hmi.toml"), file::toml(&project).unwrap()).unwrap();
-    let output = project_run(tmp.path(), &["--json", "build"]);
+    let output = project_run(tmp.path(), &["--json", "build", "-j", "1"]);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stderr.is_empty());
     let failed = parse(&output);

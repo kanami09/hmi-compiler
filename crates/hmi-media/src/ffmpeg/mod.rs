@@ -76,14 +76,18 @@ pub fn backend_info() -> Result<BackendInfo> {
     }
 }
 
-pub(crate) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
+pub(crate) fn decode(
+    path: &Path,
+    drop_audio: bool,
+    progress: &hmi_core::progress::Progress,
+) -> Result<DecodedVideo> {
     #[cfg(all(windows, target_arch = "x86_64"))]
     {
-        windows::decode(path, drop_audio)
+        windows::decode(path, drop_audio, progress)
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     {
-        let _ = (path, drop_audio);
+        let _ = (path, drop_audio, progress);
         Err(error(
             "ffmpeg_platform",
             "视频 DLL 后端当前仅支持 Windows x64",
@@ -91,14 +95,19 @@ pub(crate) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
     }
 }
 
-pub(crate) fn audio(path: &Path, rate: u32, channels: u16) -> Result<DecodedAudio> {
+pub(crate) fn audio(
+    path: &Path,
+    rate: u32,
+    channels: u16,
+    progress: &hmi_core::progress::Progress,
+) -> Result<DecodedAudio> {
     #[cfg(all(windows, target_arch = "x86_64"))]
     {
-        windows::audio(path, rate, channels)
+        windows::audio(path, rate, channels, progress)
     }
     #[cfg(not(all(windows, target_arch = "x86_64")))]
     {
-        let _ = (path, rate, channels);
+        let _ = (path, rate, channels, progress);
         Err(error(
             "ffmpeg_platform",
             "音频转换当前仅支持 Windows x64 DLL 后端",

@@ -16,6 +16,7 @@ use std::{
 };
 
 mod cache;
+mod parallel;
 pub use cache::{BuildStats, clean, clean_with_report};
 
 pub const BUILD_DIRECTORY: &str = ".build/hmi-toolchain";
@@ -598,6 +599,37 @@ pub fn build_with_report(
     force: bool,
     report: &hmi_core::report::Report,
 ) -> Result<(PathBuf, hmi_linker::Linked, BuildStats)> {
+    build_with_jobs(
+        root,
+        requested,
+        deny_warnings,
+        force,
+        default_jobs(),
+        report,
+    )
+}
+
+pub fn default_jobs() -> usize {
+    std::thread::available_parallelism().map_or(1, |n| n.get().min(8))
+}
+
+/// jobs 是工作线程上限，媒体另外限制为最多两个并发任务。
+pub fn build_with_jobs(
+    root: &Path,
+    requested: Option<&Path>,
+    deny_warnings: bool,
+    force: bool,
+    jobs: usize,
+    report: &hmi_core::report::Report,
+) -> Result<(PathBuf, hmi_linker::Linked, BuildStats)> {
+    if jobs == 0 || jobs > 256 {
+        return Err(error("build_jobs", "并行任务数必须为 1～256"));
+    }
+    report.parallelism(jobs, jobs.min(2));
+    report.note(format!(
+        "并行任务上限：{jobs}；媒体任务上限：{}",
+        jobs.min(2)
+    ));
     let root = fs::canonicalize(root)?;
     let project: ProjectSource = file::read_toml(&root.join("hmi.toml"))?;
     describe_project(&root, &project, report)?;
@@ -639,7 +671,7 @@ pub fn build_with_report(
     };
     cache.reporting(report);
     input_task.finish(false);
-    let prepared = prepare_inner(&root, Some(&mut cache), report)?;
+    let prepared = parallel::prepare(&root, &mut cache, report, jobs)?;
     let assets = prepared.encode_assets()?;
     let linked = hmi_linker::link_with_original_and_report(
         &prepared.target,

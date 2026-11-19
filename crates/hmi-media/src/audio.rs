@@ -34,7 +34,11 @@ pub(crate) fn clip_samples(
     Ok(pcm[start * unit..(start + count) * unit].to_vec())
 }
 
-fn prepare(path: &Path, target: &Target) -> Result<(AudioInfo, Vec<u8>, Vec<PathBuf>)> {
+fn prepare(
+    path: &Path,
+    target: &Target,
+    progress: &hmi_core::progress::Progress,
+) -> Result<(AudioInfo, Vec<u8>, Vec<PathBuf>)> {
     target.validate()?;
     if !target
         .capabilities
@@ -82,7 +86,7 @@ fn prepare(path: &Path, target: &Target) -> Result<(AudioInfo, Vec<u8>, Vec<Path
     {
         source.data.to_vec()
     } else {
-        let decoded = ffmpeg::audio(&input, rate, channels)?;
+        let decoded = ffmpeg::audio(&input, rate, channels, progress)?;
         if sha256(&file::read(&input)?) != sha256(&bytes) {
             return Err(error("input_changed", "音频源在解码期间发生变化，请重试"));
         }
@@ -126,15 +130,21 @@ fn prepare(path: &Path, target: &Target) -> Result<(AudioInfo, Vec<u8>, Vec<Path
     Ok((info, output, inputs))
 }
 pub(super) fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
-    let (info, _, inputs) = prepare(path, target).map_err(|e| file::at_file(e, path))?;
+    let (info, _, inputs) = prepare(path, target, &hmi_core::progress::Progress::default())
+        .map_err(|e| file::at_file(e, path))?;
     Ok(AssetProbe {
         action: "source",
         info: AssetInfo::Audio { audio: info },
         inputs,
     })
 }
-pub(super) fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
-    let (info, bytes, inputs) = prepare(path, target).map_err(|e| file::at_file(e, path))?;
+pub(super) fn encode(
+    path: &Path,
+    target: &Target,
+    progress: &hmi_core::progress::Progress,
+) -> Result<EncodingResult> {
+    let (info, bytes, inputs) =
+        prepare(path, target, progress).map_err(|e| file::at_file(e, path))?;
     Ok(EncodingResult {
         action: "source",
         object: AssetObject::audio(info, bytes)?,

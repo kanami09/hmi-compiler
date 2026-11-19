@@ -89,7 +89,11 @@ fn align_audio(
     Ok((bytes, info))
 }
 
-fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
+fn prepare(
+    path: &Path,
+    target: &Target,
+    progress: &hmi_core::progress::Progress,
+) -> Result<Prepared> {
     target.validate()?;
     if !target
         .capabilities
@@ -144,7 +148,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
     if bytes.len() > 128 * 1024 * 1024 {
         return Err(error("video_length", "视频源文件超过 128 MiB"));
     }
-    let decoded = ffmpeg::decode(&input, config.audio.mode == "drop")
+    let decoded = ffmpeg::decode(&input, config.audio.mode == "drop", progress)
         .map_err(|e| file::at_file(e, &input))?;
     // 后端通过文件路径解码，前后核对输入，避免源文件改动后仍沿用旧摘要。
     if sha256(&file::read(&input)?) != sha256(&bytes) {
@@ -211,6 +215,7 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
             &input,
             config.audio.sample_rate.unwrap_or(8000),
             u16::from(config.audio.channels.unwrap_or(1)),
+            progress,
         )?;
         if sound.backend != decoded.backend || sha256(&file::read(&input)?) != sha256(&bytes) {
             return Err(error(
@@ -271,17 +276,24 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
 }
 
 pub(super) fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
-    let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
+    let p = prepare(path, target, &hmi_core::progress::Progress::default())
+        .map_err(|e| file::at_file(e, path))?;
     Ok(AssetProbe {
         action: "source",
         info: AssetInfo::Video { video: p.info },
         inputs: p.inputs,
     })
 }
-pub(super) fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
-    let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
+pub(super) fn encode(
+    path: &Path,
+    target: &Target,
+    progress: &hmi_core::progress::Progress,
+) -> Result<EncodingResult> {
+    let p = prepare(path, target, progress).map_err(|e| file::at_file(e, path))?;
     let mut frames = Vec::new();
     let mut total = 0;
+    let frame_count = p.frames.len() as u64;
+    progress.set("encode", 0, Some(frame_count), "frames");
     for pixels in p.frames {
         let (jpeg, _) = encode_jpeg_pixels(
             &pixels,
@@ -295,6 +307,7 @@ pub(super) fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
             return Err(error("video_length", "VIDEO 运行资源超过 128 MiB"));
         }
         frames.push(jpeg);
+        progress.set("encode", frames.len() as u64, Some(frame_count), "frames");
     }
     let bytes = hmi_format::video::write_with_audio(
         p.info.width,

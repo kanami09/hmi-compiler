@@ -10,6 +10,7 @@ pub mod diagnostic;
 pub mod file;
 pub mod icon_map;
 pub mod model;
+pub mod progress;
 pub mod report;
 pub mod target;
 

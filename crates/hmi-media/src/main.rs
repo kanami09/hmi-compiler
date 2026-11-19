@@ -128,7 +128,8 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
             );
             session.report.note(format!("输入：{}", source.display()));
             let config: Target = file::read_json(target)?;
-            let encoded = hmi_media::encode(source, &config)?;
+            let encoded = hmi_media::encode_with_progress(source, &config, &task.progress_handle())
+                .map_err(|e| task.error(e))?;
             let mut inputs = encoded
                 .inputs
                 .iter()

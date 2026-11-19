@@ -192,12 +192,44 @@ pub fn parse<T: clap::Parser>() -> std::result::Result<T, ExitCode> {
 
 struct Sink {
     options: OutputOptions,
-    lock: Mutex<()>,
+    lock: Mutex<EventOrder>,
     color: bool,
+}
+#[derive(Default)]
+struct EventOrder {
+    started: std::collections::BTreeSet<u64>,
+    finished: std::collections::BTreeSet<u64>,
+}
+impl EventOrder {
+    fn accept(&mut self, event: &Value) -> bool {
+        let kind = event["event"].as_str().unwrap_or("");
+        let id = event["task"]["id"]
+            .as_u64()
+            .or_else(|| event["task_id"].as_u64());
+        if let Some(id) = id {
+            match kind {
+                "task_started" => {
+                    self.started.insert(id);
+                }
+                "task_finished" => {
+                    self.finished.insert(id);
+                }
+                // 心跳拿到快照后任务可能已经结束，不能再输出倒退的进度。
+                "task_progress" if !self.started.contains(&id) || self.finished.contains(&id) => {
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        true
+    }
 }
 impl Sink {
     fn event(&self, mut event: Value) {
-        let _guard = self.lock.lock().unwrap();
+        let mut order = self.lock.lock().unwrap();
+        if !order.accept(&event) {
+            return;
+        }
         match self.options.format() {
             MessageFormat::Json => {}
             MessageFormat::Jsonl => {
@@ -226,7 +258,7 @@ impl Session {
         };
         let sink = Arc::new(Sink {
             options: options.clone(),
-            lock: Mutex::new(()),
+            lock: Mutex::new(EventOrder::default()),
             color,
         });
         let listener = Arc::clone(&sink);

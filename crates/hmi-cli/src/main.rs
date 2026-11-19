@@ -42,12 +42,16 @@ enum Command {
         directory: Option<PathBuf>,
         #[arg(short, long)]
         output: Option<PathBuf>,
+        #[arg(short='j',long,value_parser=clap::value_parser!(u16).range(1..=256),help="并行任务上限；默认按CPU数量、最多8个，媒体最多2个")]
+        jobs: Option<u16>,
     },
     /// 执行全量重建。
     Rebuild {
         directory: Option<PathBuf>,
         #[arg(short, long)]
         output: Option<PathBuf>,
+        #[arg(short='j',long,value_parser=clap::value_parser!(u16).range(1..=256),help="并行任务上限；默认按CPU数量、最多8个，媒体最多2个")]
+        jobs: Option<u16>,
     },
     /// 清理已登记且未被修改的构建产物，保留源文件和最终输出。
     Clean { directory: Option<PathBuf> },
@@ -134,14 +138,24 @@ fn run(args: &Args, session: &cli::Session) -> Result<CommandResult> {
                 diagnostics,
             })
         }
-        Command::Build { directory, output } | Command::Rebuild { directory, output } => {
+        Command::Build {
+            directory,
+            output,
+            jobs,
+        }
+        | Command::Rebuild {
+            directory,
+            output,
+            jobs,
+        } => {
             let root = hmi_cli::locate_root(directory.as_deref())?;
             let force = matches!(args.command, Command::Rebuild { .. });
-            let (output, linked, stats) = hmi_cli::build_with_report(
+            let (output, linked, stats) = hmi_cli::build_with_jobs(
                 &root,
                 output.as_deref(),
                 args.warnings.is_some(),
                 force,
+                jobs.map(usize::from).unwrap_or_else(hmi_cli::default_jobs),
                 &session.report,
             )?;
             Ok(CommandResult {

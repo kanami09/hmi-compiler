@@ -12,7 +12,11 @@ struct Prepared {
     inputs: Vec<PathBuf>,
 }
 
-fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
+fn prepare(
+    path: &Path,
+    target: &Target,
+    progress: &hmi_core::progress::Progress,
+) -> Result<Prepared> {
     target.validate()?;
     if !target
         .capabilities
@@ -84,9 +88,16 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
     let mut decoded = 0;
     let mut has_alpha = false;
     let mut total = 0usize;
+    progress.set("decode", 0, Some(source.delays.len() as u64), "frames");
     for (index, frame) in decoder.into_frames().enumerate() {
         let frame = frame.map_err(|e| error("gif_decode", e.to_string()))?;
         decoded += 1;
+        progress.set(
+            "decode",
+            decoded as u64,
+            Some(source.delays.len() as u64),
+            "frames",
+        );
         if kept
             .get(frames.len())
             .is_none_or(|(i, _)| *i as usize != index)
@@ -151,7 +162,8 @@ fn prepare(path: &Path, target: &Target) -> Result<Prepared> {
 }
 
 pub(super) fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
-    let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
+    let p = prepare(path, target, &hmi_core::progress::Progress::default())
+        .map_err(|e| file::at_file(e, path))?;
     Ok(AssetProbe {
         action: "source",
         info: AssetInfo::Animation { animation: p.info },
@@ -159,12 +171,18 @@ pub(super) fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
     })
 }
 
-pub(super) fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
-    let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
+pub(super) fn encode(
+    path: &Path,
+    target: &Target,
+    progress: &hmi_core::progress::Progress,
+) -> Result<EncodingResult> {
+    let p = prepare(path, target, progress).map_err(|e| file::at_file(e, path))?;
     let padded = gmov::storage_dimensions(p.info.width, p.info.height, 0)?;
     let storage = gmov::storage_dimensions(p.info.width, p.info.height, p.info.orientation)?;
     let mut frames = Vec::new();
     let mut encoded_size = 0usize;
+    let frame_count = p.frames.len() as u64;
+    progress.set("encode", 0, Some(frame_count), "frames");
     for (pixels, delay) in p.frames.iter().zip(&p.info.delays_ms) {
         let alpha = pixels.pixels().any(|p| p[3] != 255);
         let (jpeg, alpha) =
@@ -190,6 +208,7 @@ pub(super) fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
             delay_ms: *delay,
             alpha_offset: offset,
         });
+        progress.set("encode", frames.len() as u64, Some(frame_count), "frames");
     }
     let runtime = gmov::write_runtime(
         p.info.width,

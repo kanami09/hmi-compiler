@@ -449,9 +449,9 @@ fn dll_media_dependencies_are_recorded_and_reused_across_processes() {
         source: "assets/audio.toml".into(),
     });
     save_manifest(root, &project);
-    let run = |action: &str| {
+    let run = |action: &str, jobs: &str| {
         let output = Command::new(env!("CARGO_BIN_EXE_hmi"))
-            .args(["--json", action])
+            .args(["--json", action, "-j", jobs])
             .arg(root)
             .output()
             .unwrap();
@@ -462,8 +462,8 @@ fn dll_media_dependencies_are_recorded_and_reused_across_processes() {
         );
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
     };
-    let cold = run("build");
-    let warm = run("build");
+    let cold = run("build", "1");
+    let warm = run("build", "4");
     assert_eq!(cold["result"]["build"]["encoded"], 4);
     assert_eq!(warm["result"]["build"]["encoded"], 0);
     assert_eq!(warm["result"]["build"]["reused_assets"], 4);
@@ -485,5 +485,8 @@ fn dll_media_dependencies_are_recorded_and_reused_across_processes() {
         }
     }
     assert_eq!(backend_entries, 2);
-    assert_eq!(run("rebuild")["result"]["sha256"], cold["result"]["sha256"]);
+    assert_eq!(
+        run("rebuild", "4")["result"]["sha256"],
+        cold["result"]["sha256"]
+    );
 }

@@ -363,7 +363,13 @@ struct Scale<'a> {
 }
 
 /// 输出 interleaved s16；时间戳保留为原始流时间基准，媒体层负责截取和音画对齐。
-pub(super) fn audio(path: &Path, rate: u32, channels: u16) -> Result<DecodedAudio> {
+pub(super) fn audio(
+    path: &Path,
+    rate: u32,
+    channels: u16,
+    progress: &hmi_core::progress::Progress,
+) -> Result<DecodedAudio> {
+    progress.set("resample", 0, None, "sample_frames");
     let api = Api::load()?;
     if rate == 0 || rate > 384000 || ![1, 2].contains(&channels) {
         return Err(error("audio_format", "音频转换参数无效"));
@@ -502,6 +508,12 @@ pub(super) fn audio(path: &Path, rate: u32, channels: u16) -> Result<DecodedAudi
                 return Err(error("audio_length", "音频采样数据超过 64 MiB"));
             }
             pcm.extend(&buffer[..length]);
+            progress.set(
+                "resample",
+                (pcm.len() / (usize::from(channels) * 2)) as u64,
+                None,
+                "sample_frames",
+            );
             Ok(produced as usize)
         };
         let mut drain = |flushing: bool| -> Result<()> {
@@ -628,6 +640,8 @@ pub(super) fn audio(path: &Path, rate: u32, channels: u16) -> Result<DecodedAudi
         let (source_rate, _, source_channels) =
             initial.ok_or_else(|| error("audio_samples", "音轨没有采样数据"))?;
         while convert(resampler.pointer, ptr::null(), 0, &mut pcm)? > 0 {}
+        let count = (pcm.len() / (usize::from(channels) * 2)) as u64;
+        progress.set("resample", count, Some(count), "sample_frames");
         Ok(DecodedAudio {
             pcm,
             sample_rate: rate,
@@ -653,7 +667,12 @@ pub(super) fn backend_info() -> Result<BackendInfo> {
     Ok(Api::load()?.info.clone())
 }
 
-pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
+pub(super) fn decode(
+    path: &Path,
+    drop_audio: bool,
+    progress: &hmi_core::progress::Progress,
+) -> Result<DecodedVideo> {
+    progress.set("decode", 0, None, "frames");
     let _ = drop_audio; // 音轨策略在媒体层处理，视频解码仅报告流数量。
     let api = Api::load()?;
     let filename = CString::new(
@@ -941,6 +960,7 @@ pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
                     image::RgbaImage::from_raw(u32::from(w), u32::from(h), rgba)
                         .ok_or_else(|| error("video_layout", "视频像素尺寸不一致"))?,
                 );
+                progress.set("decode", frames.len() as u64, None, "frames");
                 (api.av_frame_unref)(frame.pointer);
             }
         };
@@ -977,6 +997,12 @@ pub(super) fn decode(path: &Path, drop_audio: bool) -> Result<DecodedVideo> {
         if frames.is_empty() {
             return Err(error("video_frames", "视频没有可用画面"));
         }
+        progress.set(
+            "decode",
+            frames.len() as u64,
+            Some(frames.len() as u64),
+            "frames",
+        );
         let codec = ctext((api.avcodec_get_name)(codec_id))?;
         Ok(DecodedVideo {
             start_pts: first_pts.unwrap(),

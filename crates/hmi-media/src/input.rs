@@ -222,6 +222,13 @@ pub fn probe(path: &Path, target: &Target) -> Result<AssetProbe> {
     run().map_err(|e| file::at_file(e, path))
 }
 pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
+    encode_with_progress(path, target, &hmi_core::progress::Progress::default())
+}
+pub fn encode_with_progress(
+    path: &Path,
+    target: &Target,
+    progress: &hmi_core::progress::Progress,
+) -> Result<EncodingResult> {
     let run = || -> Result<EncodingResult> {
         let (table, kind, input) = description(path, target)?;
         if input != "source" {
@@ -231,7 +238,7 @@ pub fn encode(path: &Path, target: &Target) -> Result<EncodingResult> {
         if let Some(r) = original(path, &table, &kind, target, &request)? {
             return Ok(r);
         }
-        let mut r = super::encode_source(path, target, &kind)?;
+        let mut r = super::encode_source(path, target, &kind, progress)?;
         r.object.metadata.source_request = Some(request);
         if let Some(name) = table.get("original").and_then(|v| v.as_str()) {
             r.inputs

@@ -21,7 +21,7 @@ use std::{
 mod animation;
 pub mod builtin;
 mod input;
-pub use input::{encode, probe};
+pub use input::{encode, encode_with_progress, probe};
 mod audio;
 pub mod ffmpeg;
 mod video;
@@ -403,15 +403,20 @@ fn probe_source(path: &Path, target: &Target, kind: &str) -> Result<AssetProbe> 
     })
 }
 
-fn encode_source(path: &Path, target: &Target, kind: &str) -> Result<EncodingResult> {
+fn encode_source(
+    path: &Path,
+    target: &Target,
+    kind: &str,
+    progress: &hmi_core::progress::Progress,
+) -> Result<EncodingResult> {
     if kind == "audio" {
-        return audio::encode(path, target);
+        return audio::encode(path, target, progress);
     }
     if kind == "video" {
-        return video::encode(path, target);
+        return video::encode(path, target, progress);
     }
     if kind == "animation" {
-        return animation::encode(path, target);
+        return animation::encode(path, target, progress);
     }
     if kind == "font" {
         let (info, bytes, inputs) =
@@ -424,7 +429,10 @@ fn encode_source(path: &Path, target: &Target, kind: &str) -> Result<EncodingRes
         });
     }
     let p = prepare(path, target).map_err(|e| file::at_file(e, path))?;
-    encode_image(p)
+    progress.set("encode", 0, Some(1), "frames");
+    let result = encode_image(p)?;
+    progress.set("encode", 1, Some(1), "frames");
+    Ok(result)
 }
 
 fn encode_image(p: PreparedImage) -> Result<EncodingResult> {

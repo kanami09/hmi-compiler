@@ -108,15 +108,38 @@ pub fn event(event: &Value, options: &OutputOptions, color: bool) {
             &format!("{}（构建缓存）", text(&event["task"], "subject")),
             color,
         ),
-        "task_progress" => line(
-            "进度",
-            &format!(
-                "{}：正在处理，用时 {:.2} 秒",
-                text(event, "subject"),
-                event["elapsed_ms"].as_u64().unwrap_or(0) as f64 / 1000.0
-            ),
-            color,
-        ),
+        "task_progress" => {
+            let metric = &event["progress"];
+            let detail = if let Some(current) = metric["current"].as_u64() {
+                let phase = match metric["phase"].as_str() {
+                    Some("decode") => "已解码",
+                    Some("encode") => "已编码",
+                    Some("resample") => "已转换",
+                    _ => "已处理",
+                };
+                let unit = match metric["unit"].as_str() {
+                    Some("frames") => "帧",
+                    Some("sample_frames") => "个采样帧",
+                    _ => "项",
+                };
+                let count = metric["total"]
+                    .as_u64()
+                    .map(|total| format!("{current}/{total}"))
+                    .unwrap_or_else(|| current.to_string());
+                format!("{phase} {count} {unit}")
+            } else {
+                "正在处理".into()
+            };
+            line(
+                "进度",
+                &format!(
+                    "{}：{detail}，用时 {:.2} 秒",
+                    text(event, "subject"),
+                    event["elapsed_ms"].as_u64().unwrap_or(0) as f64 / 1000.0
+                ),
+                color,
+            );
+        }
         "detail" if options.verbose => eprintln!("         {}", plain(&text(event, "message"))),
         "output_written" if options.verbose => line("写入", &text(&event["output"], "path"), color),
         _ => {}
