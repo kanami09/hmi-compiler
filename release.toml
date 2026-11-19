@@ -1,4 +1,9 @@
-consolidate-commits = false
+# 所有 crate 使用相同版本，一次升级生成一个提交。
+shared-version = true
+consolidate-commits = true
+
+# 由 GitHub Actions 分发程序，不向 crates.io 发布。
+publish = false
 
 pre-release-commit-message = "chore: v{{version}}"
 tag-name = "v{{version}}"
