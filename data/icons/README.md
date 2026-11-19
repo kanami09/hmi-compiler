@@ -1,5 +1,9 @@
 # 内置文件浏览器图标
 
-browser-folder.png 和 browser-file.png 是项目自绘的64×64 RGBA图标，分别用于默认文件夹和默认文件。程序内嵌源PNG，运行时不依赖此目录；编码仍使用正式图片后端，按目标方向生成JPEG色彩和透明度流，并保留PNG编辑源。
+[项目首页](../../README.md) · [文件浏览器配置](../../crates/hmi-compiler/reference/controls-files.md)
 
-标识、保留符号及源摘要在 hmi-core 的 builtin 模块登记。修改图片时须同步更新摘要，并检查四方向显示及独立构建。图标按需追加到显式资产之后，多页共享；不得使用文件名数字或预设图片ID代替最终绑定。
+`browser-folder.png`和`browser-file.png`是项目自绘的64×64 RGBA图标，分别用于默认文件夹和默认文件。
+
+省略文件浏览器的`pic1/pic2`时，工具按需添加相应图标，多页共享；显式设置时使用工程指定的图片。内置图标随程序提供，运行工具不需要此目录中的PNG副本。
+
+自定义图标和文件后缀映射见[文件控件参考](../../crates/hmi-compiler/reference/controls-files.md#自定义文件图标)。
