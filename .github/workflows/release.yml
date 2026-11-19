@@ -51,9 +51,48 @@ jobs:
           "tag=$env:RELEASE_TAG" >> $env:GITHUB_OUTPUT
           "commit=$commit" >> $env:GITHUB_OUTPUT
 
+  documentation:
+    name: Build HTML documentation
+    needs: prepare
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.prepare.outputs.commit }}
+          persist-credentials: false
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install Pandoc
+        run: |
+          mkdir -p target/documentation-tools
+          curl --fail --location --retry 3 \
+            https://github.com/jgm/pandoc/releases/download/3.14/pandoc-3.14-linux-amd64.tar.gz \
+            --output target/documentation-tools/pandoc.tar.gz
+          echo 'c5f4720cdefb3f7bdc5d07202ef579feef0d1370773c873804dd8fdaa8c4f1b8  target/documentation-tools/pandoc.tar.gz' | sha256sum --check
+          tar -xzf target/documentation-tools/pandoc.tar.gz -C target/documentation-tools
+
+      - name: Convert and validate documentation
+        run: |
+          python .github/documentation/build.py \
+            --pandoc target/documentation-tools/pandoc-3.14/bin/pandoc \
+            --output target/html-manual
+
+      - name: Upload documentation
+        uses: actions/upload-artifact@v7
+        with:
+          name: release-manual
+          path: target/html-manual/*
+          if-no-files-found: error
+
   build:
     name: Build Windows ${{ matrix.arch }}
-    needs: prepare
+    needs: [prepare, documentation]
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -86,6 +125,12 @@ jobs:
       - name: Build
         run: cargo build --workspace --bins --release --locked --target "$env:BUILD_TARGET"
 
+      - name: Download documentation
+        uses: actions/download-artifact@v8
+        with:
+          name: release-manual
+          path: target/html-manual
+
       - name: Package
         run: |
           $package = "hmi-compiler-${env:RELEASE_TAG}-windows-${env:BUILD_ARCH}"
@@ -93,7 +138,9 @@ jobs:
           foreach ($binary in 'hmi', 'hmi-parse', 'hmi-compile', 'hmi-media', 'hmi-link') {
             Copy-Item "target/$env:BUILD_TARGET/release/$binary.exe" $directory
           }
-          Copy-Item README.md, LICENSE $directory
+          # README.html 为文档入口，manual 中包含参考页、Schema、样式和样式许可证。
+          Copy-Item target/html-manual/* $directory -Recurse
+          Copy-Item LICENSE $directory -Force
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Compress-Archive -Path "$($directory.FullName)/*" -DestinationPath "dist/$package.zip"
           $hash = (Get-FileHash "dist/$package.zip" -Algorithm SHA256).Hash.ToLowerInvariant()
